@@ -24,6 +24,12 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+function pledgePillClass(status) {
+  if (status === "yes") return "pledge-pill pledge-pill--pledged";
+  if (status === "undecided") return "pledge-pill pledge-pill--undecided";
+  return "pledge-pill pledge-pill--not-pledged";
+}
+
 function getFilteredVoters() {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const query = (doorToDoorSearchEl?.value || "").toLowerCase().trim();
@@ -95,11 +101,13 @@ function renderDoorToDoorTable() {
         <td>${escapeHtml(v.nationalId || v.id || "")}</td>
         <td>${escapeHtml(v.permanentAddress || "")}</td>
         <td>
-          <select class="inline-select door-to-door-pledge" data-voter-id="${escapeHtml(v.id)}">
-            <option value="yes"${pledgeStatus === "yes" ? " selected" : ""}>Yes</option>
-            <option value="no"${pledgeStatus === "no" ? " selected" : ""}>No</option>
-            <option value="undecided"${pledgeStatus === "undecided" ? " selected" : ""}>Undecided</option>
-          </select>
+          <span class="${pledgePillClass(pledgeStatus)} door-to-door-pledge-pill">
+            <select class="inline-select door-to-door-pledge" data-voter-id="${escapeHtml(v.id)}">
+              <option value="yes"${pledgeStatus === "yes" ? " selected" : ""}>Yes</option>
+              <option value="no"${pledgeStatus === "no" ? " selected" : ""}>No</option>
+              <option value="undecided"${pledgeStatus === "undecided" ? " selected" : ""}>Undecided</option>
+            </select>
+          </span>
         </td>
         <td>${escapeHtml(v.ballotBox || "")}</td>
         <td>

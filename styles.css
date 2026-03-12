@@ -2092,6 +2092,34 @@ body {
   cursor: pointer;
 }
 
+/* Candidate columns: same colour codes as legend (Yes / Undecided / No) */
+.data-table--pledges .pledge-cell--candidate .pledge-cell__pill {
+  display: inline-flex;
+  align-items: center;
+}
+.data-table--pledges .pledge-cell--candidate .pledge-cell__pill .pledge-candidate-select {
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-weight: 500;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* Door to Door: Pledge column uses same legend colours (Yes / Undecided / No) */
+#doorToDoorTable .door-to-door-pledge-pill {
+  display: inline-flex;
+  align-items: center;
+}
+#doorToDoorTable .door-to-door-pledge-pill .door-to-door-pledge {
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-weight: 500;
+  cursor: pointer;
+  color: inherit;
+}
+
 .data-table--pledges tbody tr.pledges-toolbar__group-header {
   background: var(--color-primary-soft);
 }

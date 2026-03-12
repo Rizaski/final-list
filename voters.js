@@ -52,24 +52,35 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-/** Base path for voter ID-based images (folder name must match on server, e.g. images/). */
+/** Base path for voter ID-based images (folder must be next to index.html, e.g. images/). */
 const VOTER_IMAGES_BASE = "images/";
 
 /**
  * Returns the first image URL to try for a voter. Uses explicit photoUrl if set,
  * otherwise builds path from national ID so that images named by ID card number (e.g. 12345.jpg) load.
+ * Uses absolute URL so images resolve correctly regardless of how the app is served.
  * Caller should use onerror to try .jpeg / .png when .jpg fails.
  */
-function getVoterImageSrc(voter) {
+export function getVoterImageSrc(voter) {
   if (!voter) return "";
   const explicit = (voter.photoUrl || "").trim();
   if (explicit) {
-    return explicit.includes(".") ? explicit : explicit + ".jpg";
+    const url = explicit.includes(".") ? explicit : explicit + ".jpg";
+    try {
+      return new URL(url, window.location.href).href;
+    } catch (_) {
+      return url;
+    }
   }
   const rawId = (voter.nationalId || voter.id || "").toString().trim();
   const id = rawId.replace(/\s+/g, "");
   if (!id) return "";
-  return VOTER_IMAGES_BASE + id + ".jpg";
+  const relative = VOTER_IMAGES_BASE + encodeURIComponent(id) + ".jpg";
+  try {
+    return new URL(relative, window.location.href).href;
+  } catch (_) {
+    return relative;
+  }
 }
 
 function supportBadgeClass(status) {

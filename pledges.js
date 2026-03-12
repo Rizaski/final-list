@@ -1,10 +1,10 @@
 import { openModal } from "./ui.js";
-import { updateVoterCandidatePledge } from "./voters.js";
+import { updateVoterCandidatePledge, getVoterImageSrc } from "./voters.js";
 import { getAgents, getCandidates } from "./settings.js";
 
 const PAGE_SIZE = 15;
-/** Pledges table: Seq, Name, ID, Permanent Address, then candidate columns (Pledge column is on Door to Door). */
-const BASE_PLEDGE_COLUMNS = 4;
+/** Pledges table: Seq, Image, Name, ID, Permanent Address, then candidate columns (Pledge column is on Door to Door). */
+const BASE_PLEDGE_COLUMNS = 5;
 
 const pledgesTableBody = document.querySelector("#pledgesTable tbody");
 const pledgesPaginationEl = document.getElementById("pledgesPagination");
@@ -189,6 +189,7 @@ function updatePledgesTableHeader() {
   thead.innerHTML = `
     <tr>
       <th scope="col" class="pledge-th pledge-th--sequence th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
+      <th scope="col" class="pledge-th pledge-th--photo">Image</th>
       <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
@@ -239,18 +240,27 @@ function renderPledgesTable() {
     const tr = document.createElement("tr");
     tr.dataset.rowIndex = String(index);
 
+    const rowVoter = { photoUrl: row.photoUrl, nationalId: row.nationalId, id: row.voterId };
+    const photoSrc = getVoterImageSrc(rowVoter);
+    const initials = getInitials(row.name);
+    const photoCell = photoSrc
+      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+      : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
     const cp = row.candidatePledges || {};
     const candidateCells = candidates
       .map(
         (c) => {
           const val = cp[String(c.id)] || "undecided";
+          const pillClass = pledgeStatusClass(val);
           const selId = `pledge-cand-${index}-${c.id}`;
           return `<td class="pledge-cell pledge-cell--candidate">
-            <select id="${selId}" class="inline-select pledge-candidate-select" data-candidate-id="${escapeHtml(String(c.id))}">
-              <option value="yes"${val === "yes" ? " selected" : ""}>Yes</option>
-              <option value="no"${val === "no" ? " selected" : ""}>No</option>
-              <option value="undecided"${val === "undecided" ? " selected" : ""}>Undecided</option>
-            </select>
+            <span class="${pillClass} pledge-cell__pill">
+              <select id="${selId}" class="inline-select pledge-candidate-select" data-candidate-id="${escapeHtml(String(c.id))}">
+                <option value="yes"${val === "yes" ? " selected" : ""}>Yes</option>
+                <option value="no"${val === "no" ? " selected" : ""}>No</option>
+                <option value="undecided"${val === "undecided" ? " selected" : ""}>Undecided</option>
+              </select>
+            </span>
           </td>`;
         }
       )
@@ -258,6 +268,7 @@ function renderPledgesTable() {
 
     tr.innerHTML = `
       <td class="pledge-cell pledge-cell--sequence">${escapeHtml(String(row.sequence ?? ""))}</td>
+      <td class="pledge-cell pledge-cell--photo">${photoCell}</td>
       <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
       <td class="pledge-cell pledge-cell--name">${escapeHtml(row.name)}</td>
       <td class="pledge-cell pledge-cell--address">${escapeHtml(row.permanentAddress || "")}</td>
