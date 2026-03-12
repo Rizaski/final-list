@@ -818,7 +818,7 @@ export function importVotersFromTemplateRows(rows) {
     photoUrl:
       r["Photo"] ||
       r["Image"] ||
-      (r["ID Number"] ? `Images/${r["ID Number"]}.jpg` : ""),
+      (r["ID Number"] ? `images/${r["ID Number"]}.jpg` : ""),
   }));
   (async () => {
     try {
