@@ -7,11 +7,13 @@ import { initReportsModule } from "./reports.js";
 import { initSettingsModule, getCampaignConfig, syncCampaignConfigFromFirestore } from "./settings.js";
 import { initCallsModule } from "./calls.js";
 import { initZeroDayModule, initMonitorView } from "./zeroDay.js";
+import { initDoorToDoorModule } from "./doorToDoor.js";
 
 const modulesMap = {
   dashboard: document.getElementById("module-dashboard"),
   voters: document.getElementById("module-voters"),
   pledges: document.getElementById("module-pledges"),
+  "door-to-door": document.getElementById("module-door-to-door"),
   events: document.getElementById("module-events"),
   reports: document.getElementById("module-reports"),
   calls: document.getElementById("module-calls"),
@@ -540,6 +542,7 @@ async function startAppModules(firebaseApi) {
   }
 
   const pledgesContext = initPledgesModule(votersContext);
+  initDoorToDoorModule(votersContext);
   const eventsContext = initEventsModule();
   const callsContext = initCallsModule(votersContext);
   initReportsModule({ votersContext, pledgesContext, eventsContext });

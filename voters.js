@@ -52,6 +52,26 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+/** Base path for voter ID-based images (folder name must match on server, e.g. images/). */
+const VOTER_IMAGES_BASE = "images/";
+
+/**
+ * Returns the first image URL to try for a voter. Uses explicit photoUrl if set,
+ * otherwise builds path from national ID so that images named by ID card number (e.g. 12345.jpg) load.
+ * Caller should use onerror to try .jpeg / .png when .jpg fails.
+ */
+function getVoterImageSrc(voter) {
+  if (!voter) return "";
+  const explicit = (voter.photoUrl || "").trim();
+  if (explicit) {
+    return explicit.includes(".") ? explicit : explicit + ".jpg";
+  }
+  const rawId = (voter.nationalId || voter.id || "").toString().trim();
+  const id = rawId.replace(/\s+/g, "");
+  if (!id) return "";
+  return VOTER_IMAGES_BASE + id + ".jpg";
+}
+
 function supportBadgeClass(status) {
   switch (status) {
     case "supporting":
@@ -206,9 +226,7 @@ function renderVotersTable() {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() || "")
       .join("") || "?";
-    const photoSrc = voter.photoUrl
-      ? (voter.photoUrl.includes(".") ? voter.photoUrl : voter.photoUrl + ".jpg")
-      : "";
+    const photoSrc = getVoterImageSrc(voter);
     const photoCell = photoSrc
       ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
@@ -601,6 +619,10 @@ function openVoterForm(existingVoter) {
         supportStatus: "unknown",
         interactions: [],
         candidatePledges: {},
+        volunteer: "",
+        metStatus: "not-met",
+        persuadable: "unknown",
+        pledgedAt: "",
         photoUrl: "",
       });
     }
@@ -814,6 +836,30 @@ export function updateVoterCandidatePledge(voterId, candidateId, status) {
   })();
 }
 
+/** Update door-to-door fields (assigned agent, met, persuadable, date pledged, notes). */
+export function updateVoterDoorToDoorFields(voterId, fields) {
+  const v = currentVoters.find((x) => x.id === voterId);
+  if (!v) return;
+  if (fields.volunteer !== undefined) v.volunteer = fields.volunteer;
+  if (fields.metStatus !== undefined) v.metStatus = fields.metStatus;
+  if (fields.persuadable !== undefined) v.persuadable = fields.persuadable;
+  if (fields.pledgedAt !== undefined) v.pledgedAt = fields.pledgedAt;
+  if (fields.notes !== undefined) v.notes = fields.notes;
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVoterFs) {
+        await api.setVoterFs(v);
+      } else {
+        saveVotersToStorage();
+        renderVotersTable();
+        if (selectedVoterId === voterId) renderVoterDetails(v);
+        document.dispatchEvent(new CustomEvent("voters-updated"));
+      }
+    } catch (_) {}
+  })();
+}
+
 export function importVotersFromTemplateRows(rows) {
   const hasContent = (r) => {
     const name = String(r["Name"] ?? "").trim();
@@ -842,10 +888,11 @@ export function importVotersFromTemplateRows(rows) {
     supportStatus: "unknown",
     interactions: [],
     candidatePledges: {},
-    photoUrl:
-      r["Photo"] ||
-      r["Image"] ||
-      (r["ID Number"] ? `/images/${String(r["ID Number"]).trim()}` : ""),
+    volunteer: "",
+    metStatus: "not-met",
+    persuadable: "unknown",
+    pledgedAt: "",
+    photoUrl: (r["Photo"] || r["Image"] || "").trim() || "",
   }));
   (async () => {
     try {

@@ -134,6 +134,15 @@
           </span>
           <span class="nav-label">Pledges</span>
         </button>
+        <button class="nav-item" data-module="door-to-door">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="icon-svg">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M9 22V12h6v10" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            </svg>
+          </span>
+          <span class="nav-label">Door to Door</span>
+        </button>
         <button class="nav-item" data-module="calls">
           <span class="nav-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" class="icon-svg">
@@ -630,6 +639,62 @@
                 </table>
               </div>
               <div id="pledgesPagination" class="pagination-bar"></div>
+            </div>
+          </section>
+        </section>
+
+        <!-- Door to Door Module -->
+        <section id="module-door-to-door" class="module">
+          <div class="module-header">
+            <div>
+              <h1>Door to Door</h1>
+              <p class="module-description">
+                Track field visits: assigned agent, met status, persuadable, date pledged, and notes.
+              </p>
+            </div>
+          </div>
+          <section class="card">
+            <header class="card-header">
+              <h2>Door to Door Records</h2>
+              <p class="card-subtitle">Seq, Name, ID, and Permanent Address plus Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.</p>
+            </header>
+            <div class="card-body">
+              <div class="list-toolbar">
+                <div class="list-toolbar__search">
+                  <label for="doorToDoorSearch" class="sr-only">Search</label>
+                  <input type="search" id="doorToDoorSearch" placeholder="Search by name, ID, address…">
+                </div>
+                <div class="list-toolbar__controls">
+                  <div class="field-group field-group--inline">
+                    <label for="doorToDoorFilterBox">Ballot box</label>
+                    <select id="doorToDoorFilterBox">
+                      <option value="all">All</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="table-wrapper table-wrapper--sticky-header">
+                <table class="data-table" id="doorToDoorTable" role="table" aria-label="Door to door list">
+                  <thead>
+                    <tr>
+                      <th scope="col">Seq</th>
+                      <th scope="col">Name</th>
+                      <th scope="col">ID Number</th>
+                      <th scope="col">Permanent Address</th>
+                      <th scope="col">Ballot Box</th>
+                      <th scope="col">Assigned agent</th>
+                      <th scope="col">Met?</th>
+                      <th scope="col">Persuadable?</th>
+                      <th scope="col">Date pledged</th>
+                      <th scope="col">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <!-- Populated by doorToDoor.js -->
+                  </tbody>
+                </table>
+              </div>
+              <div id="doorToDoorPagination" class="pagination-bar"></div>
             </div>
           </section>
         </section>

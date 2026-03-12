@@ -3,7 +3,8 @@ import { updateVoterPledgeStatus, updateVoterCandidatePledge } from "./voters.js
 import { getAgents, getCandidates } from "./settings.js";
 
 const PAGE_SIZE = 15;
-const BASE_PLEDGE_COLUMNS = 12;
+/** Pledges table: Seq, Name, ID, Permanent Address, Pledge, then candidate columns. */
+const BASE_PLEDGE_COLUMNS = 5;
 
 const pledgesTableBody = document.querySelector("#pledgesTable tbody");
 const pledgesPaginationEl = document.getElementById("pledgesPagination");
@@ -26,11 +27,11 @@ function ensureSeedData(votersContext) {
     permanentAddress: v.permanentAddress || "",
     island: v.island || "",
     ballotBox: v.ballotBox ?? "",
-    volunteer: "",
+    volunteer: v.volunteer ?? "",
     pledgeStatus: v.pledgeStatus || "undecided",
-    metStatus: "not-met",
-    persuadable: "unknown",
-    pledgedAt: "",
+    metStatus: v.metStatus ?? "not-met",
+    persuadable: v.persuadable ?? "unknown",
+    pledgedAt: v.pledgedAt ?? "",
     notes: v.notes || "",
     photoUrl: v.photoUrl || "",
     candidatePledges: v.candidatePledges && typeof v.candidatePledges === "object" ? { ...v.candidatePledges } : {},
@@ -184,17 +185,10 @@ function updatePledgesTableHeader() {
   thead.innerHTML = `
     <tr>
       <th scope="col" class="pledge-th pledge-th--sequence th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--photo">Image</th>
       <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--status th-sortable" data-sort-key="pledge">Pledge<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--island th-sortable" data-sort-key="island">Ballot Box<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--volunteer th-sortable" data-sort-key="volunteer">Assigned agent<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--met th-sortable" data-sort-key="met">Met?<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--persuadable th-sortable" data-sort-key="persuadable">Persuadable?<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--date th-sortable" data-sort-key="date">Date pledged<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--notes th-sortable" data-sort-key="notes">Notes<span class="sort-indicator"></span></th>
       ${candidateHeaders}
     </tr>
   `;
@@ -243,29 +237,6 @@ function renderPledgesTable() {
     tr.dataset.rowIndex = String(index);
 
     const pledgeSelectId = `pledge-status-${index}`;
-    const metSelectId = `met-status-${index}`;
-    const persuadableSelectId = `persuadable-${index}`;
-    const notesId = `pledge-notes-${index}`;
-    const initials = getInitials(row.name);
-    const photoSrc = row.photoUrl
-      ? (row.photoUrl.includes(".") ? row.photoUrl : row.photoUrl + ".jpg")
-      : "";
-    const photoCell = photoSrc
-      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
-      : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
-
-    const agents = getAgents();
-    const agentOptions =
-      '<option value="">Unassigned</option>' +
-      agents
-        .map(
-          (a) =>
-            `<option value="${escapeHtml(a.name)}"${
-              a.name === row.volunteer ? " selected" : ""
-            }>${escapeHtml(a.name)}</option>`
-        )
-        .join("");
-
     const cp = row.candidatePledges || {};
     const candidateCells = candidates
       .map(
@@ -285,7 +256,6 @@ function renderPledgesTable() {
 
     tr.innerHTML = `
       <td class="pledge-cell pledge-cell--sequence">${escapeHtml(String(row.sequence ?? ""))}</td>
-      <td class="pledge-cell pledge-cell--photo">${photoCell}</td>
       <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
       <td class="pledge-cell pledge-cell--name">${escapeHtml(row.name)}</td>
       <td class="pledge-cell pledge-cell--address">${escapeHtml(row.permanentAddress || "")}</td>
@@ -304,53 +274,12 @@ function renderPledgesTable() {
         </select>
         </span>
       </td>
-      <td class="pledge-cell pledge-cell--island">${escapeHtml(row.ballotBox || "")}</td>
-      <td class="pledge-cell pledge-cell--volunteer">
-        <select class="inline-select pledge-agent-select">
-          ${agentOptions}
-        </select>
-      </td>
-      <td class="pledge-cell pledge-cell--met">
-        <select id="${metSelectId}" class="inline-select">
-          <option value="not-met"${
-            row.metStatus === "not-met" ? " selected" : ""
-          }>No</option>
-          <option value="met"${
-            row.metStatus === "met" ? " selected" : ""
-          }>Yes</option>
-        </select>
-      </td>
-      <td class="pledge-cell pledge-cell--persuadable">
-        <select id="${persuadableSelectId}" class="inline-select">
-          <option value="unknown"${
-            row.persuadable === "unknown" ? " selected" : ""
-          }>Unknown</option>
-          <option value="yes"${
-            row.persuadable === "yes" ? " selected" : ""
-          }>Yes</option>
-          <option value="no"${
-            row.persuadable === "no" ? " selected" : ""
-          }>No</option>
-          <option value="50%"${
-            row.persuadable === "50%" ? " selected" : ""
-          }>50%</option>
-        </select>
-      </td>
-      <td class="pledge-cell pledge-cell--date">${row.pledgedAt || "–"}</td>
-      <td class="pledge-cell pledge-cell--notes">
-        <input id="${notesId}" type="text" class="pledge-notes-input" value="${escapeHtml(row.notes || "")}" placeholder="Add short note">
-      </td>
       ${candidateCells}
     `;
 
     pledgesTableBody.appendChild(tr);
 
     const statusSelect = tr.querySelector(`#${pledgeSelectId}`);
-    const metSelect = tr.querySelector(`#${metSelectId}`);
-    const persuadableSelect = tr.querySelector(`#${persuadableSelectId}`);
-    const notesInput = tr.querySelector(`#${notesId}`);
-    const agentSelect = tr.querySelector(".pledge-agent-select");
-
     statusSelect.addEventListener("change", () => {
       const newStatus = statusSelect.value;
       row.pledgeStatus = newStatus;
@@ -360,30 +289,10 @@ function renderPledgesTable() {
       renderPledgesTable();
       document.dispatchEvent(
         new CustomEvent("pledges-updated", {
-          detail: {
-            rows: pledgeRows,
-          },
+          detail: { rows: pledgeRows },
         })
       );
     });
-
-    metSelect.addEventListener("change", () => {
-      row.metStatus = metSelect.value;
-    });
-
-    persuadableSelect.addEventListener("change", () => {
-      row.persuadable = persuadableSelect.value;
-    });
-
-    notesInput.addEventListener("change", () => {
-      row.notes = notesInput.value;
-    });
-
-    if (agentSelect) {
-      agentSelect.addEventListener("change", () => {
-        row.volunteer = agentSelect.value || "";
-      });
-    }
 
     tr.querySelectorAll(".pledge-candidate-select").forEach((sel) => {
       const cid = sel.getAttribute("data-candidate-id");
