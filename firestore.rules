@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Campaign configuration (main app shell)
+    match /campaign/{document=**} {
+      allow create, read, update, delete: if request.auth != null;
+    }
+
+    // Core app data – require authenticated Firebase user
+    match /voters/{voterId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /agents/{agentId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Ballot box monitors
+    // Root monitor docs are managed by authenticated staff from the app shell.
+    // The public ballot-box link uses the token to access the "voted" subcollection without auth.
+    match /monitors/{token} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+
+      match /voted/{voterId} {
+        // Allow monitors (with the secret token in the URL) to mark voters as voted.
+        allow read, write: if true;
+      }
+    }
+  }
+}

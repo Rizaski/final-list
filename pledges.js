@@ -1,0 +1,544 @@
+import { openModal } from "./ui.js";
+import { updateVoterPledgeStatus } from "./voters.js";
+import { getAgents } from "./settings.js";
+
+const PAGE_SIZE = 15;
+const PLEDGE_TABLE_COLUMN_COUNT = 12;
+
+const pledgesTableBody = document.querySelector("#pledgesTable tbody");
+const pledgesPaginationEl = document.getElementById("pledgesPagination");
+const pledgeSearchEl = document.getElementById("pledgeSearch");
+const pledgeSortEl = document.getElementById("pledgeSort");
+const pledgeFilterStatusEl = document.getElementById("pledgeFilterStatus");
+const pledgeFilterIslandEl = document.getElementById("pledgeFilterIsland");
+const pledgeGroupByEl = document.getElementById("pledgeGroupBy");
+
+let pledgeRows = [];
+let pledgesCurrentPage = 1;
+
+function ensureSeedData(votersContext) {
+  const voters = votersContext.getAllVoters();
+  // Derive pledge rows dynamically from voters, without any dummy volunteers or dates.
+  pledgeRows = voters.map((v) => ({
+    voterId: v.id,
+    sequence: v.sequence ?? "",
+    nationalId: v.nationalId ?? "",
+    name: v.fullName,
+    permanentAddress: v.permanentAddress || "",
+    island: v.island || "",
+    volunteer: "",
+    pledgeStatus: v.pledgeStatus || "undecided",
+    metStatus: "not-met",
+    persuadable: "unknown",
+    pledgedAt: "",
+    notes: v.notes || "",
+    photoUrl: v.photoUrl || "",
+  }));
+  syncPledgeFilterIsland();
+}
+
+function syncPledgeFilterIsland() {
+  if (!pledgeFilterIslandEl) return;
+  const islands = [...new Set(pledgeRows.map((r) => r.island || "Unassigned").filter(Boolean))].sort();
+  const current = pledgeFilterIslandEl.value;
+  pledgeFilterIslandEl.innerHTML =
+    '<option value="all">All</option>' +
+    islands.map((i) => `<option value="${escapeHtml(i)}"${i === current ? " selected" : ""}>${escapeHtml(i)}</option>`).join("");
+}
+
+function pledgeStatusLabel(status) {
+  switch (status) {
+    case "yes":
+      return "Yes";
+    case "no":
+      return "No";
+    case "undecided":
+      return "Undecided";
+    default:
+      return "Undecided";
+  }
+}
+
+function pledgeStatusClass(status) {
+  switch (status) {
+    case "yes":
+      return "pledge-pill pledge-pill--pledged";
+    case "undecided":
+      return "pledge-pill pledge-pill--undecided";
+    default:
+      return "pledge-pill pledge-pill--not-pledged";
+  }
+}
+
+function getInitials(name) {
+  return (name || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("") || "?";
+}
+
+function escapeHtml(str) {
+  if (str == null) return "";
+  const s = String(str);
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function getFilteredSortedGroupedPledges() {
+  const query = (pledgeSearchEl?.value || "").toLowerCase().trim();
+  const filterStatus = pledgeFilterStatusEl?.value || "all";
+  const filterIsland = pledgeFilterIslandEl?.value || "all";
+  const sortBy = pledgeSortEl?.value || "sequence";
+  const groupBy = pledgeGroupByEl?.value || "none";
+
+  let list = pledgeRows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => {
+      if (filterStatus !== "all" && row.pledgeStatus !== filterStatus) return false;
+      if (filterIsland !== "all" && (row.ballotBox || "Unassigned") !== filterIsland) return false;
+      if (query) {
+        const searchable = [
+          row.name,
+          row.permanentAddress,
+          row.ballotBox,
+          row.notes,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!searchable.includes(query)) return false;
+      }
+      return true;
+    });
+
+  const cmp = (a, b) => {
+    const ra = a.row;
+    const rb = b.row;
+    switch (sortBy) {
+      case "sequence":
+        return (Number(ra.sequence) || 0) - (Number(rb.sequence) || 0);
+      case "name-asc":
+        return (ra.name || "").localeCompare(rb.name || "", "en");
+      case "name-desc":
+        return (rb.name || "").localeCompare(ra.name || "", "en");
+      case "id":
+        return (ra.nationalId || "").localeCompare(rb.nationalId || "", "en");
+      case "address":
+        return (ra.permanentAddress || "").localeCompare(rb.permanentAddress || "", "en");
+      case "pledge":
+        return (ra.pledgeStatus || "").localeCompare(rb.pledgeStatus || "", "en");
+      case "island":
+        return (ra.island || "").localeCompare(rb.island || "", "en");
+      case "volunteer":
+        return (ra.volunteer || "").localeCompare(rb.volunteer || "", "en");
+      case "met":
+        return (ra.metStatus || "").localeCompare(rb.metStatus || "", "en");
+      case "persuadable":
+        return (ra.persuadable || "").localeCompare(rb.persuadable || "", "en");
+      case "date":
+        return (ra.pledgedAt || "").localeCompare(rb.pledgedAt || "", "en");
+      case "notes":
+        return (ra.notes || "").localeCompare(rb.notes || "", "en");
+      default:
+        return (ra.name || "").localeCompare(rb.name || "", "en");
+    }
+  };
+  list.sort(cmp);
+
+  if (groupBy === "none") {
+    return list.map(({ row, index }) => ({ type: "row", row, index }));
+  }
+  const out = [];
+  let lastKey = null;
+  for (const item of list) {
+    const key =
+      groupBy === "island"
+        ? item.row.ballotBox || "Unassigned"
+        : pledgeStatusLabel(item.row.pledgeStatus);
+    if (lastKey !== key) {
+      lastKey = key;
+      out.push({ type: "group", label: key });
+    }
+    out.push({ type: "row", row: item.row, index: item.index });
+  }
+  return out;
+}
+
+function renderPledgesTable() {
+  pledgesTableBody.innerHTML = "";
+
+  const displayList = getFilteredSortedGroupedPledges();
+  const dataRows = displayList.filter((x) => x.type === "row");
+  const total = dataRows.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (pledgesCurrentPage > totalPages) pledgesCurrentPage = totalPages;
+  const start = (pledgesCurrentPage - 1) * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
+  const pageDataRows = dataRows.slice(start, end);
+
+  const pageDisplayList = [];
+  let lastGroup = null;
+  for (const rowItem of pageDataRows) {
+    const idxInDisplay = displayList.indexOf(rowItem);
+    const groupItem =
+      displayList[idxInDisplay - 1]?.type === "group"
+        ? displayList[idxInDisplay - 1]
+        : null;
+    if (groupItem && groupItem !== lastGroup) {
+      pageDisplayList.push(groupItem);
+      lastGroup = groupItem;
+    }
+    pageDisplayList.push(rowItem);
+  }
+
+  for (const item of pageDisplayList) {
+    if (item.type === "group") {
+      const tr = document.createElement("tr");
+      tr.className = "pledges-toolbar__group-header";
+      tr.innerHTML = `<td colspan="${PLEDGE_TABLE_COLUMN_COUNT}">${escapeHtml(item.label)}</td>`;
+      pledgesTableBody.appendChild(tr);
+      continue;
+    }
+    const { row, index } = item;
+    const tr = document.createElement("tr");
+    tr.dataset.rowIndex = String(index);
+
+    const pledgeSelectId = `pledge-status-${index}`;
+    const metSelectId = `met-status-${index}`;
+    const persuadableSelectId = `persuadable-${index}`;
+    const notesId = `pledge-notes-${index}`;
+    const initials = getInitials(row.name);
+    const photoCell = row.photoUrl
+      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(row.photoUrl)}" alt="" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+      : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+
+    const agents = getAgents();
+    const agentOptions =
+      '<option value="">Unassigned</option>' +
+      agents
+        .map(
+          (a) =>
+            `<option value="${escapeHtml(a.name)}"${
+              a.name === row.volunteer ? " selected" : ""
+            }>${escapeHtml(a.name)}</option>`
+        )
+        .join("");
+
+
+    tr.innerHTML = `
+      <td class="pledge-cell pledge-cell--sequence">${escapeHtml(String(row.sequence ?? ""))}</td>
+      <td class="pledge-cell pledge-cell--photo">${photoCell}</td>
+      <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
+      <td class="pledge-cell pledge-cell--name">${escapeHtml(row.name)}</td>
+      <td class="pledge-cell pledge-cell--address">${escapeHtml(row.permanentAddress || "")}</td>
+      <td class="pledge-cell pledge-cell--status">
+        <span class="${pledgeStatusClass(row.pledgeStatus)}">
+        <select id="${pledgeSelectId}" class="inline-select pledge-status-select">
+          <option value="yes"${
+            row.pledgeStatus === "yes" ? " selected" : ""
+          }>Yes</option>
+          <option value="no"${
+            row.pledgeStatus === "no" ? " selected" : ""
+          }>No</option>
+          <option value="undecided"${
+            row.pledgeStatus === "undecided" ? " selected" : ""
+          }>Undecided</option>
+        </select>
+        </span>
+      </td>
+      <td class="pledge-cell pledge-cell--island">${escapeHtml(row.ballotBox)}</td>
+      <td class="pledge-cell pledge-cell--volunteer">
+        <select class="inline-select pledge-agent-select">
+          ${agentOptions}
+        </select>
+      </td>
+      <td class="pledge-cell pledge-cell--met">
+        <select id="${metSelectId}" class="inline-select">
+          <option value="not-met"${
+            row.metStatus === "not-met" ? " selected" : ""
+          }>No</option>
+          <option value="met"${
+            row.metStatus === "met" ? " selected" : ""
+          }>Yes</option>
+        </select>
+      </td>
+      <td class="pledge-cell pledge-cell--persuadable">
+        <select id="${persuadableSelectId}" class="inline-select">
+          <option value="unknown"${
+            row.persuadable === "unknown" ? " selected" : ""
+          }>Unknown</option>
+          <option value="yes"${
+            row.persuadable === "yes" ? " selected" : ""
+          }>Yes</option>
+          <option value="no"${
+            row.persuadable === "no" ? " selected" : ""
+          }>No</option>
+          <option value="50%"${
+            row.persuadable === "50%" ? " selected" : ""
+          }>50%</option>
+        </select>
+      </td>
+      <td class="pledge-cell pledge-cell--date">${row.pledgedAt || "–"}</td>
+      <td class="pledge-cell pledge-cell--notes">
+        <input id="${notesId}" type="text" class="pledge-notes-input" value="${escapeHtml(row.notes || "")}" placeholder="Add short note">
+      </td>
+    `;
+
+    pledgesTableBody.appendChild(tr);
+
+    const statusSelect = tr.querySelector(`#${pledgeSelectId}`);
+    const metSelect = tr.querySelector(`#${metSelectId}`);
+    const persuadableSelect = tr.querySelector(`#${persuadableSelectId}`);
+    const notesInput = tr.querySelector(`#${notesId}`);
+    const agentSelect = tr.querySelector(".pledge-agent-select");
+
+    statusSelect.addEventListener("change", () => {
+      const newStatus = statusSelect.value;
+      row.pledgeStatus = newStatus;
+      row.pledgedAt =
+        newStatus === "yes" ? new Date().toISOString().slice(0, 10) : "";
+      updateVoterPledgeStatus(row.voterId, newStatus);
+      renderPledgesTable();
+      document.dispatchEvent(
+        new CustomEvent("pledges-updated", {
+          detail: {
+            rows: pledgeRows,
+          },
+        })
+      );
+    });
+
+    metSelect.addEventListener("change", () => {
+      row.metStatus = metSelect.value;
+    });
+
+    persuadableSelect.addEventListener("change", () => {
+      row.persuadable = persuadableSelect.value;
+    });
+
+    notesInput.addEventListener("change", () => {
+      row.notes = notesInput.value;
+    });
+
+    if (agentSelect) {
+      agentSelect.addEventListener("change", () => {
+        row.volunteer = agentSelect.value || "";
+      });
+    }
+  }
+
+  if (pledgesPaginationEl) {
+    const from = total === 0 ? 0 : start + 1;
+    const to = Math.min(start + PAGE_SIZE, total);
+    pledgesPaginationEl.innerHTML = `
+      <span class="pagination-bar__summary">Showing ${from}&ndash;${to} of ${total}</span>
+      <div class="pagination-bar__nav">
+        <button type="button" class="pagination-bar__btn" data-page="prev" ${pledgesCurrentPage <= 1 ? "disabled" : ""}>Previous</button>
+        <span class="pagination-bar__summary">Page ${pledgesCurrentPage} of ${totalPages}</span>
+        <button type="button" class="pagination-bar__btn" data-page="next" ${pledgesCurrentPage >= totalPages ? "disabled" : ""}>Next</button>
+      </div>
+    `;
+    pledgesPaginationEl.querySelectorAll("[data-page]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.dataset.page === "prev" && pledgesCurrentPage > 1) pledgesCurrentPage--;
+        if (btn.dataset.page === "next" && pledgesCurrentPage < totalPages) pledgesCurrentPage++;
+        renderPledgesTable();
+      });
+    });
+  }
+
+  updatePledgeSortIndicators();
+}
+
+function updatePledgeSortIndicators() {
+  const headers = document.querySelectorAll("#pledgesTable thead th.th-sortable");
+  if (!headers.length) return;
+  const sortBy = pledgeSortEl?.value || "sequence";
+  headers.forEach((th) => {
+    const key = th.getAttribute("data-sort-key");
+    th.classList.remove("is-sorted-asc", "is-sorted-desc");
+    th.removeAttribute("aria-sort");
+    if (key === "name" && (sortBy === "name-asc" || sortBy === "name-desc")) {
+      th.classList.add(sortBy === "name-asc" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "name-asc" ? "ascending" : "descending");
+    } else if (sortBy === key) {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    }
+  });
+}
+
+function bindPledgeTableHeaderSort() {
+  const thead = document.querySelector("#pledgesTable thead");
+  if (!thead) return;
+  thead.addEventListener("click", (e) => {
+    const th = e.target.closest("th.th-sortable");
+    if (!th) return;
+    const key = th.getAttribute("data-sort-key");
+    if (!key || !pledgeSortEl) return;
+    if (key === "name") {
+      pledgeSortEl.value = pledgeSortEl.value === "name-asc" ? "name-desc" : "name-asc";
+    } else {
+      pledgeSortEl.value = key;
+    }
+    pledgesCurrentPage = 1;
+    renderPledgesTable();
+  });
+}
+
+function bindPledgeToolbar() {
+  const resetPageAndRender = () => {
+    pledgesCurrentPage = 1;
+    renderPledgesTable();
+  };
+  pledgeSearchEl?.addEventListener("input", resetPageAndRender);
+  pledgeSortEl?.addEventListener("change", resetPageAndRender);
+  pledgeFilterStatusEl?.addEventListener("change", resetPageAndRender);
+  pledgeFilterIslandEl?.addEventListener("change", resetPageAndRender);
+  pledgeGroupByEl?.addEventListener("change", resetPageAndRender);
+}
+
+export function initPledgesModule(votersContext) {
+  ensureSeedData(votersContext);
+  bindPledgeToolbar();
+  bindPledgeTableHeaderSort();
+  renderPledgesTable();
+
+  document.addEventListener("agents-updated", () => {
+    renderPledgesTable();
+  });
+
+  document.addEventListener("voters-updated", () => {
+    ensureSeedData(votersContext);
+    renderPledgesTable();
+  });
+
+  pledgesTableBody.addEventListener("dblclick", (e) => {
+    const tr = e.target.closest("tr");
+    if (!tr) return;
+    const index = Number(tr.dataset.rowIndex || -1);
+    if (index < 0) return;
+    const row = pledgeRows[index];
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Voter name</label>
+          <input type="text" value="${row.name}" disabled>
+        </div>
+        <div class="form-group">
+          <label>Island / Ward</label>
+          <input type="text" value="${row.island}" disabled>
+        </div>
+        <div class="form-group">
+          <label>Assigned agent</label>
+          <select>
+            <option value="">Unassigned</option>
+            ${getAgents()
+              .map(
+                (a) =>
+                  `<option value="${a.name}"${
+                    a.name === row.volunteer ? " selected" : ""
+                  }>${a.name}</option>`
+              )
+              .join("")}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Pledge status</label>
+          <select>
+            <option value="yes"${
+              row.pledgeStatus === "yes" ? " selected" : ""
+            }>Yes</option>
+            <option value="no"${
+              row.pledgeStatus === "no" ? " selected" : ""
+            }>No</option>
+            <option value="undecided"${
+              row.pledgeStatus === "undecided" ? " selected" : ""
+            }>Undecided</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Met during door-to-door / event?</label>
+          <select>
+            <option value="not-met"${
+              row.metStatus === "not-met" ? " selected" : ""
+            }>No</option>
+            <option value="met"${
+              row.metStatus === "met" ? " selected" : ""
+            }>Yes</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Persuadable?</label>
+          <select>
+            <option value="unknown"${
+              row.persuadable === "unknown" ? " selected" : ""
+            }>Unknown</option>
+            <option value="yes"${
+              row.persuadable === "yes" ? " selected" : ""
+            }>Yes</option>
+            <option value="no"${
+              row.persuadable === "no" ? " selected" : ""
+            }>No</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea rows="3">${row.notes || ""}</textarea>
+        </div>
+      </div>
+    `;
+    const footer = document.createElement("div");
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "primary-button";
+    saveBtn.textContent = "Save changes";
+    footer.appendChild(saveBtn);
+
+    saveBtn.addEventListener("click", () => {
+      const [nameInput, islandInput, agentSelect, pledgeSelect, metSel, persSel, notesTextarea] =
+        body.querySelectorAll("input, select, textarea");
+      row.volunteer = agentSelect.value || "";
+      row.pledgeStatus = pledgeSelect.value;
+      row.metStatus = metSel.value;
+      row.persuadable = persSel.value;
+      row.notes = notesTextarea.value;
+      if (row.pledgeStatus === "yes") {
+        row.pledgedAt = new Date().toISOString().slice(0, 10);
+      } else {
+        row.pledgedAt = "";
+      }
+      renderPledgesTable();
+      document.dispatchEvent(
+        new CustomEvent("pledges-updated", {
+          detail: { rows: pledgeRows },
+        })
+      );
+    });
+
+    openModal({
+      title: "Edit pledge",
+      body,
+      footer,
+    });
+  });
+
+  return {
+    getPledges: () => [...pledgeRows],
+  };
+}
+
+export function getPledgeStatsFromPledges(scope) {
+  const pledgedCount = pledgeRows.filter(
+    (r) => r.pledgeStatus === "yes"
+  ).length;
+  return {
+    pledgedCount,
+  };
+}
+

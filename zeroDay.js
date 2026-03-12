@@ -1,0 +1,1226 @@
+/**
+ * Zero Day module: Transportation Management & Vote Marking
+ * Election day transport trips and voter vote-marking.
+ */
+
+import { openModal, closeModal } from "./ui.js";
+import { firebaseInitPromise } from "./firebase.js";
+import { getAgents } from "./settings.js";
+
+const zeroDayAddTripButton = document.getElementById("zeroDayAddTripButton");
+const zeroDayTransportMenuButton = document.getElementById("zeroDayTransportMenuButton");
+const zeroDayTransportMenu = document.getElementById("zeroDayTransportMenu");
+const zeroDayMarkVotedButton = document.getElementById("zeroDayMarkVotedButton");
+const zeroDayVoteSearch = document.getElementById("zeroDayVoteSearch");
+const zeroDayVoteFilter = document.getElementById("zeroDayVoteFilter");
+const zeroDayTripsTableBody = document.querySelector("#zeroDayTripsTable tbody");
+const zeroDayVoteCardsContainer = document.getElementById("zeroDayVoteCards");
+const zeroDayVotePaginationEl = document.getElementById("zeroDayVotePagination");
+const zeroDayAddMonitorButton = document.getElementById("zeroDayAddMonitorButton");
+const zeroDayMonitorsTableBody = document.querySelector("#zeroDayMonitorsTable tbody");
+
+const TRIP_TYPES = [
+  { value: "flight", label: "Flight" },
+  { value: "speedboat", label: "Speed boat" },
+];
+
+const TRIP_STATUSES = ["Scheduled", "In progress", "Completed"];
+const PAGE_SIZE = 15;
+const MONITORS_STORAGE_KEY = "zero-day-monitors";
+const VOTED_STORAGE_KEY = "zero-day-voted";
+
+let zeroDayTrips = [];
+let zeroDayVotedEntries = []; // { voterId, timeMarked }
+let zeroDayMonitors = []; // { id, name, mobile, ballotBox, voterIds: [], shareToken }
+let votersContext = null;
+let pledgeContextRef = null; // optional: { getPledges() } for agent lookup and sync
+let zeroDayVoteCurrentPage = 1;
+let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
+
+function loadMonitors() {
+  try {
+    const raw = localStorage.getItem(MONITORS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) zeroDayMonitors = parsed;
+    }
+  } catch (_) {}
+}
+
+function saveMonitors() {
+  try {
+    localStorage.setItem(MONITORS_STORAGE_KEY, JSON.stringify(zeroDayMonitors));
+  } catch (_) {}
+}
+
+function loadVotedEntries() {
+  try {
+    const raw = localStorage.getItem(VOTED_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) zeroDayVotedEntries = parsed;
+    }
+  } catch (_) {}
+}
+
+function saveVotedEntries() {
+  try {
+    localStorage.setItem(VOTED_STORAGE_KEY, JSON.stringify(zeroDayVotedEntries));
+  } catch (_) {}
+}
+
+/** Fetches voted entries from Firestore (all monitors) and merges into zeroDayVotedEntries so ballot box counts reflect votes from the link. */
+async function syncVotedFromFirestore() {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getVotedForMonitor) return;
+    loadMonitors();
+    const existingById = new Map(zeroDayVotedEntries.map((e) => [e.voterId, e.timeMarked]));
+    for (const m of zeroDayMonitors) {
+      const token = m.shareToken;
+      if (!token) continue;
+      const entries = await api.getVotedForMonitor(token);
+      for (const { voterId, timeMarked } of entries) {
+        const existing = existingById.get(voterId);
+        if (!existing || (timeMarked && timeMarked > (existing || ""))) {
+          existingById.set(voterId, timeMarked || existing || "");
+        }
+      }
+    }
+    zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({ voterId, timeMarked: timeMarked || "" }));
+    saveVotedEntries();
+  } catch (_) {}
+}
+
+/** Returns set of voter IDs that have been marked as voted (for reports). */
+export function getVotedVoterIds() {
+  loadVotedEntries();
+  return new Set(zeroDayVotedEntries.map((e) => e.voterId));
+}
+
+function generateShareToken() {
+  return "zd-" + Math.random().toString(36).slice(2, 12) + "-" + Date.now().toString(36);
+}
+
+function escapeHtml(str) {
+  if (str == null) return "";
+  const s = String(str);
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatDateTime(dtString) {
+  if (!dtString) return "–";
+  const d = new Date(dtString);
+  return d.toLocaleString("en-MV", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function initZeroDayTabs() {
+  const tabButtons = document.querySelectorAll("[data-zero-day-tab]");
+  const panels = document.querySelectorAll(".zero-day-tabs__panel");
+
+  function switchToTab(tabKey) {
+    tabButtons.forEach((btn) => {
+      const isActive = btn.getAttribute("data-zero-day-tab") === tabKey;
+      btn.classList.toggle("is-active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+    panels.forEach((panel) => {
+      panel.hidden = panel.id !== `zero-day-tab-${tabKey}`;
+    });
+  }
+
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      switchToTab(btn.getAttribute("data-zero-day-tab"));
+    });
+  });
+
+  switchToTab("transport");
+}
+
+function getFilteredTransportTrips() {
+  if (transportViewFilter === "flight") return zeroDayTrips.filter((t) => t.tripType === "flight");
+  if (transportViewFilter === "speedboat") return zeroDayTrips.filter((t) => t.tripType === "speedboat");
+  return zeroDayTrips;
+}
+
+function getEmptyTransportMessage() {
+  if (transportViewFilter === "flight") return "No flights. Add a trip and select type Flight.";
+  if (transportViewFilter === "speedboat") return "No speed boats. Add a trip and select type Speed boat.";
+  return "No trips yet. Add a trip and choose Flight or Speed boat.";
+}
+
+function renderZeroDayTripsTable() {
+  if (!zeroDayTripsTableBody) return;
+  const trips = getFilteredTransportTrips();
+  zeroDayTripsTableBody.innerHTML = "";
+  if (!trips.length) {
+    zeroDayTripsTableBody.innerHTML = `
+      <tr>
+        <td colspan="8" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
+      </tr>
+    `;
+    return;
+  }
+  trips.forEach((trip) => {
+    const typeLabel = TRIP_TYPES.find((t) => t.value === trip.tripType)?.label ?? trip.tripType ?? "–";
+    const tr = document.createElement("tr");
+    tr.dataset.tripId = String(trip.id);
+    tr.innerHTML = `
+      <td><span class="badge badge--unknown">${escapeHtml(typeLabel)}</span></td>
+      <td>${escapeHtml(trip.route)}</td>
+      <td>${escapeHtml(trip.vehicle)}</td>
+      <td>${escapeHtml(trip.driver)}</td>
+      <td>${formatDateTime(trip.pickupTime)}</td>
+      <td>${trip.voterCount ?? 0}</td>
+      <td><span class="badge badge--unknown">${escapeHtml(trip.status)}</span></td>
+      <td style="text-align:right;">
+        <button class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
+        <button class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
+      </td>
+    `;
+    zeroDayTripsTableBody.appendChild(tr);
+  });
+}
+
+function openTripForm(existing, defaultType) {
+  const isEdit = !!existing;
+  const tripType = existing?.tripType || defaultType || "flight";
+  const typeLabel = TRIP_TYPES.find((t) => t.value === tripType)?.label || "Trip";
+
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="zdTripType">Type</label>
+        <select id="zdTripType">
+          ${TRIP_TYPES.map(
+            (t) =>
+              `<option value="${t.value}"${tripType === t.value ? " selected" : ""}>${t.label}</option>`
+          ).join("")}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="zdTripRoute">Trip / Route name</label>
+        <input id="zdTripRoute" type="text" value="${escapeHtml(existing?.route || "")}" placeholder="e.g. North pickup run 1">
+      </div>
+      <div class="form-group">
+        <label for="zdTripDriver">Driver / Pilot / Captain</label>
+        <input id="zdTripDriver" type="text" value="${escapeHtml(existing?.driver || "")}" placeholder="Name">
+      </div>
+      <div class="form-group">
+        <label for="zdTripVehicle">Vessel name / Flight number</label>
+        <input id="zdTripVehicle" type="text" value="${escapeHtml(existing?.vehicle || "")}" placeholder="e.g. MDR-301 or Flight XY123">
+      </div>
+      <div class="form-group">
+        <label for="zdTripPickupTime">Pickup time</label>
+        <input id="zdTripPickupTime" type="datetime-local" value="${
+          existing && existing.pickupTime
+            ? existing.pickupTime.slice(0, 16)
+            : new Date().toISOString().slice(0, 16)
+        }">
+      </div>
+      <div class="form-group">
+        <label for="zdTripStatus">Status</label>
+        <select id="zdTripStatus">
+          ${TRIP_STATUSES.map(
+            (s) =>
+              `<option value="${s}"${existing?.status === s ? " selected" : ""}>${s}</option>`
+          ).join("")}
+        </select>
+      </div>
+    </div>
+  `;
+
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = isEdit ? "Save changes" : "Add trip";
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+
+  saveBtn.addEventListener("click", () => {
+    const type = body.querySelector("#zdTripType").value;
+    const route = body.querySelector("#zdTripRoute").value.trim();
+    const driver = body.querySelector("#zdTripDriver").value.trim();
+    const vehicle = body.querySelector("#zdTripVehicle").value.trim();
+    const pickupTime = body.querySelector("#zdTripPickupTime").value;
+    const status = body.querySelector("#zdTripStatus").value;
+    if (!route) return;
+    if (isEdit) {
+      existing.tripType = type;
+      existing.route = route;
+      existing.driver = driver;
+      existing.vehicle = vehicle;
+      existing.pickupTime = pickupTime ? new Date(pickupTime).toISOString() : "";
+      existing.status = status;
+    } else {
+      const nextId =
+        zeroDayTrips.reduce((max, t) => Math.max(max, t.id), 0) + 1;
+      zeroDayTrips.push({
+        id: nextId,
+        tripType: type,
+        route,
+        driver,
+        vehicle,
+        pickupTime: pickupTime ? new Date(pickupTime).toISOString() : "",
+        status: status || "Scheduled",
+        voterCount: 0,
+      });
+    }
+    renderZeroDayTripsTable();
+    closeModal();
+  });
+
+  openModal({
+    title: isEdit ? "Edit trip" : "Add trip",
+    body,
+    footer,
+  });
+}
+
+function deleteTrip(id) {
+  const idx = zeroDayTrips.findIndex((t) => t.id === id);
+  if (idx === -1) return;
+  zeroDayTrips.splice(idx, 1);
+  renderZeroDayTripsTable();
+}
+
+function getUniqueBallotBoxes() {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const set = new Set();
+  voters.forEach((v) => {
+    const box = (v.ballotBox || "").trim();
+    if (box) set.add(box);
+  });
+  return Array.from(set).sort();
+}
+
+function renderMonitorsTable() {
+  if (!zeroDayMonitorsTableBody) return;
+  zeroDayMonitorsTableBody.innerHTML = "";
+  if (!zeroDayMonitors.length) {
+    zeroDayMonitorsTableBody.innerHTML = `
+      <tr>
+        <td colspan="5" class="text-muted" style="text-align: center; padding: 24px;">No monitors yet. Add a monitor and assign voters from their ballot box.</td>
+      </tr>
+    `;
+    return;
+  }
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  zeroDayMonitors.forEach((m) => {
+    const voterCount = (m.voterIds || []).length;
+    const path = window.location.pathname || "/";
+    const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
+    const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
+    const monitorUrl = `${ballotBoxUrl}?monitor=${encodeURIComponent(m.shareToken)}`;
+    const accessCode = (m.shareToken || "").split("-")[1] || m.shareToken;
+    const tr = document.createElement("tr");
+    tr.dataset.monitorId = String(m.id);
+    tr.innerHTML = `
+      <td colspan="5">
+        <div class="monitor-card">
+          <div class="monitor-card__ballot">
+            <span class="monitor-card__ballot-title">${escapeHtml(m.ballotBox || "Ballot box")}</span>
+            <span class="monitor-card__ballot-meta">Ballot access for assigned monitor</span>
+          </div>
+          <div>
+            <div class="monitor-card__monitor">
+              <span><strong>Monitor:</strong> ${escapeHtml(m.name || "—")}</span>
+              <span><strong>Mobile:</strong> ${escapeHtml(m.mobile || "—")}</span>
+              <span class="monitor-card__voters"><strong>Voters:</strong> ${voterCount}</span>
+            </div>
+            <div class="monitor-card__link">
+              <span><strong>Link:</strong> <code class="monitor-link-preview">${escapeHtml(monitorUrl)}</code></span>
+              <span class="monitor-card__access"><strong>Access code:</strong> ${escapeHtml(accessCode)}</span>
+            </div>
+          </div>
+          <div class="monitor-card__actions">
+            <button class="ghost-button ghost-button--small" data-assign-voters="${m.id}" title="Assign voters from this ballot box">Assign voters</button>
+            <button class="ghost-button ghost-button--small" data-copy-link="${m.id}" title="Copy link &amp; code">Copy link</button>
+            <button class="ghost-button ghost-button--small" data-delete-monitor="${m.id}" title="Delete this monitor and its access link">Delete link</button>
+          </div>
+        </div>
+      </td>
+    `;
+    zeroDayMonitorsTableBody.appendChild(tr);
+  });
+}
+
+function openAddMonitorForm(existing) {
+  const isEdit = !!existing;
+  const ballotBoxes = getUniqueBallotBoxes();
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="monitorName">Monitor name</label>
+        <input id="monitorName" type="text" value="${escapeHtml(existing?.name || "")}" placeholder="e.g. Ahmed Hassan">
+      </div>
+      <div class="form-group">
+        <label for="monitorMobile">Mobile</label>
+        <input id="monitorMobile" type="text" value="${escapeHtml(existing?.mobile || "")}" placeholder="e.g. 960 123 4567">
+      </div>
+      <div class="form-group">
+        <label for="monitorBallotBox">Ballot box</label>
+        <select id="monitorBallotBox">
+          <option value="">Select ballot box…</option>
+          ${ballotBoxes.map((b) => `<option value="${escapeHtml(b)}"${(existing?.ballotBox || "") === b ? " selected" : ""}>${escapeHtml(b)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    ${!isEdit ? "<p class=\"helper-text\">After adding, use “Assign voters” to add all voters from this ballot box to the monitor’s list. Then use “Copy link” to share.</p>" : ""}
+  `;
+
+  const footer = document.createElement("div");
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = isEdit ? "Save changes" : "Add monitor";
+  footer.appendChild(saveBtn);
+
+  saveBtn.addEventListener("click", () => {
+    const name = body.querySelector("#monitorName").value.trim();
+    const mobile = body.querySelector("#monitorMobile").value.trim();
+    const ballotBox = body.querySelector("#monitorBallotBox").value.trim();
+    if (!name || !ballotBox) return;
+
+    if (isEdit) {
+      existing.name = name;
+      existing.mobile = mobile;
+      existing.ballotBox = ballotBox;
+      saveMonitors();
+      syncMonitorToFirestore(existing);
+    } else {
+      const nextId = zeroDayMonitors.reduce((max, m) => Math.max(max, m.id), 0) + 1;
+      const newMonitor = {
+        id: nextId,
+        name,
+        mobile,
+        ballotBox,
+        voterIds: [],
+        shareToken: generateShareToken(),
+        createdAt: new Date().toISOString(),
+      };
+      zeroDayMonitors.push(newMonitor);
+      saveMonitors();
+      syncMonitorToFirestore(newMonitor);
+    }
+    renderMonitorsTable();
+    closeModal();
+  });
+
+  openModal({
+    title: isEdit ? "Edit monitor" : "Add monitor",
+    body,
+    footer,
+  });
+}
+
+async function syncMonitorToFirestore(monitor) {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.setMonitorDoc) return;
+    const voterIds = monitor.voterIds || [];
+    const allVoters = votersContext ? votersContext.getAllVoters() : [];
+    const pledgeRows = pledgeContextRef && typeof pledgeContextRef.getPledges === "function" ? pledgeContextRef.getPledges() : [];
+    const volunteerByVoterId = new Map(pledgeRows.map((r) => [r.voterId, r.volunteer || ""]));
+    const voters = voterIds
+      .map((id) => allVoters.find((v) => v.id === id))
+      .filter(Boolean)
+      .map((v) => ({
+        id: v.id,
+        fullName: v.fullName || "",
+        nationalId: v.nationalId || v.id || "",
+        permanentAddress: v.permanentAddress || "",
+        phone: v.phone || "",
+        pledgeStatus: v.pledgeStatus || "undecided",
+        volunteer: volunteerByVoterId.get(v.id) || "",
+        sequence: v.sequence != null ? v.sequence : "",
+      }));
+    await api.setMonitorDoc(monitor.shareToken, {
+      ballotBox: monitor.ballotBox || "",
+      name: monitor.name || "",
+      mobile: monitor.mobile || "",
+      voterIds,
+      voters,
+      createdAt: monitor.createdAt || new Date().toISOString(),
+    });
+  } catch (_) {}
+}
+
+function assignVotersFromBallotBox(monitorId) {
+  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
+  if (!monitor || !votersContext) return;
+  const voters = votersContext.getAllVoters();
+  const ids = voters.filter((v) => (v.ballotBox || "").trim() === monitor.ballotBox).map((v) => v.id);
+  monitor.voterIds = [...new Set(ids)];
+  saveMonitors();
+  syncMonitorToFirestore(monitor);
+  renderMonitorsTable();
+}
+
+function copyMonitorLink(monitorId) {
+  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
+  if (!monitor) return;
+  const path = window.location.pathname || "/";
+  const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
+  const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
+  const url = `${ballotBoxUrl}?monitor=${encodeURIComponent(monitor.shareToken)}`;
+  const accessCode = (monitor.shareToken || "").split("-")[1] || monitor.shareToken;
+  const payload = `${url}\nAccess code: ${accessCode}`;
+  navigator.clipboard.writeText(payload).then(() => {
+    if (typeof window.showToast === "function") window.showToast("Link and access code copied to clipboard");
+    else alert("Link and access code copied to clipboard.");
+  }).catch(() => alert("Could not copy. Link: " + url + " (Access code: " + accessCode + ")"));
+}
+
+function deleteMonitorLink(monitorId) {
+  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
+  if (!monitor) return;
+  const label = monitor.ballotBox || monitor.name || "this monitor";
+  if (!confirm(`Delete the access link for "${label}"? The monitor will be removed and the link will stop working.`)) return;
+  const token = monitor.shareToken;
+  const idx = zeroDayMonitors.findIndex((m) => m.id === monitorId);
+  if (idx !== -1) zeroDayMonitors.splice(idx, 1);
+  saveMonitors();
+  firebaseInitPromise.then((api) => api.deleteMonitorDoc && api.deleteMonitorDoc(token)).catch(() => {});
+  renderMonitorsTable();
+  if (window.appNotifications) {
+    window.appNotifications.push({ title: "Monitor access link deleted", meta: String(label) });
+  }
+}
+
+function getVoteBoxSummaries() {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const filter = zeroDayVoteFilter?.value || "all";
+  const query = (zeroDayVoteSearch?.value || "").toLowerCase().trim();
+  const votedSet = new Set(zeroDayVotedEntries.map((e) => e.voterId));
+
+  const boxes = new Map();
+  voters.forEach((v) => {
+    const key = (v.ballotBox || v.island || "Unassigned").trim();
+    if (!boxes.has(key)) {
+      boxes.set(key, { box: key, total: 0, voted: 0, island: v.island || "" });
+    }
+    const entry = boxes.get(key);
+    entry.total += 1;
+    if (votedSet.has(v.id)) entry.voted += 1;
+  });
+
+  let list = Array.from(boxes.values());
+
+  if (filter === "voted") list = list.filter((b) => b.voted === b.total && b.total > 0);
+  if (filter === "not-voted") list = list.filter((b) => b.voted === 0 && b.total > 0);
+
+  if (query) {
+    list = list.filter(
+      (b) =>
+        b.box.toLowerCase().includes(query) ||
+        (b.island || "").toLowerCase().includes(query)
+    );
+  }
+
+  return list;
+}
+
+/** Gets or creates a monitor for the ballot box (same grouping as cards: ballotBox || island || "Unassigned"). Always refreshes voter list so Firestore has current voters. Returns the monitor (does not copy link). */
+function getOrEnsureMonitorForBallotBox(ballotBox) {
+  const boxKey = (ballotBox || "").trim();
+  const allVoters = votersContext ? votersContext.getAllVoters() : [];
+  const ids = allVoters
+    .filter((v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey)
+    .map((v) => v.id);
+  const voterIds = [...new Set(ids)];
+
+  let monitor = zeroDayMonitors.find((m) => (m.ballotBox || "").trim() === boxKey);
+  if (!monitor) {
+    const nextId =
+      zeroDayMonitors.reduce((max, m) => Math.max(max, m.id), 0) + 1;
+    monitor = {
+      id: nextId,
+      name: "",
+      mobile: "",
+      ballotBox: boxKey,
+      voterIds,
+      shareToken: generateShareToken(),
+    };
+    zeroDayMonitors.push(monitor);
+  } else {
+    monitor.voterIds = voterIds;
+  }
+  saveMonitors();
+  syncMonitorToFirestore(monitor);
+  renderMonitorsTable();
+  return monitor;
+}
+
+function ensureMonitorForBallotBox(ballotBox) {
+  const monitor = getOrEnsureMonitorForBallotBox(ballotBox);
+  copyMonitorLink(monitor.id);
+}
+
+function renderZeroDayVoteTable() {
+  if (!zeroDayVoteCardsContainer) return;
+  zeroDayVoteCardsContainer.innerHTML = "";
+  const boxes = getVoteBoxSummaries();
+  const total = boxes.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (zeroDayVoteCurrentPage > totalPages) zeroDayVoteCurrentPage = totalPages;
+  const start = (zeroDayVoteCurrentPage - 1) * PAGE_SIZE;
+  const pageBoxes = boxes.slice(start, start + PAGE_SIZE);
+
+  if (boxes.length === 0) {
+    const div = document.createElement("div");
+    div.className = "helper-text";
+    div.style.padding = "12px 0";
+    div.textContent =
+      votersContext && votersContext.getAllVoters().length > 0
+        ? "No ballot boxes match the current filter."
+        : "Ballot boxes will appear here once voters are imported in Settings → Data.";
+    zeroDayVoteCardsContainer.appendChild(div);
+  } else {
+    pageBoxes.forEach((box) => {
+      const card = document.createElement("div");
+      card.className = "vote-box-card";
+      const percentage =
+        box.total === 0 ? 0 : Math.round((box.voted / box.total) * 100);
+      card.innerHTML = `
+        <div class="vote-box-card__header">
+          <div>
+            <div class="vote-box-card__title">${escapeHtml(box.box)}</div>
+            <div class="vote-box-card__meta">${escapeHtml(box.island || "")}</div>
+          </div>
+          <span class="badge badge--unknown">${percentage}% voted</span>
+        </div>
+        <div class="vote-box-card__stats">
+          <span><strong>Total:</strong> ${box.total}</span>
+          <span><strong>Voted:</strong> ${box.voted}</span>
+          <span><strong>Not yet:</strong> ${Math.max(0, box.total - box.voted)}</span>
+        </div>
+        <div class="vote-box-card__actions">
+          <button type="button" class="ghost-button ghost-button--small" data-open-box="${escapeHtml(
+            box.box
+          )}">Open list</button>
+          <button type="button" class="ghost-button ghost-button--small" data-share-box="${escapeHtml(
+            box.box
+          )}">Share monitor link</button>
+        </div>
+      `;
+      zeroDayVoteCardsContainer.appendChild(card);
+    });
+  }
+
+  if (zeroDayVotePaginationEl) {
+    const from = total === 0 ? 0 : start + 1;
+    const to = Math.min(start + PAGE_SIZE, total);
+    zeroDayVotePaginationEl.innerHTML = `
+      <span class="pagination-bar__summary">Showing ${from}&ndash;${to} of ${total}</span>
+      <div class="pagination-bar__nav">
+        <button type="button" class="pagination-bar__btn" data-page="prev" ${zeroDayVoteCurrentPage <= 1 ? "disabled" : ""}>Previous</button>
+        <span class="pagination-bar__summary">Page ${zeroDayVoteCurrentPage} of ${totalPages}</span>
+        <button type="button" class="pagination-bar__btn" data-page="next" ${zeroDayVoteCurrentPage >= totalPages ? "disabled" : ""}>Next</button>
+      </div>
+    `;
+    zeroDayVotePaginationEl.querySelectorAll("[data-page]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.dataset.page === "prev" && zeroDayVoteCurrentPage > 1)
+          zeroDayVoteCurrentPage--;
+        if (btn.dataset.page === "next" && zeroDayVoteCurrentPage < totalPages)
+          zeroDayVoteCurrentPage++;
+        renderZeroDayVoteTable();
+      });
+    });
+  }
+}
+
+function openMarkVotedModal() {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const votedSet = new Set(zeroDayVotedEntries.map((e) => e.voterId));
+  const notVotedYet = voters.filter((v) => !votedSet.has(v.id));
+
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="zdMarkVoter">Voter</label>
+        <select id="zdMarkVoter">
+          <option value="">Select a voter…</option>
+          ${notVotedYet
+            .map(
+              (v) =>
+                `<option value="${escapeHtml(v.id)}">${escapeHtml(v.fullName || v.id)} ${v.nationalId ? "(" + escapeHtml(v.nationalId) + ")" : ""}</option>`
+            )
+            .join("")}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="zdMarkTime">Time marked</label>
+        <input id="zdMarkTime" type="datetime-local" value="${new Date().toISOString().slice(0, 16)}">
+      </div>
+    </div>
+    ${notVotedYet.length === 0 ? '<p class="helper-text">All voters in the list have already been marked as voted.</p>' : ""}
+  `;
+
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Mark as voted";
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+
+  if (notVotedYet.length === 0) saveBtn.disabled = true;
+
+  saveBtn.addEventListener("click", () => {
+    const voterId = body.querySelector("#zdMarkVoter").value.trim();
+    const timeVal = body.querySelector("#zdMarkTime").value;
+    if (!voterId) return;
+    const timeMarked = timeVal ? new Date(timeVal).toISOString() : new Date().toISOString();
+    zeroDayVotedEntries.push({ voterId, timeMarked });
+    saveVotedEntries();
+    renderZeroDayVoteTable();
+    if (window.appNotifications) {
+      const voters = votersContext ? votersContext.getAllVoters() : [];
+      const voter = voters.find((v) => v.id === voterId);
+      window.appNotifications.push({
+        title: "Voter marked as voted",
+        meta: voter ? `${voter.fullName} • ${voter.nationalId || ""}` : voterId,
+      });
+    }
+    closeModal();
+  });
+
+  openModal({
+    title: "Mark voter as voted",
+    body,
+    footer,
+  });
+}
+
+function bindZeroDayToolbar() {
+  const go = () => {
+    zeroDayVoteCurrentPage = 1;
+    renderZeroDayVoteTable();
+  };
+  if (zeroDayVoteSearch) zeroDayVoteSearch.addEventListener("input", go);
+  if (zeroDayVoteFilter) zeroDayVoteFilter.addEventListener("change", go);
+}
+
+function bindTransportMenu() {
+  if (!zeroDayTransportMenuButton || !zeroDayTransportMenu) return;
+  zeroDayTransportMenuButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const willOpen = zeroDayTransportMenu.hidden;
+    zeroDayTransportMenu.hidden = !willOpen;
+    zeroDayTransportMenuButton.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  });
+  zeroDayTransportMenu.querySelectorAll("[data-transport-view]").forEach((item) => {
+    item.addEventListener("click", () => {
+      transportViewFilter = item.getAttribute("data-transport-view");
+      zeroDayTransportMenu.hidden = true;
+      zeroDayTransportMenuButton.setAttribute("aria-expanded", "false");
+      renderZeroDayTripsTable();
+    });
+  });
+  document.addEventListener("click", (e) => {
+    if (zeroDayTransportMenu.hidden) return;
+    if (zeroDayTransportMenuButton?.contains(e.target) || zeroDayTransportMenu?.contains(e.target)) return;
+    zeroDayTransportMenu.hidden = true;
+    zeroDayTransportMenuButton?.setAttribute("aria-expanded", "false");
+  });
+}
+
+export function initZeroDayModule(votersContextParam, options = {}) {
+  votersContext = votersContextParam || null;
+  pledgeContextRef = options.pledgesContext || null;
+  loadVotedEntries();
+  loadMonitors();
+  initZeroDayTabs();
+  bindTransportMenu();
+  renderZeroDayTripsTable();
+  renderZeroDayVoteTable();
+  renderMonitorsTable();
+  bindZeroDayToolbar();
+
+  if (zeroDayAddTripButton) {
+    zeroDayAddTripButton.addEventListener("click", () => openTripForm(null));
+  }
+
+  if (zeroDayAddMonitorButton) {
+    zeroDayAddMonitorButton.addEventListener("click", () => openAddMonitorForm(null));
+  }
+
+  const monitorsPanel = document.getElementById("zero-day-tab-monitors");
+  if (monitorsPanel) {
+    monitorsPanel.addEventListener("click", (e) => {
+      const assignBtn = e.target.closest("[data-assign-voters]");
+      const copyBtn = e.target.closest("[data-copy-link]");
+      const deleteBtn = e.target.closest("[data-delete-monitor]");
+      if (assignBtn) {
+        const id = Number(assignBtn.getAttribute("data-assign-voters"));
+        assignVotersFromBallotBox(id);
+      } else if (copyBtn) {
+        const id = Number(copyBtn.getAttribute("data-copy-link"));
+        copyMonitorLink(id);
+      } else if (deleteBtn) {
+        const id = Number(deleteBtn.getAttribute("data-delete-monitor"));
+        deleteMonitorLink(id);
+      }
+    });
+  }
+
+  const transportPanel = document.getElementById("zero-day-tab-transport");
+  if (transportPanel) {
+    transportPanel.addEventListener("click", (e) => {
+      const editBtn = e.target.closest("[data-edit-trip]");
+      const deleteBtn = e.target.closest("[data-delete-trip]");
+      if (editBtn) {
+        const id = Number(editBtn.getAttribute("data-edit-trip"));
+        const trip = zeroDayTrips.find((t) => t.id === id);
+        if (trip) openTripForm(trip);
+      } else if (deleteBtn) {
+        const id = Number(deleteBtn.getAttribute("data-delete-trip"));
+        deleteTrip(id);
+      }
+    });
+  }
+
+  if (zeroDayMarkVotedButton) {
+    zeroDayMarkVotedButton.addEventListener("click", openMarkVotedModal);
+  }
+
+  document.addEventListener("zero-day-refresh", () => {
+    zeroDayVoteCurrentPage = 1;
+    renderZeroDayVoteTable();
+  });
+
+  document.addEventListener("voters-updated", () => {
+    renderZeroDayVoteTable();
+  });
+
+  const zeroDaySyncVotedBtn = document.getElementById("zeroDaySyncVotedBtn");
+  if (zeroDaySyncVotedBtn) {
+    zeroDaySyncVotedBtn.addEventListener("click", async () => {
+      zeroDaySyncVotedBtn.disabled = true;
+      await syncVotedFromFirestore();
+      zeroDayVoteCurrentPage = 1;
+      renderZeroDayVoteTable();
+      zeroDaySyncVotedBtn.disabled = false;
+      if (typeof window.showToast === "function") window.showToast("Votes synced from ballot box links.");
+    });
+  }
+
+  firebaseInitPromise.then(async (api) => {
+    if (api.ready && api.getVotedForMonitor) {
+      await syncVotedFromFirestore();
+      zeroDayVoteCurrentPage = 1;
+      renderZeroDayVoteTable();
+    }
+  }).catch(() => {});
+
+  if (zeroDayVoteCardsContainer) {
+    zeroDayVoteCardsContainer.addEventListener("click", (e) => {
+      const openBtn = e.target.closest("[data-open-box]");
+      const shareBtn = e.target.closest("[data-share-box]");
+      if (openBtn) {
+        const box = openBtn.getAttribute("data-open-box");
+        if (box && votersContext) {
+          const monitor = getOrEnsureMonitorForBallotBox(box);
+          const path = window.location.pathname || "/";
+          const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
+          const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
+          const url = `${ballotBoxUrl}?monitor=${encodeURIComponent(monitor.shareToken)}`;
+          window.open(url, "_blank", "noopener,noreferrer");
+          if (typeof window.showToast === "function") {
+            window.showToast("List opened in new tab. Share that tab’s URL to view from another browser.");
+          }
+        }
+      } else if (shareBtn) {
+        const box = shareBtn.getAttribute("data-share-box");
+        if (box) ensureMonitorForBallotBox(box);
+      }
+    });
+  }
+}
+
+const MONITOR_VIEW_PAGE_SIZE = 15;
+const MONITOR_UNLOCK_STORAGE_PREFIX = "monitorUnlocked_";
+let monitorViewCurrentPage = 1;
+
+function getMonitorAccessCode(monitor) {
+  const token = (monitor && monitor.shareToken) || "";
+  const part = token.split("-")[1];
+  return part || token;
+}
+
+export function initMonitorView(token, votersContextParam, options = {}) {
+  const isRemote = options.remoteMonitor != null;
+  const isBallotBoxOnly = !!(options.ballotBoxOnly && votersContextParam);
+  let monitor = options.remoteMonitor;
+  let assignedVoters = [];
+  let votedEntries = options.remoteVotedEntries != null ? options.remoteVotedEntries : [];
+
+  if (isBallotBoxOnly) {
+    loadVotedEntries();
+    const allVoters = votersContextParam.getAllVoters();
+    const boxKey = (options.ballotBoxOnly || "").trim();
+    assignedVoters = allVoters.filter(
+      (v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey
+    );
+    monitor = { ballotBox: options.ballotBoxOnly, voterIds: assignedVoters.map((v) => v.id) };
+    votedEntries = zeroDayVotedEntries;
+  } else if (!isRemote) {
+    loadMonitors();
+    loadVotedEntries();
+    monitor = zeroDayMonitors.find((m) => m.shareToken === token);
+    const allVoters = (votersContextParam && votersContextParam.getAllVoters) ? votersContextParam.getAllVoters() : [];
+    const voterIds = monitor ? (monitor.voterIds || []) : [];
+    const voterIdsSet = new Set(voterIds);
+    if (voterIdsSet.size > 0) {
+      assignedVoters = allVoters.filter((v) => voterIdsSet.has(v.id));
+    } else if (monitor && monitor.ballotBox) {
+      const boxKey = String(monitor.ballotBox || "").trim();
+      assignedVoters = allVoters.filter(
+        (v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey
+      );
+    } else {
+      assignedVoters = [];
+    }
+    votedEntries = zeroDayVotedEntries;
+  } else {
+    const voters = options.remoteMonitor.voters || [];
+    assignedVoters = voters.map((v) => ({
+      id: v.id,
+      fullName: v.fullName || "",
+      nationalId: v.nationalId || v.id || "",
+      permanentAddress: v.permanentAddress || "",
+      phone: v.phone || "",
+      pledgeStatus: v.pledgeStatus || "undecided",
+      volunteer: v.volunteer || "",
+      sequence: v.sequence != null ? v.sequence : "",
+    }));
+  }
+
+  const monitorViewEl = document.getElementById("monitor-view");
+  const gateEl = document.getElementById("monitor-view-gate");
+  const contentEl = document.getElementById("monitor-view-content");
+  const monitorViewTitle = document.getElementById("monitorViewTitle");
+  const monitorViewSubtitle = document.getElementById("monitorViewSubtitle");
+  const monitorViewSearch = document.getElementById("monitorViewSearch");
+  const monitorViewSearchBtn = document.getElementById("monitorViewSearchBtn");
+  const monitorViewResult = document.getElementById("monitorViewResult");
+
+  if (!monitorViewEl) return;
+
+  if (!monitor) {
+    monitorViewEl.hidden = false;
+    monitorViewEl.setAttribute("data-state", "invalid");
+    const existingMsg = document.getElementById("monitor-view-invalid-msg");
+    const invalidReason = options.invalidReason || (token ? "not_found" : "no_token");
+    const messages = {
+      no_token: {
+        title: "No ballot box link",
+        hint: "Open the ballot box using the full link shared by your Campaign Manager (it should include the access code).",
+      },
+      not_found: {
+        title: "Link not found",
+        hint: "This ballot box link was not found. The Campaign Manager should create the link in the main app while online, then share the new link and access code with you.",
+      },
+      default: {
+        title: "Invalid or expired link",
+        hint: "This ballot box link is not valid or has expired. Ask your Campaign Manager for a new link and access code.",
+      },
+    };
+    const text = messages[invalidReason] || messages.default;
+    if (!existingMsg) {
+      const msg = document.createElement("div");
+      msg.id = "monitor-view-invalid-msg";
+      msg.className = "monitor-view-gate";
+      msg.setAttribute("role", "alert");
+      msg.innerHTML = `
+        <div class="monitor-view-gate__card">
+          <h2 class="monitor-view-gate__title">${escapeHtml(text.title)}</h2>
+          <p class="monitor-view-gate__hint">${escapeHtml(text.hint)}</p>
+        </div>
+      `;
+      monitorViewEl.appendChild(msg);
+    } else {
+      const titleEl = existingMsg.querySelector(".monitor-view-gate__title");
+      const hintEl = existingMsg.querySelector(".monitor-view-gate__hint");
+      if (titleEl) titleEl.textContent = text.title;
+      if (hintEl) hintEl.textContent = text.hint;
+    }
+    return;
+  }
+
+  if (!monitor.shareToken && token) monitor.shareToken = token;
+
+  const invalidMsg = document.getElementById("monitor-view-invalid-msg");
+  if (invalidMsg) invalidMsg.remove();
+
+  if (isBallotBoxOnly) {
+    monitorViewEl.setAttribute("data-state", "list");
+    showMonitorContent();
+    const header = monitorViewEl.querySelector(".monitor-view__header");
+    if (header && typeof options.onClose === "function") {
+      const existingBack = header.querySelector("[data-monitor-back]");
+      if (existingBack) existingBack.remove();
+      const backBtn = document.createElement("button");
+      backBtn.type = "button";
+      backBtn.className = "ghost-button ghost-button--small";
+      backBtn.setAttribute("data-monitor-back", "true");
+      backBtn.textContent = "Back to Vote Marking";
+      backBtn.addEventListener("click", () => options.onClose());
+      header.insertBefore(backBtn, header.firstChild);
+    }
+    return;
+  }
+
+  monitorViewEl.setAttribute("data-state", "gate");
+
+  function searchVoters(query) {
+    const q = (query || "").trim();
+    if (!q) return [];
+
+    // Exact match by ID / National ID / Sequence
+    const exact = assignedVoters.find(
+      (v) =>
+        String(v.id || "").toLowerCase() === q.toLowerCase() ||
+        String(v.nationalId || "").toLowerCase() === q.toLowerCase() ||
+        String(v.sequence ?? "").trim() === q.trim()
+    );
+    if (exact) return [exact];
+
+    // Fuzzy match by name: contains query (case-insensitive)
+    const qLower = q.toLowerCase();
+    const byName = assignedVoters.filter((v) =>
+      String(v.fullName || "").toLowerCase().includes(qLower)
+    );
+    return byName;
+  }
+
+  function getAgent(v) {
+    const name =
+      v.volunteer != null
+        ? v.volunteer
+        : (pledgeContextRef && typeof pledgeContextRef.getPledges === "function"
+            ? (pledgeContextRef.getPledges().find((r) => r.voterId === v.id) || {})
+                .volunteer || ""
+            : "");
+
+    if (!name) return { label: "", phone: "" };
+
+    let phone = "";
+    try {
+      const agents = typeof getAgents === "function" ? getAgents() : [];
+      const match = agents.find(
+        (a) => a && a.name && a.name.toLowerCase() === name.toLowerCase()
+      );
+      if (match && match.phone) phone = match.phone;
+    } catch (_) {
+      // fall back to name only if anything goes wrong
+    }
+
+    // Fallback: for remote/monitor links where agents list isn't available in this browser,
+    // use the monitor's mobile number if present.
+    if (!phone && monitor && monitor.mobile) {
+      phone = monitor.mobile;
+    }
+
+    const label = phone ? `${name} • ${phone}` : name;
+    return { label, phone };
+  }
+
+  function markVoterVoted(voterId) {
+    const timeMarked = new Date().toISOString();
+    const idx = votedEntries.findIndex((e) => e.voterId === voterId);
+    if (idx >= 0) votedEntries[idx].timeMarked = timeMarked;
+    else votedEntries.push({ voterId, timeMarked });
+    if (isRemote && options.onSaveVoted) options.onSaveVoted(token, voterId, timeMarked).catch(() => {});
+    else saveVotedEntries();
+    const v = assignedVoters.find((x) => x.id === voterId);
+    if (v && monitorViewResult) renderMonitorViewResult(v);
+  }
+
+  function renderMonitorViewResult(voterOrNull) {
+    if (!monitorViewResult) return;
+    const pledgeLabel = (s) => (s === "yes" ? "Yes" : s === "no" ? "No" : "Undecided");
+    const pledgePillClass = (s) =>
+      s === "yes" ? "pledge-pill pledge-pill--pledged" : s === "no" ? "pledge-pill pledge-pill--not-pledged" : "pledge-pill pledge-pill--undecided";
+
+    if (!voterOrNull) {
+      monitorViewResult.innerHTML = `
+        <p class="monitor-view-result__empty" role="status">No voter found. Try searching by name, ID, or Sequence.</p>
+      `;
+      return;
+    }
+
+    const voter = voterOrNull;
+    const timeMarked = votedEntries.find((e) => e.voterId === voter.id)?.timeMarked;
+    const agent = getAgent(voter);
+
+    monitorViewResult.innerHTML = `
+      <div class="monitor-voter-card" data-voter-id="${escapeHtml(voter.id)}">
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">Name</span>
+          <span class="monitor-voter-card__value">${escapeHtml(voter.fullName || "")}</span>
+        </div>
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">ID Number</span>
+          <span class="monitor-voter-card__value">${escapeHtml(voter.nationalId || voter.id || "")}</span>
+        </div>
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">Permanent Address</span>
+          <span class="monitor-voter-card__value">${escapeHtml(voter.permanentAddress || "")}</span>
+        </div>
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">Mobile</span>
+          <span class="monitor-voter-card__value">${escapeHtml(voter.phone || "")}</span>
+        </div>
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">Agent</span>
+          <span class="monitor-voter-card__value">${escapeHtml(agent.label || "")}</span>
+        </div>
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">Pledge</span>
+          <span class="monitor-voter-card__value"><span class="${pledgePillClass(voter.pledgeStatus || "undecided")}">${pledgeLabel(voter.pledgeStatus || "undecided")}</span></span>
+        </div>
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">Vote status</span>
+          <span class="monitor-voter-card__value">${timeMarked ? '<span class="pledge-pill pledge-pill--pledged">Voted</span> ' + formatDateTime(timeMarked) : '<span class="pledge-pill pledge-pill--undecided">Not voted</span>'}</span>
+        </div>
+        ${!timeMarked ? `<div class="monitor-voter-card__action"><button type="button" class="primary-button" data-monitor-mark-voted="${escapeHtml(voter.id)}">Mark voted</button></div>` : ""}
+      </div>
+    `;
+
+    monitorViewResult.querySelector("[data-monitor-mark-voted]")?.addEventListener("click", (e) => {
+      const vid = e.target.getAttribute("data-monitor-mark-voted");
+      if (vid) markVoterVoted(vid);
+    });
+  }
+
+  function doSearch() {
+    const query = (monitorViewSearch?.value || "").trim();
+    if (!query) {
+      if (monitorViewResult) monitorViewResult.innerHTML = "";
+      return;
+    }
+    const matches = searchVoters(query);
+    if (!matches.length) {
+      renderMonitorViewResult(null);
+      return;
+    }
+    if (matches.length === 1) {
+      renderMonitorViewResult(matches[0]);
+      return;
+    }
+
+    // Render a simple list of matching names; clicking a row shows full card.
+    const rowsHtml = matches
+      .slice(0, 25)
+      .map(
+        (v) => `
+        <button type="button" class="monitor-view-result__match" data-monitor-match-id="${escapeHtml(
+          v.id
+        )}">
+          <span class="monitor-view-result__match-name">${escapeHtml(
+            v.fullName || ""
+          )}</span>
+          <span class="monitor-view-result__match-meta">${escapeHtml(
+            v.nationalId || v.id || ""
+          )}${
+            v.sequence != null && v.sequence !== ""
+              ? " • Seq " + escapeHtml(String(v.sequence))
+              : ""
+          }</span>
+        </button>`
+      )
+      .join("");
+
+    monitorViewResult.innerHTML = `
+      <div class="monitor-view-result__list" role="list">
+        ${rowsHtml}
+      </div>
+    `;
+
+    monitorViewResult
+      .querySelectorAll("[data-monitor-match-id]")
+      .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-monitor-match-id");
+          const v = assignedVoters.find((x) => String(x.id) === String(id));
+          renderMonitorViewResult(v || null);
+        });
+      });
+  }
+
+  function showMonitorContent() {
+    monitorViewEl.setAttribute("data-state", "list");
+    if (monitorViewTitle) monitorViewTitle.textContent = (monitor.ballotBox || "Ballot box");
+    if (monitorViewSubtitle) monitorViewSubtitle.textContent = "Search by name, ID, or Sequence to find a voter.";
+    if (contentEl) contentEl.setAttribute("aria-hidden", "false");
+    if (monitorViewEl) monitorViewEl.hidden = false;
+    if (monitorViewResult) monitorViewResult.innerHTML = "";
+
+    if (monitorViewSearchBtn) monitorViewSearchBtn.addEventListener("click", doSearch);
+    if (monitorViewSearch) {
+      monitorViewSearch.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
+    }
+  }
+
+  monitorViewEl.hidden = false;
+
+  const gateForm = document.getElementById("monitorViewGateForm");
+  const gateInput = document.getElementById("monitorViewAccessCode");
+  const gateError = document.getElementById("monitorViewGateError");
+  const expectedCode = (getMonitorAccessCode(monitor) || "").trim();
+
+  if (gateForm && gateInput) {
+    gateForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const entered = (gateInput.value || "").trim();
+      if (gateError) {
+        gateError.hidden = true;
+        gateError.textContent = "";
+      }
+      if (!entered) {
+        if (gateError) {
+          gateError.hidden = false;
+          gateError.textContent = "Please enter the access code.";
+        }
+        return;
+      }
+      if (entered.toLowerCase() !== expectedCode.toLowerCase()) {
+        if (gateError) {
+          gateError.hidden = false;
+          gateError.textContent = "Incorrect access code. Please ask your Campaign Manager for the code.";
+        }
+        return;
+      }
+      showMonitorContent();
+    });
+  }
+}

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ballot box – Voter list</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Standalone ballot box: state=gate (code) | list (after code) | invalid -->
+  <div id="monitor-view" class="monitor-view" data-state="gate">
+    <div id="monitor-view-gate" class="monitor-view-gate">
+      <div class="monitor-view-gate__card">
+        <h2 class="monitor-view-gate__title">Ballot box access</h2>
+        <p class="monitor-view-gate__hint">Enter the access code shared by your Campaign Manager to view the voter list.</p>
+        <form id="monitorViewGateForm" class="monitor-view-gate__form" autocomplete="off" method="dialog" action="javascript:void(0)">
+          <label for="monitorViewAccessCode" class="sr-only">Access code</label>
+          <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input" placeholder="Access code" autocomplete="off" inputmode="numeric" maxlength="20">
+          <p id="monitorViewGateError" class="monitor-view-gate__error" role="alert" hidden></p>
+          <button type="submit" class="primary-button monitor-view-gate__submit">Continue</button>
+        </form>
+      </div>
+    </div>
+    <div id="monitor-view-content" class="monitor-view__content" aria-hidden="true" style="display: none;">
+      <div class="monitor-view__header monitor-view__header--search-only">
+        <h1 id="monitorViewTitle">Ballot box</h1>
+        <p class="monitor-view__subtitle" id="monitorViewSubtitle">Search by ID or Sequence to find a voter.</p>
+      </div>
+      <div class="monitor-view__toolbar">
+        <label for="monitorViewSearch" class="sr-only">Search by ID or Sequence</label>
+        <input type="text" id="monitorViewSearch" placeholder="Enter ID or Sequence" class="monitor-view__search" autocomplete="off" inputmode="numeric">
+        <button type="button" id="monitorViewSearchBtn" class="primary-button">Search</button>
+      </div>
+      <div id="monitorViewResult" class="monitor-view-result" aria-live="polite">
+        <!-- Single voter detail box or "No voter found" rendered by JS -->
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <h2 id="modalTitle">Modal</h2>
+        <button class="icon-button" id="modalCloseButton" aria-label="Close">
+          <svg viewBox="0 0 24 24" class="icon-svg">
+            <path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+      <div class="modal-body" id="modalBody"></div>
+      <footer class="modal-footer" id="modalFooter"></footer>
+    </div>
+  </div>
+
+  <script type="module" src="ballot-box.js"></script>
+</body>
+</html>
