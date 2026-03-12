@@ -798,6 +798,7 @@ export function updateVoterPledgeStatus(voterId, pledgeStatus) {
   const v = currentVoters.find((x) => x.id === voterId);
   if (!v) return;
   v.pledgeStatus = pledgeStatus;
+  v.pledgedAt = pledgeStatus === "yes" ? new Date().toISOString().slice(0, 10) : "";
   (async () => {
     try {
       const api = await firebaseInitPromise;

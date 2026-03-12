@@ -1,10 +1,10 @@
 import { openModal } from "./ui.js";
-import { updateVoterPledgeStatus, updateVoterCandidatePledge } from "./voters.js";
+import { updateVoterCandidatePledge } from "./voters.js";
 import { getAgents, getCandidates } from "./settings.js";
 
 const PAGE_SIZE = 15;
-/** Pledges table: Seq, Name, ID, Permanent Address, Pledge, then candidate columns. */
-const BASE_PLEDGE_COLUMNS = 5;
+/** Pledges table: Seq, Name, ID, Permanent Address, then candidate columns (Pledge column is on Door to Door). */
+const BASE_PLEDGE_COLUMNS = 4;
 
 const pledgesTableBody = document.querySelector("#pledgesTable tbody");
 const pledgesPaginationEl = document.getElementById("pledgesPagination");
@@ -192,7 +192,6 @@ function updatePledgesTableHeader() {
       <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--status th-sortable" data-sort-key="pledge">Pledge<span class="sort-indicator"></span></th>
       ${candidateHeaders}
     </tr>
   `;
@@ -240,7 +239,6 @@ function renderPledgesTable() {
     const tr = document.createElement("tr");
     tr.dataset.rowIndex = String(index);
 
-    const pledgeSelectId = `pledge-status-${index}`;
     const cp = row.candidatePledges || {};
     const candidateCells = candidates
       .map(
@@ -263,40 +261,10 @@ function renderPledgesTable() {
       <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
       <td class="pledge-cell pledge-cell--name">${escapeHtml(row.name)}</td>
       <td class="pledge-cell pledge-cell--address">${escapeHtml(row.permanentAddress || "")}</td>
-      <td class="pledge-cell pledge-cell--status">
-        <span class="${pledgeStatusClass(row.pledgeStatus)}">
-        <select id="${pledgeSelectId}" class="inline-select pledge-status-select">
-          <option value="yes"${
-            row.pledgeStatus === "yes" ? " selected" : ""
-          }>Yes</option>
-          <option value="no"${
-            row.pledgeStatus === "no" ? " selected" : ""
-          }>No</option>
-          <option value="undecided"${
-            row.pledgeStatus === "undecided" ? " selected" : ""
-          }>Undecided</option>
-        </select>
-        </span>
-      </td>
       ${candidateCells}
     `;
 
     pledgesTableBody.appendChild(tr);
-
-    const statusSelect = tr.querySelector(`#${pledgeSelectId}`);
-    statusSelect.addEventListener("change", () => {
-      const newStatus = statusSelect.value;
-      row.pledgeStatus = newStatus;
-      row.pledgedAt =
-        newStatus === "yes" ? new Date().toISOString().slice(0, 10) : "";
-      updateVoterPledgeStatus(row.voterId, newStatus);
-      renderPledgesTable();
-      document.dispatchEvent(
-        new CustomEvent("pledges-updated", {
-          detail: { rows: pledgeRows },
-        })
-      );
-    });
 
     tr.querySelectorAll(".pledge-candidate-select").forEach((sel) => {
       const cid = sel.getAttribute("data-candidate-id");

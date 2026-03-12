@@ -1,9 +1,9 @@
 /**
- * Door to Door module: track field visits (assigned agent, met, persuadable, date pledged, notes).
- * Table: Seq, Name, ID, Permanent Address, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.
+ * Door to Door module: track field visits (pledge, ballot box, assigned agent, met, persuadable, date pledged, notes).
+ * Table: Seq, Name, ID, Permanent Address, Pledge, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.
  */
 import { getAgents } from "./settings.js";
-import { updateVoterDoorToDoorFields } from "./voters.js";
+import { updateVoterDoorToDoorFields, updateVoterPledgeStatus } from "./voters.js";
 
 const PAGE_SIZE = 15;
 const doorToDoorTableBody = document.querySelector("#doorToDoorTable tbody");
@@ -73,13 +73,14 @@ function renderDoorToDoorTable() {
   doorToDoorTableBody.innerHTML = "";
   if (pageVoters.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="10" class="text-muted" style="text-align:center;padding:24px;">No voters. Import voters in Settings → Data, or adjust filters.</td>`;
+    tr.innerHTML = `<td colspan="11" class="text-muted" style="text-align:center;padding:24px;">No voters. Import voters in Settings → Data, or adjust filters.</td>`;
     doorToDoorTableBody.appendChild(tr);
   } else {
     const agents = getAgents();
     pageVoters.forEach((v) => {
       const tr = document.createElement("tr");
       tr.dataset.voterId = v.id;
+      const pledgeStatus = v.pledgeStatus ?? "undecided";
       const volunteer = v.volunteer ?? "";
       const metStatus = v.metStatus ?? "not-met";
       const persuadable = v.persuadable ?? "unknown";
@@ -93,6 +94,13 @@ function renderDoorToDoorTable() {
         <td>${escapeHtml(v.fullName || "")}</td>
         <td>${escapeHtml(v.nationalId || v.id || "")}</td>
         <td>${escapeHtml(v.permanentAddress || "")}</td>
+        <td>
+          <select class="inline-select door-to-door-pledge" data-voter-id="${escapeHtml(v.id)}">
+            <option value="yes"${pledgeStatus === "yes" ? " selected" : ""}>Yes</option>
+            <option value="no"${pledgeStatus === "no" ? " selected" : ""}>No</option>
+            <option value="undecided"${pledgeStatus === "undecided" ? " selected" : ""}>Undecided</option>
+          </select>
+        </td>
         <td>${escapeHtml(v.ballotBox || "")}</td>
         <td>
           <select class="inline-select door-to-door-agent" data-voter-id="${escapeHtml(v.id)}" data-field="volunteer">
@@ -144,6 +152,15 @@ function renderDoorToDoorTable() {
     });
   }
 
+  doorToDoorTableBody.querySelectorAll(".door-to-door-pledge").forEach((el) => {
+    el.addEventListener("change", () => {
+      const voterId = el.getAttribute("data-voter-id");
+      const newStatus = el.value || "undecided";
+      updateVoterPledgeStatus(voterId, newStatus);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+      document.dispatchEvent(new CustomEvent("pledges-updated"));
+    });
+  });
   doorToDoorTableBody.querySelectorAll(".door-to-door-agent").forEach((el) => {
     el.addEventListener("change", () => {
       const voterId = el.getAttribute("data-voter-id");
