@@ -180,7 +180,11 @@ function updatePledgesTableHeader() {
   if (!thead) return;
   const candidates = getCandidates();
   const candidateHeaders = candidates
-    .map((c) => `<th scope="col" class="pledge-th pledge-th--candidate">Pledge – ${escapeHtml(c.name || "Candidate")}</th>`)
+    .map((c) => {
+      const name = c.name || "Candidate";
+      const initials = getInitials(name);
+      return `<th scope="col" class="pledge-th pledge-th--candidate" title="${escapeHtml(name)}">${escapeHtml(initials)}</th>`;
+    })
     .join("");
   thead.innerHTML = `
     <tr>
