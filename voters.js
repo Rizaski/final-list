@@ -795,8 +795,10 @@ export function importVotersFromTemplateRows(rows) {
     return name !== "" || id !== "";
   };
   const validRows = rows.filter(hasContent);
+  // Generate a stable unique internal ID per import row that does NOT rely on Sequence or ID Number.
+  const importRunPrefix = `V-${Date.now()}-`;
   const mapped = validRows.map((r, index) => ({
-    id: r["ID Number"] || r.id || `V-${index + 1}`,
+    id: `${importRunPrefix}${index + 1}`,
     sequence: Number(r["Sequence"]) || index + 1,
     ballotBox: r["Ballot Box"] || "",
     fullName: r["Name"] || "",

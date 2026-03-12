@@ -90,6 +90,7 @@ const votersUploadFileInput = document.getElementById("votersUploadFile");
 const importVotersButton = document.getElementById("importVotersButton");
 const votersUploadFileNameEl = document.getElementById("votersUploadFileName");
 const syncVotersToFirebaseButton = document.getElementById("syncVotersToFirebaseButton");
+const deleteAllVotersButton = document.getElementById("deleteAllVotersButton");
 
 const electionTypes = [
   "Local Council Election",
@@ -763,6 +764,46 @@ export function initSettingsModule() {
             meta: "Check the console for details.",
           });
         }
+      }
+    });
+  }
+
+  if (deleteAllVotersButton) {
+    deleteAllVotersButton.addEventListener("click", async () => {
+      if (
+        !confirm(
+          "Delete all voters in this campaign? This will remove the voters list from this browser and from Firebase (if connected). This cannot be undone."
+        )
+      ) {
+        return;
+      }
+
+      // Clear local cache first.
+      try {
+        localStorage.removeItem("voters-data");
+      } catch (_) {}
+
+      // Best-effort Firestore delete of all voters.
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.getAllVotersFs && api.deleteVoterFs) {
+          const existing = await api.getAllVotersFs();
+          if (Array.isArray(existing) && existing.length) {
+            const limited = existing.slice(0, 20000);
+            await Promise.all(
+              limited.map((v) => api.deleteVoterFs(v.id))
+            );
+          }
+        }
+      } catch (_) {}
+
+      // Let modules refresh themselves.
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Voters list deleted",
+          meta: "All voters for this campaign have been removed.",
+        });
       }
     });
   }

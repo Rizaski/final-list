@@ -1125,7 +1125,10 @@
                       <button type="button" class="ghost-button" id="syncVotersToFirebaseButton" title="One-time sync of local voters to Firebase">
                         Sync local voters to Firebase
                       </button>
-                      <span class="helper-text">Existing voters in this session will be replaced by the uploaded list. Use sync to push current local voters to Firebase.</span>
+                      <button type="button" class="ghost-button ghost-button--danger" id="deleteAllVotersButton" title="Remove all voters from this campaign">
+                        Delete existing voters list
+                      </button>
+                      <span class="helper-text">Existing voters in this session will be replaced by the uploaded list. Use sync to push current local voters to Firebase. Use delete to completely clear the current voters list.</span>
                     </div>
                   </div>
                 </section>
