@@ -946,7 +946,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       },
       not_found: {
         title: "Link not found",
-        hint: "This ballot box link was not found. The Campaign Manager should create the link in the main app while online, then share the new link and access code with you.",
+        hint: "No ballot box link was found in the campaign database for this address. Ask your Campaign Manager to open Zero Day → Manage Monitors in the main app while online, create/refresh the monitor for this ballot box, then share the new link and access code with you.",
       },
       default: {
         title: "Invalid or expired link",
