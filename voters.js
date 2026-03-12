@@ -206,8 +206,11 @@ function renderVotersTable() {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() || "")
       .join("") || "?";
-    const photoCell = voter.photoUrl
-      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(voter.photoUrl)}" alt="" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
+    const photoSrc = voter.photoUrl
+      ? (voter.photoUrl.includes(".") ? voter.photoUrl : voter.photoUrl + ".jpg")
+      : "";
+    const photoCell = photoSrc
+      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
     tr.innerHTML = `
       <td>${voter.sequence ?? ""}</td>
@@ -597,6 +600,8 @@ function openVoterForm(existingVoter) {
         callComments: "",
         supportStatus: "unknown",
         interactions: [],
+        candidatePledges: {},
+        photoUrl: "",
       });
     }
     saveVotersToStorage();
@@ -788,6 +793,27 @@ export function updateVoterPledgeStatus(voterId, pledgeStatus) {
   })();
 }
 
+/** Update pledge for a single candidate; candidateId is the candidate's id (number or string). */
+export function updateVoterCandidatePledge(voterId, candidateId, status) {
+  const v = currentVoters.find((x) => x.id === voterId);
+  if (!v) return;
+  if (!v.candidatePledges) v.candidatePledges = {};
+  v.candidatePledges[String(candidateId)] = status;
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVoterFs) {
+        await api.setVoterFs(v);
+      } else {
+        saveVotersToStorage();
+        renderVotersTable();
+        if (selectedVoterId === voterId) renderVoterDetails(v);
+        document.dispatchEvent(new CustomEvent("voters-updated"));
+      }
+    } catch (_) {}
+  })();
+}
+
 export function importVotersFromTemplateRows(rows) {
   const hasContent = (r) => {
     const name = String(r["Name"] ?? "").trim();
@@ -815,10 +841,11 @@ export function importVotersFromTemplateRows(rows) {
     callComments: r["Call Comments"] || "",
     supportStatus: "unknown",
     interactions: [],
+    candidatePledges: {},
     photoUrl:
       r["Photo"] ||
       r["Image"] ||
-      (r["ID Number"] ? `images/${r["ID Number"]}.jpg` : ""),
+      (r["ID Number"] ? `/images/${String(r["ID Number"]).trim()}` : ""),
   }));
   (async () => {
     try {

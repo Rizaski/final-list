@@ -7,6 +7,8 @@ const MAX_VOTER_ROWS = 20000;
 const MAX_VOTERS_FILE_BYTES = 15 * 1024 * 1024; // ~15MB safety cap
 const AGENTS_STORAGE_KEY = "agents-data";
 const CAMPAIGN_STORAGE_KEY = "campaign-config";
+const CANDIDATES_STORAGE_KEY = "candidates-data";
+const MAX_CANDIDATES = 10;
 
 const sidebarBrandTitle = document.getElementById("sidebarBrandTitle");
 const sidebarBrandSubtitle = document.getElementById("sidebarBrandSubtitle");
@@ -112,6 +114,27 @@ const positionsByElectionType = {
 // Dynamic candidates list – initially empty until user adds entries.
 let candidates = [];
 let candidatesCurrentPage = 1;
+
+function loadCandidatesFromStorage() {
+  try {
+    const raw = localStorage.getItem(CANDIDATES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) candidates = parsed;
+    }
+  } catch (_) {}
+}
+
+function saveCandidatesToStorage() {
+  try {
+    localStorage.setItem(CANDIDATES_STORAGE_KEY, JSON.stringify(candidates));
+  } catch (_) {}
+}
+
+/** Returns up to MAX_CANDIDATES candidates for pledge columns and CSV export. */
+export function getCandidates() {
+  return candidates.slice(0, MAX_CANDIDATES);
+}
 
 let agents = [];
 let unsubscribeAgentsFs = null;
@@ -383,7 +406,9 @@ function openCandidateForm(existing) {
       });
     }
 
+    saveCandidatesToStorage();
     renderCandidatesTable();
+    document.dispatchEvent(new CustomEvent("candidates-updated"));
     closeModal();
   });
 
@@ -554,6 +579,7 @@ function initAgentsTab() {
 export function initSettingsModule() {
   initSettingsTabs();
   initCampaignTab();
+  loadCandidatesFromStorage();
   renderCandidatesTable();
   initAgentsTab();
 

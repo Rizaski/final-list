@@ -540,9 +540,11 @@
             <header class="card-header card-header--split">
               <div>
                 <h2>Pledge Management</h2>
-                <p class="card-subtitle">Inline updates for pledge status and notes.</p>
+                <p class="card-subtitle">Inline updates for pledge status and notes. Add candidates in Settings → Candidates (max 10); pledge per candidate and export as CSV.</p>
               </div>
-              <div class="key-legend">
+              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <button type="button" class="primary-button" id="pledgesExportCsvButton">Export list as CSV</button>
+                <div class="key-legend">
                 <span class="legend-item">
                   <span class="status-dot status-dot--pledged"></span> Yes
                 </span>
@@ -552,6 +554,7 @@
                 <span class="legend-item">
                   <span class="status-dot status-dot--not-pledged"></span> No
                 </span>
+                </div>
               </div>
             </header>
             <div class="card-body">
