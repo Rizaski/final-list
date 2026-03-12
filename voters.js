@@ -678,8 +678,9 @@ export async function initVotersModule() {
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
       const initial = await api.getAllVotersFs();
       if (Array.isArray(initial)) {
+        // In Firestore mode, keep voters only in memory (and Firestore),
+        // avoid duplicating the full list into localStorage.
         currentVoters = initial;
-        saveVotersToStorage();
       } else {
         loadVotersFromStorage();
       }
@@ -690,8 +691,8 @@ export async function initVotersModule() {
       // Real-time updates
       unsubscribeVotersFs = api.onVotersSnapshotFs((items) => {
         if (Array.isArray(items)) {
+          // Firestore snapshot: keep voters in memory only.
           currentVoters = items;
-          saveVotersToStorage();
           renderVotersTable();
           const selected =
             selectedVoterId &&

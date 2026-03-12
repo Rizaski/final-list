@@ -3,6 +3,8 @@ import { importVotersFromTemplateRows } from "./voters.js";
 import { firebaseInitPromise } from "./firebase.js";
 
 const PAGE_SIZE = 15;
+const MAX_VOTER_ROWS = 20000;
+const MAX_VOTERS_FILE_BYTES = 15 * 1024 * 1024; // ~15MB safety cap
 const AGENTS_STORAGE_KEY = "agents-data";
 const CAMPAIGN_STORAGE_KEY = "campaign-config";
 
@@ -652,6 +654,20 @@ export function initSettingsModule() {
   importVotersButton.addEventListener("click", () => {
     const file = votersUploadFileInput.files?.[0];
     if (!file) return;
+
+    // Basic safety caps to avoid browser "Out of memory" when importing very large files.
+    if (file.size > MAX_VOTERS_FILE_BYTES) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "File too large",
+          meta: "Voters CSV is larger than 15MB. Please split it into smaller files and try again.",
+        });
+      } else {
+        alert("Voters CSV is too large. Please split it into smaller files (under 15MB) and try again.");
+      }
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = String(e.target?.result || "");
@@ -660,9 +676,22 @@ export function initSettingsModule() {
         .map((l) => l.trim())
         .filter(Boolean);
       if (lines.length < 2) return;
+
       const rawHeader = parseCSVLine(lines[0]);
       const header = rawHeader.map((h) => String(h).trim());
-      const rows = lines.slice(1).map((line) => {
+
+      let dataLines = lines.slice(1);
+      if (dataLines.length > MAX_VOTER_ROWS) {
+        dataLines = dataLines.slice(0, MAX_VOTER_ROWS);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Voters list truncated",
+            meta: `Only the first ${MAX_VOTER_ROWS.toLocaleString("en-MV")} rows were imported to protect browser performance.`,
+          });
+        }
+      }
+
+      const rows = dataLines.map((line) => {
         const cols = parseCSVLine(line);
         const obj = {};
         header.forEach((h, idx) => {
@@ -671,6 +700,7 @@ export function initSettingsModule() {
         });
         return obj;
       });
+
       importVotersFromTemplateRows(rows);
       if (votersUploadFileNameEl) votersUploadFileNameEl.textContent = "";
       votersUploadFileInput.value = "";
