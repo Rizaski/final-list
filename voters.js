@@ -732,7 +732,6 @@ export async function initVotersModule() {
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
       const initial = await api.getAllVotersFs();
       if (Array.isArray(initial)) {
-        // Firebase is source of truth; cache to localStorage for offline/performance.
         currentVoters = initial;
         saveVotersToStorage();
       } else {
@@ -742,10 +741,8 @@ export async function initVotersModule() {
       renderVotersTable();
       renderVoterDetails(null);
 
-      // Real-time updates
       unsubscribeVotersFs = api.onVotersSnapshotFs((items) => {
         if (Array.isArray(items)) {
-          // Firestore snapshot: keep voters in memory only.
           currentVoters = items;
           renderVotersTable();
           const selected =
@@ -756,15 +753,21 @@ export async function initVotersModule() {
         }
       });
     } else {
-      // Firestore not ready – fall back to localStorage
       loadVotersFromStorage();
       renderVotersTable();
       renderVoterDetails(null);
     }
-  } catch (_) {
+  } catch (err) {
+    console.error("[Voters] Failed to load from Firebase (using cache if any):", err);
     loadVotersFromStorage();
     renderVotersTable();
     renderVoterDetails(null);
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Could not load voters from Firebase",
+        meta: err?.message || String(err),
+      });
+    }
   }
 
   return {

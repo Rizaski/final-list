@@ -3,43 +3,48 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Require signed-in user for all writes/reads
+    // Require signed-in user (ensures data renders when deployed and user is logged in)
     function signedIn() {
       return request.auth != null;
     }
 
-    // Optional: limit document size to reduce abuse (tune as needed)
+    // Limit write payload size to reduce abuse (read not restricted so lists render reliably)
     function sizeOk() {
       return request.resource.data.size() <= 400;
     }
 
     // Campaign config (Settings → Campaign)
     match /campaign/config {
-      allow read, write: if signedIn() && sizeOk();
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
     }
 
-    // Voters list
+    // Voters list — read allowed for any signed-in user so list renders when deployed
     match /voters/{voterId} {
-      allow read, write: if signedIn() && sizeOk();
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
     }
 
     // Agents (Settings → Agents)
     match /agents/{agentId} {
-      allow read, write: if signedIn() && sizeOk();
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
     }
 
-    // Candidates (Settings → Candidates) — recently added
+    // Candidates (Settings → Candidates)
     match /candidates/{docId} {
-      allow read, write: if signedIn() && sizeOk();
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
     }
 
     // Monitors (e.g. zero-day / transport views)
     match /monitors/{token} {
-      allow read, write: if signedIn() && sizeOk();
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
 
-      // Subcollection: voted per monitor token
       match /voted/{voterId} {
-        allow read, write: if signedIn() && sizeOk();
+        allow read: if signedIn();
+        allow write: if signedIn() && sizeOk();
       }
     }
 

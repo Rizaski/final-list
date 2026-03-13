@@ -53,6 +53,20 @@ firebase deploy
 
 Your app will be served at `https://<project-id>.web.app`.
 
+### Voters list not showing when deployed
+
+If the voters list is empty after deployment (but works locally), do this:
+
+1. **Add your deployment domain to Firebase**
+   - [Firebase Console](https://console.firebase.google.com/) → your project → **Authentication** → **Settings** → **Authorized domains**.
+   - Add the exact domain (e.g. `your-site.github.io`, `your-app.netlify.app`, or your custom domain). Without this, sign-in and Firestore reads can fail.
+
+2. **Deploy Firestore rules**
+   - Ensure `firestore.rules` is deployed (see “Firebase setup” above). If rules are missing or don’t allow read for authenticated users, the voters list will stay empty.
+
+3. **Check the browser console**
+   - After logging in, open DevTools → Console. If you see `[Voters] Failed to load from Firebase`, the message will include the reason (e.g. permission denied, network error).
+
 ## Login
 
 - **Email + password**: Use Firebase Auth (works when the app is served over HTTP/HTTPS).
