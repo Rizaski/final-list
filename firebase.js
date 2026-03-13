@@ -8,13 +8,14 @@ const FIREBASE_SDK_VERSION = "9.22.2";
 const SDK_BASE = `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}`;
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBHdQew7S2YnYHZ5UziNAyfpOK0nbYJyRA",
-  authDomain: "otptesting-dd3be.firebaseapp.com",
-  projectId: "otptesting-dd3be",
-  storageBucket: "otptesting-dd3be.firebasestorage.app",
-  messagingSenderId: "613044450374",
-  appId: "1:613044450374:web:26d2a3384938e4de27c647",
-  measurementId: "G-J9M7NJTFJD",
+  apiKey: "AIzaSyAIWXqnozfELzrhr16VDkceNwANpT3t7iU",
+  authDomain: "myapplication-8f39e.firebaseapp.com",
+  databaseURL: "https://myapplication-8f39e-default-rtdb.firebaseio.com",
+  projectId: "myapplication-8f39e",
+  storageBucket: "myapplication-8f39e.firebasestorage.app",
+  messagingSenderId: "686599756280",
+  appId: "1:686599756280:web:3be8fc521b39ba10e31e0d",
+  measurementId: "G-5KW10W5549",
 };
 
 const noopUnsubscribe = () => {};
@@ -176,9 +177,14 @@ export const firebaseInitPromise = (async () => {
       };
 
       setCandidateFs = async (candidate) => {
-        if (!candidate || !candidate.id) return;
+        if (!candidate || candidate.id == null || candidate.id === "") return;
         const ref = firestoreMod.doc(db, CANDIDATES_COLLECTION, String(candidate.id));
-        await firestoreMod.setDoc(ref, candidate, { merge: true });
+        // Firestore does not accept undefined; strip or replace so writes succeed.
+        const data = {};
+        for (const [key, value] of Object.entries(candidate)) {
+          if (value !== undefined) data[key] = value;
+        }
+        await firestoreMod.setDoc(ref, data, { merge: true });
       };
 
       deleteCandidateFs = async (id) => {

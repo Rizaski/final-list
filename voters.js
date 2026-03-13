@@ -506,14 +506,21 @@ if (saveVoterNotesButton) {
     const voter = currentVoters.find((v) => v.id === selectedVoterId);
     if (!voter) return;
     voter.notes = voterNotesTextarea ? voterNotesTextarea.value : "";
-    saveVotersToStorage();
     saveVoterNotesButton.disabled = true;
-    if (window.appNotifications) {
-      window.appNotifications.push({
-        title: "Voter notes saved",
-        meta: voter.fullName || voter.nationalId || voter.id,
-      });
-    }
+    (async () => {
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.setVoterFs) await api.setVoterFs(voter);
+      } catch (_) {}
+      saveVotersToStorage();
+      if (selectedVoterId === voter.id) renderVoterDetails(voter);
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Voter notes saved",
+          meta: voter.fullName || voter.nationalId || voter.id,
+        });
+      }
+    })();
   });
 }
 
@@ -615,7 +622,7 @@ function openVoterForm(existingVoter) {
       if (selectedVoterId === existingVoter.id) renderVoterDetails(existingVoter);
     } else {
       const id = nationalId || `V-${Date.now()}`;
-      currentVoters.push({
+      const newVoter = {
         id,
         sequence,
         ballotBox,
@@ -639,11 +646,20 @@ function openVoterForm(existingVoter) {
         persuadable: "unknown",
         pledgedAt: "",
         photoUrl: "",
-      });
+      };
+      currentVoters.push(newVoter);
     }
-    saveVotersToStorage();
-    renderVotersTable();
-    document.dispatchEvent(new CustomEvent("voters-updated"));
+    const toSave = isEdit ? existingVoter : currentVoters[currentVoters.length - 1];
+    (async () => {
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.setVoterFs) await api.setVoterFs(toSave);
+      } catch (_) {}
+      saveVotersToStorage();
+      renderVotersTable();
+      if (isEdit && selectedVoterId === existingVoter?.id) renderVoterDetails(existingVoter);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+    })();
     closeModal();
     if (window.appNotifications) {
       window.appNotifications.push({
@@ -667,20 +683,16 @@ function deleteVoter(voterId) {
   (async () => {
     try {
       const api = await firebaseInitPromise;
-      if (api.ready && api.deleteVoterFs) {
-        await api.deleteVoterFs(voterId);
-      } else {
-        // Fallback to local-only delete
-        const idx = currentVoters.findIndex((v) => v.id === voterId);
-        if (idx !== -1) currentVoters.splice(idx, 1);
-        if (selectedVoterId === voterId) {
-          selectedVoterId = null;
-          renderVoterDetails(null);
-        }
-        saveVotersToStorage();
-        renderVotersTable();
-        document.dispatchEvent(new CustomEvent("voters-updated"));
+      if (api.ready && api.deleteVoterFs) await api.deleteVoterFs(voterId);
+      const idx = currentVoters.findIndex((v) => v.id === voterId);
+      if (idx !== -1) currentVoters.splice(idx, 1);
+      if (selectedVoterId === voterId) {
+        selectedVoterId = null;
+        renderVoterDetails(null);
       }
+      saveVotersToStorage();
+      renderVotersTable();
+      document.dispatchEvent(new CustomEvent("voters-updated"));
       if (window.appNotifications) {
         window.appNotifications.push({ title: "Voter deleted", meta: voter.fullName || voter.nationalId || voterId });
       }
@@ -720,9 +732,9 @@ export async function initVotersModule() {
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
       const initial = await api.getAllVotersFs();
       if (Array.isArray(initial)) {
-        // In Firestore mode, keep voters only in memory (and Firestore),
-        // avoid duplicating the full list into localStorage.
+        // Firebase is source of truth; cache to localStorage for offline/performance.
         currentVoters = initial;
+        saveVotersToStorage();
       } else {
         loadVotersFromStorage();
       }
@@ -817,16 +829,11 @@ export function updateVoterPledgeStatus(voterId, pledgeStatus) {
   (async () => {
     try {
       const api = await firebaseInitPromise;
-      if (api.ready && api.setVoterFs) {
-        await api.setVoterFs(v);
-      } else {
-        saveVotersToStorage();
-        renderVotersTable();
-        if (selectedVoterId === voterId) {
-          renderVoterDetails(v);
-        }
-        document.dispatchEvent(new CustomEvent("voters-updated"));
-      }
+      if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+      saveVotersToStorage();
+      renderVotersTable();
+      if (selectedVoterId === voterId) renderVoterDetails(v);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
 }
@@ -840,14 +847,11 @@ export function updateVoterCandidatePledge(voterId, candidateId, status) {
   (async () => {
     try {
       const api = await firebaseInitPromise;
-      if (api.ready && api.setVoterFs) {
-        await api.setVoterFs(v);
-      } else {
-        saveVotersToStorage();
-        renderVotersTable();
-        if (selectedVoterId === voterId) renderVoterDetails(v);
-        document.dispatchEvent(new CustomEvent("voters-updated"));
-      }
+      if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+      saveVotersToStorage();
+      renderVotersTable();
+      if (selectedVoterId === voterId) renderVoterDetails(v);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
 }
@@ -914,16 +918,14 @@ export function importVotersFromTemplateRows(rows) {
     try {
       const api = await firebaseInitPromise;
       if (api.ready && api.setVoterFs) {
-        // Bulk upsert each voter
         await Promise.all(mapped.map((v) => api.setVoterFs(v)));
-      } else {
-        currentVoters = mapped;
-        selectedVoterId = null;
-        saveVotersToStorage();
-        renderVotersTable();
-        renderVoterDetails(null);
-        document.dispatchEvent(new CustomEvent("voters-updated"));
       }
+      currentVoters = mapped;
+      selectedVoterId = null;
+      saveVotersToStorage();
+      renderVotersTable();
+      renderVoterDetails(null);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Voters imported",

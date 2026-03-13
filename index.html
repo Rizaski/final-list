@@ -553,6 +553,13 @@
               </div>
               <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                 <button type="button" class="primary-button" id="pledgesExportCsvButton">Export list as CSV</button>
+                <div class="dropdown-wrap">
+                  <button type="button" class="ghost-button" id="pledgeColumnsButton" title="Show or hide candidate columns" aria-haspopup="true" aria-expanded="false">⋮</button>
+                  <div class="dropdown-menu" id="pledgeColumnsMenu" role="menu" hidden aria-label="Candidate columns">
+                    <div class="dropdown-menu__item" style="pointer-events:none; font-weight:600;">Show columns</div>
+                    <!-- Checkboxes for each candidate injected by pledges.js -->
+                  </div>
+                </div>
                 <div class="key-legend">
                 <span class="legend-item">
                   <span class="status-dot status-dot--pledged"></span> Yes

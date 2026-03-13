@@ -5,6 +5,7 @@ import { getAgents, getCandidates } from "./settings.js";
 const PAGE_SIZE = 15;
 /** Pledges table: Seq, Image, Name, ID, Permanent Address, then candidate columns (Pledge column is on Door to Door). */
 const BASE_PLEDGE_COLUMNS = 5;
+const VISIBLE_CANDIDATES_STORAGE_KEY = "pledges-visible-candidates";
 
 const pledgesTableBody = document.querySelector("#pledgesTable tbody");
 const pledgesPaginationEl = document.getElementById("pledgesPagination");
@@ -173,14 +174,41 @@ function getFilteredSortedGroupedPledges() {
   return out;
 }
 
+function getVisibleCandidateIds() {
+  try {
+    const raw = localStorage.getItem(VISIBLE_CANDIDATES_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map(String);
+  } catch (_) {
+    return null;
+  }
+}
+
+function setVisibleCandidateIds(ids) {
+  try {
+    localStorage.setItem(VISIBLE_CANDIDATES_STORAGE_KEY, JSON.stringify(ids));
+  } catch (_) {}
+}
+
+/** Candidates to show in the table: stored visible ids, or all if none stored. */
+function getVisibleCandidates() {
+  const all = getCandidates();
+  const stored = getVisibleCandidateIds();
+  if (!stored || stored.length === 0) return all;
+  const set = new Set(stored);
+  return all.filter((c) => set.has(String(c.id)));
+}
+
 function getPledgeTableColumnCount() {
-  return BASE_PLEDGE_COLUMNS + getCandidates().length;
+  return BASE_PLEDGE_COLUMNS + getVisibleCandidates().length;
 }
 
 function updatePledgesTableHeader() {
   const thead = document.querySelector("#pledgesTable thead");
   if (!thead) return;
-  const candidates = getCandidates();
+  const candidates = getVisibleCandidates();
   const candidateHeaders = candidates
     .map((c) => {
       const name = c.name || "Candidate";
@@ -212,7 +240,7 @@ function renderPledgesTable() {
   const start = (pledgesCurrentPage - 1) * PAGE_SIZE;
   const end = start + PAGE_SIZE;
   const pageDataRows = dataRows.slice(start, end);
-  const candidates = getCandidates();
+  const candidates = getVisibleCandidates();
   const colCount = getPledgeTableColumnCount();
 
   const pageDisplayList = [];
@@ -413,6 +441,45 @@ function exportPledgesCSV() {
   }
 }
 
+function renderCandidateVisibilityMenu() {
+  const menu = document.getElementById("pledgeColumnsMenu");
+  if (!menu) return;
+  const all = getCandidates();
+  const stored = getVisibleCandidateIds();
+  const visibleSet = new Set(stored && stored.length > 0 ? stored : all.map((c) => String(c.id)));
+  menu.innerHTML = `
+    <div class="dropdown-menu__item" style="pointer-events:none; font-weight:600;">Show columns</div>
+    ${all
+      .map(
+        (c) => {
+          const id = String(c.id);
+          const name = escapeHtml(c.name || "Candidate");
+          const checked = visibleSet.has(id);
+          return `<label class="dropdown-menu__item" style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" data-candidate-id="${escapeHtml(id)}" ${checked ? "checked" : ""}>
+        <span>${name}</span>
+      </label>`;
+        }
+      )
+      .join("")}
+  `;
+  menu.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
+      const cid = cb.getAttribute("data-candidate-id");
+      const current = getVisibleCandidateIds();
+      const allIds = getCandidates().map((c) => String(c.id));
+      const base = current && current.length > 0 ? current.filter((id) => allIds.includes(id)) : allIds;
+      const set = new Set(base);
+      if (cb.checked) set.add(cid);
+      else set.delete(cid);
+      const next = Array.from(set);
+      setVisibleCandidateIds(next.length === allIds.length ? [] : next);
+      renderPledgesTable();
+    });
+  });
+}
+
 function bindPledgeToolbar() {
   const resetPageAndRender = () => {
     pledgesCurrentPage = 1;
@@ -437,8 +504,32 @@ export function initPledgesModule(votersContext) {
   }
 
   document.addEventListener("candidates-updated", () => {
+    renderCandidateVisibilityMenu();
     renderPledgesTable();
   });
+
+  renderCandidateVisibilityMenu();
+  const pledgeColumnsBtn = document.getElementById("pledgeColumnsButton");
+  const pledgeColumnsMenu = document.getElementById("pledgeColumnsMenu");
+  if (pledgeColumnsBtn && pledgeColumnsMenu) {
+    pledgeColumnsMenu.addEventListener("click", (e) => e.stopPropagation());
+    pledgeColumnsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = !pledgeColumnsMenu.hidden;
+      pledgeColumnsMenu.hidden = open;
+      pledgeColumnsBtn.setAttribute("aria-expanded", !open);
+      if (!open) {
+        document.addEventListener("click", closeColumnsMenuOnce);
+      }
+    });
+  }
+  function closeColumnsMenuOnce() {
+    if (pledgeColumnsMenu) {
+      pledgeColumnsMenu.hidden = true;
+      if (pledgeColumnsBtn) pledgeColumnsBtn.setAttribute("aria-expanded", "false");
+    }
+    document.removeEventListener("click", closeColumnsMenuOnce);
+  }
 
   document.addEventListener("agents-updated", () => {
     renderPledgesTable();

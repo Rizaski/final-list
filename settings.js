@@ -418,8 +418,17 @@ function openCandidateForm(existing) {
         const api = await firebaseInitPromise;
         if (api.ready && api.setCandidateFs) {
           await api.setCandidateFs(candidate);
+          saveCandidatesToStorage();
         }
-      } catch (_) {}
+      } catch (err) {
+        console.error("[Settings] Failed to save candidate to Firebase:", err);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Could not save candidate to Firebase",
+            meta: err?.message || String(err),
+          });
+        }
+      }
     })();
 
     closeModal();
@@ -480,9 +489,9 @@ function initCampaignTab() {
       campaignConfig.campaignType = typeEl?.value ?? campaignConfig.campaignType;
       campaignConfig.constituency = (constituencyEl?.value ?? "").trim();
       campaignConfig.island = (islandEl?.value ?? "").trim();
+      syncCampaignConfigToFirestore();
       saveCampaignConfig();
       applyCampaignToSidebar();
-      syncCampaignConfigToFirestore();
       document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: campaignConfig }));
       if (window.appNotifications) {
         window.appNotifications.push({
@@ -558,19 +567,18 @@ function initAgentsTab() {
           };
           if (api.ready && api.setAgentFs) {
             await api.setAgentFs(agent);
-          } else {
-            agents.push(agent);
-            saveAgentsToStorage();
-            renderAgentsTable();
-            try {
-              window.agentsCached = [...agents];
-            } catch (_) {}
-            document.dispatchEvent(
-              new CustomEvent("agents-updated", {
-                detail: { agents: [...agents] },
-              })
-            );
           }
+          agents.push(agent);
+          saveAgentsToStorage();
+          renderAgentsTable();
+          try {
+            window.agentsCached = [...agents];
+          } catch (_) {}
+          document.dispatchEvent(
+            new CustomEvent("agents-updated", {
+              detail: { agents: [...agents] },
+            })
+          );
         } catch (_) {}
       })();
       if (window.appNotifications) {
@@ -592,8 +600,29 @@ function initAgentsTab() {
 export function initSettingsModule() {
   initSettingsTabs();
   initCampaignTab();
-  loadCandidatesFromStorage();
-  renderCandidatesTable();
+
+  // Load candidates from Firebase first (source of truth), fall back to cache on error or when Firebase not ready
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.getAllCandidatesFs) {
+        const items = await api.getAllCandidatesFs();
+        if (Array.isArray(items)) {
+          candidates = items;
+          saveCandidatesToStorage();
+          renderCandidatesTable();
+          return;
+        }
+      }
+      loadCandidatesFromStorage();
+      renderCandidatesTable();
+    } catch (err) {
+      console.error("Candidate load failed:", err);
+      loadCandidatesFromStorage();
+      renderCandidatesTable();
+    }
+  })();
+
   initAgentsTab();
 
   // Firestore-backed agents: load and subscribe in real time
@@ -852,7 +881,7 @@ export function initSettingsModule() {
       const api = await firebaseInitPromise;
       if (api.ready && api.getAllCandidatesFs && api.onCandidatesSnapshotFs) {
         const initial = await api.getAllCandidatesFs();
-        if (Array.isArray(initial) && initial.length) {
+        if (Array.isArray(initial)) {
           candidates = initial;
           saveCandidatesToStorage();
           renderCandidatesTable();
@@ -877,8 +906,15 @@ export function initSettingsModule() {
             })
           );
         });
+      } else {
+        loadCandidatesFromStorage();
+        renderCandidatesTable();
       }
-    } catch (_) {}
+    } catch (err) {
+      console.error("[Settings] Failed to load candidates from Firebase:", err);
+      loadCandidatesFromStorage();
+      renderCandidatesTable();
+    }
   })();
 }
 
