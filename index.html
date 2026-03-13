@@ -666,7 +666,7 @@
           <section class="card">
             <header class="card-header">
               <h2>Door to Door Records</h2>
-              <p class="card-subtitle">Seq, Name, ID, Permanent Address, Pledge, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.</p>
+              <p class="card-subtitle">Seq, Image, Name, ID, Permanent Address, Pledge, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.</p>
             </header>
             <div class="card-body">
               <div class="pledges-toolbar">
@@ -722,6 +722,7 @@
                   <thead>
                     <tr>
                       <th scope="col">Seq</th>
+                      <th scope="col">Image</th>
                       <th scope="col">Name</th>
                       <th scope="col">ID Number</th>
                       <th scope="col">Permanent Address</th>
@@ -1108,6 +1109,18 @@
               </header>
               <div class="card-body">
                 <div id="reportsEventChart" class="chart-row">
+                  <!-- Populated by reports module -->
+                </div>
+              </div>
+            </section>
+
+            <section class="card">
+              <header class="card-header card-header--split">
+                <h2>Candidate pledge summary</h2>
+                <p class="card-subtitle">Pledged voters and percentage per candidate.</p>
+              </header>
+              <div class="card-body">
+                <div id="reportsCandidatePledgeSummary">
                   <!-- Populated by reports module -->
                 </div>
               </div>

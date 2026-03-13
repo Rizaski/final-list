@@ -1,6 +1,7 @@
 import { getPledgeByBallotBox } from "./voters.js";
 import { getVotedVoterIds } from "./zeroDay.js";
 import { openModal, closeModal } from "./ui.js";
+import { getCandidates } from "./settings.js";
 
 function escapeHtml(str) {
   if (str == null) return "";
@@ -95,12 +96,94 @@ function buildDetailTable(columns, rows) {
   return wrap;
 }
 
+function renderCandidatePledgeSummary(container, voters) {
+  if (!container) return;
+  const allCandidates = getCandidates();
+  const totalVoters = voters.length;
+
+  if (!allCandidates.length) {
+    container.innerHTML =
+      '<div class="helper-text">No candidates configured yet. Add candidates in Settings → Candidates to see pledge breakdown.</div>';
+    return;
+  }
+
+  if (totalVoters === 0) {
+    container.innerHTML =
+      '<div class="helper-text">No voters in the system yet. Import voters to see candidate pledge statistics.</div>';
+    return;
+  }
+
+  const rows = allCandidates.map((cand) => {
+    const id = String(cand.id);
+    let pledgedCount = 0;
+    for (const v of voters) {
+      const cp = v.candidatePledges || {};
+      if (cp[id] === "yes") pledgedCount += 1;
+    }
+    const pledgePct =
+      totalVoters === 0 ? 0 : (pledgedCount / totalVoters) * 100;
+    return {
+      id,
+      name: cand.name || `Candidate ${id}`,
+      candidateNumber: cand.candidateNumber || "",
+      pledgedCount,
+      pledgePct,
+    };
+  });
+
+  const hasAnyPledges = rows.some((r) => r.pledgedCount > 0);
+  if (!hasAnyPledges) {
+    container.innerHTML =
+      '<div class="helper-text">No candidate-specific pledges recorded yet. Use the Pledges module to assign pledges per candidate.</div>';
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "data-table";
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>Candidate</th>
+      <th>Candidate no.</th>
+      <th>Pledged voters</th>
+      <th>Pledge %</th>
+      <th></th>
+    </tr>
+  `;
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+
+  rows
+    .slice()
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "en"))
+    .forEach((row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(row.name)}</td>
+        <td>${escapeHtml(row.candidateNumber)}</td>
+        <td>${row.pledgedCount.toLocaleString("en-MV")}</td>
+        <td>${row.pledgePct.toFixed(1)}%</td>
+        <td style="text-align:right;">
+          <button type="button" class="ghost-button ghost-button--small" data-report-candidate-id="${escapeHtml(
+            row.id
+          )}">View pledged voters</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+  table.appendChild(tbody);
+  container.innerHTML = "";
+  container.appendChild(table);
+}
+
 export function initReportsModule({ votersContext, pledgesContext, eventsContext }) {
   const pledgeChart = document.getElementById("reportsPledgeChart");
   const supportChart = document.getElementById("reportsSupportChart");
   const registrationChart = document.getElementById("reportsRegistrationChart");
   const boxPledgeChart = document.getElementById("reportsBoxPledgeChart");
   const eventChart = document.getElementById("reportsEventChart");
+  const candidateSummaryEl = document.getElementById("reportsCandidatePledgeSummary");
   const reportsModule = document.getElementById("module-reports");
 
   function openReportDetails(reportType) {
@@ -193,6 +276,49 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     openModal({ title, body, footer });
   }
 
+  function openCandidatePledgedVoters(candidateId) {
+    if (!candidateId) return;
+    const voters = votersContext.getAllVoters();
+    const candidates = getCandidates();
+    const candidate = candidates.find((c) => String(c.id) === String(candidateId));
+    const title = candidate
+      ? `Pledged voters – ${candidate.name || candidateId}`
+      : "Pledged voters – Candidate";
+
+    const rows = voters
+      .filter((v) => {
+        const cp = v.candidatePledges || {};
+        return cp[String(candidateId)] === "yes";
+      })
+      .slice()
+      .sort((a, b) => (a.fullName || "").localeCompare(b.fullName || "", "en"))
+      .map((v) => [
+        v.fullName || v.id || "–",
+        v.nationalId || v.id || "–",
+        (v.ballotBox || "").trim() || "–",
+        v.permanentAddress || "",
+        v.phone || "",
+      ]);
+
+    const body = document.createElement("div");
+    body.appendChild(
+      buildDetailTable(
+        ["Name", "ID number", "Ballot box", "Permanent address", "Phone"],
+        rows
+      )
+    );
+
+    const footer = document.createElement("div");
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "ghost-button";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", closeModal);
+    footer.appendChild(closeBtn);
+
+    openModal({ title, body, footer });
+  }
+
   function recomputeReports() {
     const voters = votersContext.getAllVoters();
     const pledges = pledgesContext.getPledges();
@@ -245,6 +371,9 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
           ];
     renderBarSet(eventChart, participationItems);
 
+    // Candidate pledge summary
+    renderCandidatePledgeSummary(candidateSummaryEl, voters);
+
   }
 
   recomputeReports();
@@ -252,12 +381,21 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   if (reportsModule) {
     reportsModule.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-report-details]");
-      if (btn) openReportDetails(btn.getAttribute("data-report-details"));
+      if (btn) {
+        openReportDetails(btn.getAttribute("data-report-details"));
+        return;
+      }
+      const candBtn = e.target.closest("[data-report-candidate-id]");
+      if (candBtn) {
+        const candidateId = candBtn.getAttribute("data-report-candidate-id");
+        openCandidatePledgedVoters(candidateId);
+      }
     });
   }
 
   document.addEventListener("voters-updated", recomputeReports);
   document.addEventListener("pledges-updated", recomputeReports);
   document.addEventListener("events-updated", recomputeReports);
+  document.addEventListener("candidates-updated", recomputeReports);
 }
 

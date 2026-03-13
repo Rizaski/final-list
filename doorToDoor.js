@@ -1,9 +1,13 @@
 /**
  * Door to Door module: track field visits (pledge, ballot box, assigned agent, met, persuadable, date pledged, notes).
- * Table: Seq, Name, ID, Permanent Address, Pledge, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.
+ * Table: Seq, Image, Name, ID, Permanent Address, Pledge, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.
  */
 import { getAgents } from "./settings.js";
-import { updateVoterDoorToDoorFields, updateVoterPledgeStatus } from "./voters.js";
+import {
+  updateVoterDoorToDoorFields,
+  updateVoterPledgeStatus,
+  getVoterImageSrc,
+} from "./voters.js";
 
 const PAGE_SIZE = 15;
 const doorToDoorTableBody = document.querySelector("#doorToDoorTable tbody");
@@ -25,6 +29,17 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function getInitials(name) {
+  return (
+    (name || "")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || "")
+      .join("") || "?"
+  );
 }
 
 function pledgePillClass(status) {
@@ -144,7 +159,7 @@ function renderDoorToDoorTable() {
   doorToDoorTableBody.innerHTML = "";
   if (pageRows.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="11" class="text-muted" style="text-align:center;padding:24px;">No voters. Import voters in Settings → Data, or adjust filters.</td>`;
+    tr.innerHTML = `<td colspan="12" class="text-muted" style="text-align:center;padding:24px;">No voters. Import voters in Settings → Data, or adjust filters.</td>`;
     doorToDoorTableBody.appendChild(tr);
   } else {
     const agents = getAgents();
@@ -174,7 +189,7 @@ function renderDoorToDoorTable() {
           lastGroupLabel = label;
           const tr = document.createElement("tr");
           tr.className = "pledges-toolbar__group-header";
-          tr.innerHTML = `<td colspan="11">${escapeHtml(label)}</td>`;
+          tr.innerHTML = `<td colspan="12">${escapeHtml(label)}</td>`;
           doorToDoorTableBody.appendChild(tr);
         }
         return;
@@ -192,11 +207,27 @@ function renderDoorToDoorTable() {
       const persuadable = v.persuadable ?? "unknown";
       const pledgedAt = v.pledgedAt ?? "";
       const notes = v.notes ?? "";
+      const initials = getInitials(v.fullName || v.nationalId || v.id);
+      const photoSrc = getVoterImageSrc({
+        photoUrl: v.photoUrl,
+        nationalId: v.nationalId,
+        id: v.id,
+      });
+      const photoCell = photoSrc
+        ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(
+            photoSrc
+          )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(
+            initials
+          )}</div></div>`
+        : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(
+            initials
+          )}</div></div>`;
       const agentOptions =
         '<option value="">Unassigned</option>' +
         agents.map((a) => `<option value="${escapeHtml(a.name)}"${a.name === volunteer ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("");
       tr.innerHTML = `
         <td>${escapeHtml(String(v.sequence ?? ""))}</td>
+        <td>${photoCell}</td>
         <td>${escapeHtml(v.fullName || "")}</td>
         <td>${escapeHtml(v.nationalId || v.id || "")}</td>
         <td>${escapeHtml(v.permanentAddress || "")}</td>
