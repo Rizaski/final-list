@@ -216,8 +216,8 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     renderPledgePie(registrationChart, { yesPct, noPct, undecidedPct });
 
     // Box-wise pledge voter result
-    const pledgeByBox = getPledgeByBallotBox();
-    renderBarSet(boxPledgeChart, pledgeByBox);
+    const pledgeByBoxDetailed = getPledgeByBallotBox();
+    renderBarSet(boxPledgeChart, pledgeByBoxDetailed);
 
     const supportTypes = ["supporting", "leaning", "opposed", "unknown"];
     const supportDistribution = supportTypes.map((type) => {

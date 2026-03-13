@@ -159,6 +159,35 @@ export const firebaseInitPromise = (async () => {
           handler(items);
         });
       };
+
+      // Candidates collection
+      const CANDIDATES_COLLECTION = "candidates";
+      const candidatesColRef = firestoreMod.collection(db, CANDIDATES_COLLECTION);
+
+      let getAllCandidatesFs = async () => {
+        const snap = await firestoreMod.getDocs(candidatesColRef);
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      };
+
+      let setCandidateFs = async (candidate) => {
+        if (!candidate || !candidate.id) return;
+        const ref = firestoreMod.doc(db, CANDIDATES_COLLECTION, String(candidate.id));
+        await firestoreMod.setDoc(ref, candidate, { merge: true });
+      };
+
+      let deleteCandidateFs = async (id) => {
+        if (!id) return;
+        const ref = firestoreMod.doc(db, CANDIDATES_COLLECTION, String(id));
+        await firestoreMod.deleteDoc(ref);
+      };
+
+      let onCandidatesSnapshotFs = (handler) => {
+        if (typeof handler !== "function") return noopUnsubscribe;
+        return firestoreMod.onSnapshot(candidatesColRef, (snap) => {
+          const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          handler(items);
+        });
+      };
     } catch (fsErr) {
       console.warn("[Firebase] Firestore init failed — campaign config will use localStorage only.", fsErr);
     }
@@ -190,6 +219,10 @@ export const firebaseInitPromise = (async () => {
       setAgentFs,
       deleteAgentFs,
       onAgentsSnapshotFs,
+      getAllCandidatesFs,
+      setCandidateFs,
+      deleteCandidateFs,
+      onCandidatesSnapshotFs,
     };
   } catch (err) {
     console.warn(

@@ -383,6 +383,7 @@ function openCandidateForm(existing) {
     const photoUrl = body.querySelector("#candidatePhoto").value.trim();
     const description = body.querySelector("#candidateDescription").value.trim();
 
+    let candidate;
     if (isEdit) {
       existing.name = name;
       existing.candidateNumber = candidateNumber;
@@ -391,10 +392,11 @@ function openCandidateForm(existing) {
       existing.constituency = constituency;
       existing.photoUrl = photoUrl;
       existing.description = description;
+      candidate = { ...existing };
     } else {
       const nextId =
         candidates.reduce((max, c) => Math.max(max, c.id), 0) + 1;
-      candidates.push({
+      candidate = {
         id: nextId,
         name,
         candidateNumber,
@@ -403,12 +405,23 @@ function openCandidateForm(existing) {
         constituency,
         photoUrl,
         description,
-      });
+      };
+      candidates.push(candidate);
     }
 
     saveCandidatesToStorage();
     renderCandidatesTable();
     document.dispatchEvent(new CustomEvent("candidates-updated"));
+
+    (async () => {
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.setCandidateFs) {
+          await api.setCandidateFs(candidate);
+        }
+      } catch (_) {}
+    })();
+
     closeModal();
   });
 
@@ -833,5 +846,39 @@ export function initSettingsModule() {
       }
     });
   }
+  // Firestore-backed candidates: load and subscribe in real time
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.getAllCandidatesFs && api.onCandidatesSnapshotFs) {
+        const initial = await api.getAllCandidatesFs();
+        if (Array.isArray(initial) && initial.length) {
+          candidates = initial;
+          saveCandidatesToStorage();
+          renderCandidatesTable();
+          document.dispatchEvent(
+            new CustomEvent("candidates-updated", {
+              detail: { candidates: [...candidates] },
+            })
+          );
+        } else {
+          loadCandidatesFromStorage();
+          renderCandidatesTable();
+        }
+
+        api.onCandidatesSnapshotFs((items) => {
+          if (!Array.isArray(items)) return;
+          candidates = items;
+          saveCandidatesToStorage();
+          renderCandidatesTable();
+          document.dispatchEvent(
+            new CustomEvent("candidates-updated", {
+              detail: { candidates: [...candidates] },
+            })
+          );
+        });
+      }
+    } catch (_) {}
+  })();
 }
 
