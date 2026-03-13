@@ -110,18 +110,18 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     let body = document.createElement("div");
 
     if (reportType === "pledge-by-island") {
-      const byIsland = voters
-        .filter((v) => (v.island || "").trim())
+      const byBox = voters
+        .filter((v) => (v.ballotBox || "").trim())
         .slice()
-        .sort((a, b) => (a.island || "").localeCompare(b.island || "", "en"));
-      const rows = byIsland.map((v) => [
-        (v.island || "").split("-")[0].trim() || "–",
+        .sort((a, b) => (a.ballotBox || "").localeCompare(b.ballotBox || "", "en"));
+      const rows = byBox.map((v) => [
+        (v.ballotBox || "").trim() || "–",
         v.fullName || v.id || "–",
         v.nationalId || v.id || "–",
         (v.pledgeStatus === "yes" ? "Yes" : v.pledgeStatus === "no" ? "No" : "Undecided"),
       ]);
-      title = "Pledge by island – voters";
-      body.appendChild(buildDetailTable(["Island", "Name", "ID number", "Pledge"], rows));
+      title = "Pledge by ballot box – voters";
+      body.appendChild(buildDetailTable(["Ballot box", "Name", "ID number", "Pledge"], rows));
     } else if (reportType === "pledge-pie") {
       const byPledge = voters
         .slice()
@@ -198,32 +198,9 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     const pledges = pledgesContext.getPledges();
     const events = eventsContext.getEvents();
 
-    const islands = Array.from(
-      new Set(
-        voters
-          .map((v) => (v.island || "").split("-")[0].trim())
-          .filter(Boolean)
-      )
-    );
-
-    // Existing pledge report: percentage by island
-    const pledgeByIsland = islands.map((island) => {
-      const votersInIsland = voters.filter(
-        (v) => (v.island || "").startsWith(island)
-      );
-      const pledgedInIsland = votersInIsland.filter(
-        (v) => v.pledgeStatus === "yes"
-      );
-      const pct =
-        votersInIsland.length === 0
-          ? 0
-          : (pledgedInIsland.length / votersInIsland.length) * 100;
-      return {
-        label: island,
-        value: pct,
-      };
-    });
-    renderBarSet(pledgeChart, pledgeByIsland);
+    // Pledge percentage by ballot box only (so chart shows only locations in the voter list, e.g. Dhuvaafaru, Kandolhudhoo)
+    const pledgeByBox = getPledgeByBallotBox();
+    renderBarSet(pledgeChart, pledgeByBox);
 
     // Pledge distribution pie (pledge voters: Yes / No / Undecided)
     const totalVoters = voters.length;
