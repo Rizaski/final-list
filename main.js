@@ -378,6 +378,20 @@ document.addEventListener("campaign-config-changed", () => {
   handleScopeChange();
 });
 
+// Keep dashboard stats and charts up to date when data changes in other modules.
+document.addEventListener("voters-updated", () => {
+  const scope = getDashboardScope();
+  refreshDashboard(scope);
+});
+document.addEventListener("pledges-updated", () => {
+  const scope = getDashboardScope();
+  refreshDashboard(scope);
+});
+document.addEventListener("events-updated", () => {
+  const scope = getDashboardScope();
+  refreshDashboard(scope);
+});
+
 const globalSearchInput = document.getElementById("globalSearch");
 
 globalSearchInput.addEventListener("input", () => {
