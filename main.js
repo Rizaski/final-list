@@ -424,6 +424,13 @@ function renderDashboardStats(stats) {
   if (upcomingEventsEl && typeof stats.upcomingEvents === "number") {
     upcomingEventsEl.textContent = stats.upcomingEvents.toLocaleString("en-MV");
   }
+
+  // Brief pulse animation on stat cards when values update
+  document.querySelectorAll(".grid--stats .stat-card").forEach((card) => {
+    card.classList.add("stat-card--updated");
+    clearTimeout(card._pulseTimeout);
+    card._pulseTimeout = setTimeout(() => card.classList.remove("stat-card--updated"), 500);
+  });
 }
 
 function renderDashboardUpcomingEvents(eventsSummary) {
@@ -616,11 +623,18 @@ async function handleAuthenticatedUser(firebaseApi, fbUser) {
     setCurrentUser(user);
     applyUserToShell(user);
     switchModule("dashboard");
+    const appLoader = document.getElementById("appLoaderOverlay");
+    if (appLoader) {
+      appLoader.hidden = false;
+    }
     try {
       await startAppModules(firebaseApi);
     } catch (err) {
-      // Keep login successful even if module init fails.
       console.error("[App] Failed to initialize modules after login", err);
+    } finally {
+      if (appLoader) {
+        appLoader.hidden = true;
+      }
     }
   } catch (err) {
     console.error("[App] Failed to apply authenticated user", err);
@@ -713,10 +727,19 @@ async function boot() {
         console.warn("[Auth] Login blocked: email or password missing");
         return;
       }
-      if (loginSubmit) loginSubmit.disabled = true;
+      const btnText = loginSubmit.querySelector(".btn__text");
+      const defaultText = btnText ? btnText.textContent : loginSubmit.textContent;
+      if (loginSubmit) {
+        loginSubmit.disabled = true;
+        loginSubmit.classList.add("btn--loading");
+        if (btnText) btnText.textContent = "Signing in…";
+        const spinner = document.createElement("span");
+        spinner.className = "spinner--btn";
+        spinner.setAttribute("aria-hidden", "true");
+        loginSubmit.appendChild(spinner);
+      }
       try {
         console.log("[Auth] Calling signInWithEmailAndPassword", email);
-        // Auth state listener will handle showing the app shell and starting modules.
         await firebaseApi.signInWithEmailAndPassword(email, password);
         console.log("[Auth] signInWithEmailAndPassword resolved successfully");
       } catch (err) {
@@ -728,7 +751,13 @@ async function boot() {
               : "Sign-in failed. Check your credentials.";
         }
       } finally {
-        if (loginSubmit) loginSubmit.disabled = false;
+        if (loginSubmit) {
+          loginSubmit.classList.remove("btn--loading");
+          const sp = loginSubmit.querySelector(".spinner--btn");
+          if (sp) sp.remove();
+          if (btnText) btnText.textContent = defaultText;
+          loginSubmit.disabled = false;
+        }
       }
     });
   }

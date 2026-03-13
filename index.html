@@ -54,7 +54,7 @@
           </div>
           <p id="loginError" class="login-error" aria-live="polite"></p>
           <button id="loginSubmit" type="submit" class="primary-button primary-button--login">
-            Sign in
+            <span class="btn__text">Sign in</span>
           </button>
           <div class="login-form__meta-helper login-form__meta-helper--muted">
             <p class="login-helper-muted">Trouble signing in? Contact your campaign administrator.</p>
@@ -304,6 +304,12 @@
 
       <!-- Workspace -->
       <main class="workspace">
+        <div id="appLoaderOverlay" class="loader-overlay" hidden aria-live="polite">
+          <div class="loader-overlay__content">
+            <div class="spinner spinner--lg" aria-hidden="true"></div>
+            <span class="loader-overlay__text">Loading campaign data…</span>
+          </div>
+        </div>
         <!-- Dashboard Module -->
         <section id="module-dashboard" class="module module--active">
           <div class="module-header">
@@ -470,7 +476,10 @@
                   </div>
                 </div>
               </div>
-              <div class="table-wrapper table-wrapper--sticky-header">
+              <div class="table-wrapper table-wrapper--sticky-header" style="position: relative;">
+                <div id="votersTableLoader" class="table-loader" hidden aria-hidden="true">
+                  <div class="spinner" aria-hidden="true"></div>
+                </div>
                 <table class="data-table" id="votersTable">
                   <thead>
                     <tr>

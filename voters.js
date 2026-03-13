@@ -701,7 +701,9 @@ function deleteVoter(voterId) {
 }
 
 export async function initVotersModule() {
-  // Bind table sorting once
+  const votersTableLoader = document.getElementById("votersTableLoader");
+  if (votersTableLoader) votersTableLoader.hidden = false;
+
   bindVoterTableHeaderSort();
 
   const addVoterBtn = document.getElementById("addVoterButton");
@@ -769,6 +771,8 @@ export async function initVotersModule() {
       });
     }
   }
+
+  if (votersTableLoader) votersTableLoader.hidden = true;
 
   return {
     getAllVoters: () => [...currentVoters],
