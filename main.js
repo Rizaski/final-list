@@ -361,11 +361,15 @@ function applyElectionTypeFromCampaign() {
   electionTypeSelect.value = mapped.value;
 }
 
-function handleScopeChange() {
-  const scope = {
-    electionType: electionTypeSelect.value,
-    constituency: constituencySelect.value,
+function getDashboardScope() {
+  return {
+    electionType: electionTypeSelect ? electionTypeSelect.value : "local",
+    constituency: constituencySelect ? constituencySelect.value : "",
   };
+}
+
+function handleScopeChange() {
+  const scope = getDashboardScope();
   refreshDashboard(scope);
 }
 
