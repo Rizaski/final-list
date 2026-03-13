@@ -147,11 +147,24 @@ function openSidebar() {
 }
 
 function toggleSidebar() {
-  document.body.classList.toggle("sidebar-open");
+  const isMobile = window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile) {
+    document.body.classList.toggle("sidebar-open");
+  } else {
+    document.body.classList.toggle("sidebar-collapsed");
+  }
   const btn = document.getElementById("sidebarToggle");
   if (btn) {
+    const isCollapsed = document.body.classList.contains("sidebar-collapsed");
     const isOpen = document.body.classList.contains("sidebar-open");
-    btn.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
+    if (isMobile) {
+      btn.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
+    } else {
+      btn.setAttribute(
+        "aria-label",
+        isCollapsed ? "Expand sidebar" : "Collapse sidebar"
+      );
+    }
   }
 }
 
@@ -167,6 +180,13 @@ const sidebarToggle = document.getElementById("sidebarToggle");
 const sidebarOverlay = document.getElementById("sidebarOverlay");
 if (sidebarToggle) {
   sidebarToggle.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleSidebar();
+  });
+}
+const sidebarCollapseButton = document.getElementById("sidebarCollapseButton");
+if (sidebarCollapseButton) {
+  sidebarCollapseButton.addEventListener("click", (e) => {
     e.preventDefault();
     toggleSidebar();
   });

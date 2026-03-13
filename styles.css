@@ -20,6 +20,10 @@
   --topbar-height: 64px;
 }
 
+body.sidebar-collapsed {
+  --sidebar-width: 72px;
+}
+
 *,
 *::before,
 *::after {
@@ -245,7 +249,7 @@ body {
   }
 }
 
-.app-shell {
+ .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   width: 100%;
@@ -265,11 +269,15 @@ body {
 .sidebar__brand {
   display: flex;
   align-items: center;
-  padding: 20px 16px;
+  padding: 20px 12px 20px 16px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.15);
   margin-bottom: 8px;
   background: rgba(15, 23, 42, 0.5);
   min-height: 72px;
+}
+
+body.sidebar-collapsed .brand-text {
+  display: none;
 }
 
 .brand-mark {
@@ -292,6 +300,38 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.sidebar__collapse-btn {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.85);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #cbd5e1;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.sidebar__collapse-btn:hover {
+  background: rgba(30, 64, 175, 0.9);
+  border-color: rgba(129, 140, 248, 0.8);
+  color: #e5e7eb;
+}
+
+body.sidebar-collapsed .sidebar__collapse-btn .icon-svg {
+  transform: rotate(180deg);
+  transition: transform 0.15s ease;
+}
+
+@media (max-width: 768px) {
+  .sidebar__collapse-btn {
+    display: none;
+  }
 }
 
 .brand-title {
@@ -329,6 +369,16 @@ body {
   text-align: left;
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease, transform 0.1s ease;
+}
+
+body.sidebar-collapsed .nav-label {
+  display: none;
+}
+
+body.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
 .nav-item:hover {
@@ -1861,13 +1911,19 @@ body {
 }
 
 /* Pledges table: enlarge voter image on hover for clarity */
-.data-table--pledges .pledge-cell--photo .avatar-cell {
+.data-table--pledges .pledge-cell--photo .avatar-cell,
+#votersTable .avatar-cell,
+#doorToDoorTable .avatar-cell {
   position: relative;
 }
-.data-table--pledges .pledge-cell--photo .avatar-img {
+.data-table--pledges .pledge-cell--photo .avatar-img,
+#votersTable .avatar-img,
+#doorToDoorTable .avatar-img {
   transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
 }
-.data-table--pledges .pledge-cell--photo .avatar-img:hover {
+.data-table--pledges .pledge-cell--photo .avatar-img:hover,
+#votersTable .avatar-img:hover,
+#doorToDoorTable .avatar-img:hover {
   transform: scale(2.4);
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.45);
   z-index: 2;
