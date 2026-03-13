@@ -52,22 +52,19 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-/** Base path for voter ID-based images (folder must be next to index.html, e.g. /images/images/). */
-const VOTER_IMAGES_BASE = "/images/images/";
+/** Base path for voter ID-based images (folder must be next to index.html, e.g. /photos/). */
+const VOTER_IMAGES_BASE = "photos/";
 
 /**
  * Returns the first image URL to try for a voter. Uses explicit photoUrl if set,
- * otherwise builds path from national ID so that images named by ID card number (e.g. 12345.jpg) load.
- * Uses absolute URL so images resolve correctly regardless of how the app is served.
- * Caller should use onerror to try .jpeg / .png when .jpg fails.
+ * otherwise builds a path under /photos using the national ID so that images
+ * named by ID card number (e.g. 12345.jpg) load. Caller should use onerror to
+ * try .jpeg / .png when .jpg fails.
  */
 export function getVoterImageSrc(voter) {
   if (!voter) return "";
-  const explicit = (voter.photoUrl || "").trim();
-  if (explicit) {
-    const url = explicit.includes(".") ? explicit : explicit + ".jpg";
-    return url;
-  }
+  // Always derive from ID so that images live in /photos and aren't affected
+  // by any legacy CSV image paths.
   const rawId = (voter.nationalId || voter.id || "").toString().trim();
   const id = rawId.replace(/\s+/g, "");
   if (!id) return "";
@@ -230,7 +227,7 @@ function renderVotersTable() {
       .join("") || "?";
     const photoSrc = getVoterImageSrc(voter);
     const photoCell = photoSrc
-      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}if(s.indexOf('/images/images/')!==-1){this.src=s.replace('/images/images/','/images/');return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
+      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
     tr.innerHTML = `
       <td>${voter.sequence ?? ""}</td>
@@ -363,7 +360,7 @@ function renderVoterDetails(voter) {
   const detailsPhoto = detailsPhotoSrc
     ? `<div class="avatar-cell avatar-cell--large"><img class="avatar-img" src="${escapeHtml(
         detailsPhotoSrc
-      )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}if(s.indexOf('/images/images/')!==-1){this.src=s.replace('/images/images/','/images/');return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${detailsInitials}</div></div>`
+      )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${detailsInitials}</div></div>`
     : `<div class="avatar-cell avatar-cell--large"><div class="avatar-circle">${detailsInitials}</div></div>`;
   voterDetailsContent.innerHTML = `
     <div class="voter-details-layout">
@@ -869,12 +866,12 @@ export function updateVoterDoorToDoorFields(voterId, fields) {
       const api = await firebaseInitPromise;
       if (api.ready && api.setVoterFs) {
         await api.setVoterFs(v);
-      } else {
-        saveVotersToStorage();
-        renderVotersTable();
-        if (selectedVoterId === voterId) renderVoterDetails(v);
-        document.dispatchEvent(new CustomEvent("voters-updated"));
       }
+      // Always keep local state and UI in sync, regardless of whether Firestore is used.
+      saveVotersToStorage();
+      renderVotersTable();
+      if (selectedVoterId === voterId) renderVoterDetails(v);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
 }

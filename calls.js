@@ -1,4 +1,5 @@
 import { openModal, closeModal } from "./ui.js";
+import { updateVoterDoorToDoorFields } from "./voters.js";
 
 const PAGE_SIZE = 15;
 
@@ -323,6 +324,10 @@ export function initCallsModule(votersContext) {
     const call = calls.find((c) => c.id === id);
     if (!call) return;
     call[field] = target.value;
+    if (field === "notes" && call.voterId) {
+      // Keep door-to-door notes in sync with calls notes for this voter.
+      updateVoterDoorToDoorFields(call.voterId, { notes: call.notes || "" });
+    }
     // Re-render when status changes so row highlighting updates
     if (field === "status") {
       renderCallsTable();
@@ -339,6 +344,9 @@ export function initCallsModule(votersContext) {
     const call = calls.find((c) => c.id === id);
     if (!call) return;
     call[field] = target.value;
+    if (field === "notes" && call.voterId) {
+      updateVoterDoorToDoorFields(call.voterId, { notes: call.notes || "" });
+    }
   });
 
   return {

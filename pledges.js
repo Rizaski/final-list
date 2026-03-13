@@ -41,11 +41,13 @@ function ensureSeedData(votersContext) {
 
 function syncPledgeFilterIsland() {
   if (!pledgeFilterIslandEl) return;
-  const islands = [...new Set(pledgeRows.map((r) => r.island || "Unassigned").filter(Boolean))].sort();
+  // Ballot box filter should be driven by ballot boxes from the voters list,
+  // not island names. Use row.ballotBox as the source.
+  const boxes = [...new Set(pledgeRows.map((r) => r.ballotBox || "Unassigned").filter(Boolean))].sort();
   const current = pledgeFilterIslandEl.value;
   pledgeFilterIslandEl.innerHTML =
     '<option value="all">All</option>' +
-    islands.map((i) => `<option value="${escapeHtml(i)}"${i === current ? " selected" : ""}>${escapeHtml(i)}</option>`).join("");
+    boxes.map((b) => `<option value="${escapeHtml(b)}"${b === current ? " selected" : ""}>${escapeHtml(b)}</option>`).join("");
 }
 
 function pledgeStatusLabel(status) {
@@ -244,7 +246,7 @@ function renderPledgesTable() {
     const photoSrc = getVoterImageSrc(rowVoter);
     const initials = getInitials(row.name);
     const photoCell = photoSrc
-      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}if(s.indexOf('/images/images/')!==-1){this.src=s.replace('/images/images/','/images/');return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
     const cp = row.candidatePledges || {};
     const candidateCells = candidates

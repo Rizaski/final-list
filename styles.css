@@ -1851,6 +1851,27 @@ body {
   display: block;
 }
 
+/* Larger avatar in voter details: clearer circle photo */
+.avatar-cell--large .avatar-img,
+.avatar-cell--large .avatar-circle {
+  width: 60px;
+  height: 60px;
+  border-radius: 999px;
+}
+
+/* Pledges table: enlarge voter image on hover for clarity */
+.data-table--pledges .pledge-cell--photo .avatar-cell {
+  position: relative;
+}
+.data-table--pledges .pledge-cell--photo .avatar-img {
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.data-table--pledges .pledge-cell--photo .avatar-img:hover {
+  transform: scale(2.4);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.45);
+  z-index: 2;
+}
+
 .data-table th {
   font-size: 11px;
   text-transform: uppercase;
