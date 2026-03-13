@@ -52,8 +52,8 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-/** Base path for voter ID-based images (folder must be next to index.html, e.g. images/images/). */
-const VOTER_IMAGES_BASE = "images/images/";
+/** Base path for voter ID-based images (folder must be next to index.html, e.g. /images/images/). */
+const VOTER_IMAGES_BASE = "/images/images/";
 
 /**
  * Returns the first image URL to try for a voter. Uses explicit photoUrl if set,
@@ -66,21 +66,12 @@ export function getVoterImageSrc(voter) {
   const explicit = (voter.photoUrl || "").trim();
   if (explicit) {
     const url = explicit.includes(".") ? explicit : explicit + ".jpg";
-    try {
-      return new URL(url, window.location.href).href;
-    } catch (_) {
-      return url;
-    }
+    return url;
   }
   const rawId = (voter.nationalId || voter.id || "").toString().trim();
   const id = rawId.replace(/\s+/g, "");
   if (!id) return "";
-  const relative = VOTER_IMAGES_BASE + encodeURIComponent(id) + ".jpg";
-  try {
-    return new URL(relative, window.location.href).href;
-  } catch (_) {
-    return relative;
-  }
+  return VOTER_IMAGES_BASE + id + ".jpg";
 }
 
 function supportBadgeClass(status) {
@@ -166,7 +157,7 @@ function getFilteredSortedGroupedVoters() {
   }
 
   const getGroupKey = (v) => {
-    if (groupBy === "island") return v.island || "Unassigned";
+    if (groupBy === "island") return v.ballotBox || "Unassigned";
     if (groupBy === "pledge") return v.pledgeStatus || "undecided";
     return "";
   };
@@ -239,7 +230,7 @@ function renderVotersTable() {
       .join("") || "?";
     const photoSrc = getVoterImageSrc(voter);
     const photoCell = photoSrc
-      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
+      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}if(s.indexOf('/images/images/')!==-1){this.src=s.replace('/images/images/','/images/');return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
     tr.innerHTML = `
       <td>${voter.sequence ?? ""}</td>
@@ -361,11 +352,27 @@ function renderVoterDetails(voter) {
   const { dobDisplay, ageDisplay } = formatDobAndAge(voter);
 
   voterDetailsSubtitle.textContent = voter.fullName;
+  const detailsPhotoSrc = getVoterImageSrc(voter);
+  const detailsInitials =
+    (voter.fullName || "")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || "")
+      .join("") || "?";
+  const detailsPhoto = detailsPhotoSrc
+    ? `<div class="avatar-cell avatar-cell--large"><img class="avatar-img" src="${escapeHtml(
+        detailsPhotoSrc
+      )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}if(s.indexOf('/images/images/')!==-1){this.src=s.replace('/images/images/','/images/');return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${detailsInitials}</div></div>`
+    : `<div class="avatar-cell avatar-cell--large"><div class="avatar-circle">${detailsInitials}</div></div>`;
   voterDetailsContent.innerHTML = `
     <div class="voter-details-layout">
       <section class="voter-details-section">
         <h3 class="voter-details-section__title">Identity &amp; registration</h3>
         <div class="details-grid details-grid--two-column">
+          <div>
+            ${detailsPhoto}
+          </div>
           <div>
             <div class="detail-item-label">Full name</div>
             <div class="detail-item-value">${voter.fullName}</div>

@@ -195,7 +195,12 @@ export const firebaseInitPromise = (async () => {
         });
       };
     } catch (fsErr) {
-      console.warn("[Firebase] Firestore init failed — campaign config will use localStorage only.", fsErr);
+      // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
+      console.error(
+        "[Firebase] Firestore initialization failed. App cannot run without Firestore.",
+        fsErr
+      );
+      throw fsErr;
     }
 
     return {

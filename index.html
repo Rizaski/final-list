@@ -457,7 +457,7 @@
                       <option value="id">ID Number</option>
                       <option value="address">Permanent address</option>
                       <option value="pledge">Pledge status</option>
-                      <option value="island">Island</option>
+                      <option value="island">Ballot box</option>
                     </select>
                   </div>
                   <div class="field-group field-group--inline">
@@ -624,13 +624,7 @@
                       <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
                       <th scope="col" class="pledge-th pledge-th--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
                       <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--status th-sortable" data-sort-key="pledge">Pledge<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--island th-sortable" data-sort-key="island">Ballot Box<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--volunteer th-sortable" data-sort-key="volunteer">Assigned agent<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--met th-sortable" data-sort-key="met">Met?<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--persuadable th-sortable" data-sort-key="persuadable">Persuadable?<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--date th-sortable" data-sort-key="date">Date pledged<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--notes th-sortable" data-sort-key="notes">Notes<span class="sort-indicator"></span></th>
+                      <!-- Candidate pledge columns are injected dynamically by pledges.js -->
                     </tr>
                   </thead>
                   <tbody>
@@ -659,12 +653,12 @@
               <p class="card-subtitle">Seq, Name, ID, Permanent Address, Pledge, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.</p>
             </header>
             <div class="card-body">
-              <div class="list-toolbar">
-                <div class="list-toolbar__search">
+              <div class="pledges-toolbar">
+                <div class="pledges-toolbar__search">
                   <label for="doorToDoorSearch" class="sr-only">Search</label>
                   <input type="search" id="doorToDoorSearch" placeholder="Search by name, ID, address, notes…">
                 </div>
-                <div class="list-toolbar__controls">
+                <div class="pledges-toolbar__controls">
                   <div class="field-group field-group--inline">
                     <label for="doorToDoorSort">Sort</label>
                     <select id="doorToDoorSort">
