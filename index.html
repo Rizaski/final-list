@@ -662,13 +662,47 @@
               <div class="list-toolbar">
                 <div class="list-toolbar__search">
                   <label for="doorToDoorSearch" class="sr-only">Search</label>
-                  <input type="search" id="doorToDoorSearch" placeholder="Search by name, ID, address…">
+                  <input type="search" id="doorToDoorSearch" placeholder="Search by name, ID, address, notes…">
                 </div>
                 <div class="list-toolbar__controls">
+                  <div class="field-group field-group--inline">
+                    <label for="doorToDoorSort">Sort</label>
+                    <select id="doorToDoorSort">
+                      <option value="sequence">Seq</option>
+                      <option value="name-asc">Name A–Z</option>
+                      <option value="name-desc">Name Z–A</option>
+                      <option value="id">ID Number</option>
+                      <option value="address">Permanent address</option>
+                      <option value="pledge">Pledge status</option>
+                      <option value="box">Ballot box</option>
+                      <option value="volunteer">Assigned agent</option>
+                      <option value="met">Met?</option>
+                      <option value="persuadable">Persuadable?</option>
+                      <option value="date">Date pledged</option>
+                      <option value="notes">Notes</option>
+                    </select>
+                  </div>
+                  <div class="field-group field-group--inline">
+                    <label for="doorToDoorFilterStatus">Filter</label>
+                    <select id="doorToDoorFilterStatus">
+                      <option value="all">All pledge statuses</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                      <option value="undecided">Undecided</option>
+                    </select>
+                  </div>
                   <div class="field-group field-group--inline">
                     <label for="doorToDoorFilterBox">Ballot box</label>
                     <select id="doorToDoorFilterBox">
                       <option value="all">All</option>
+                    </select>
+                  </div>
+                  <div class="field-group field-group--inline">
+                    <label for="doorToDoorGroupBy">Group by</label>
+                    <select id="doorToDoorGroupBy">
+                      <option value="none">None</option>
+                      <option value="box">Ballot box</option>
+                      <option value="pledge">Pledge status</option>
                     </select>
                   </div>
                 </div>

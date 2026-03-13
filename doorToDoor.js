@@ -9,7 +9,10 @@ const PAGE_SIZE = 15;
 const doorToDoorTableBody = document.querySelector("#doorToDoorTable tbody");
 const doorToDoorPaginationEl = document.getElementById("doorToDoorPagination");
 const doorToDoorSearchEl = document.getElementById("doorToDoorSearch");
+const doorToDoorSortEl = document.getElementById("doorToDoorSort");
+const doorToDoorFilterStatusEl = document.getElementById("doorToDoorFilterStatus");
 const doorToDoorFilterBoxEl = document.getElementById("doorToDoorFilterBox");
+const doorToDoorGroupByEl = document.getElementById("doorToDoorGroupBy");
 
 let votersContext = null;
 let doorToDoorCurrentPage = 1;
@@ -33,28 +36,67 @@ function pledgePillClass(status) {
 function getFilteredVoters() {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const query = (doorToDoorSearchEl?.value || "").toLowerCase().trim();
+  const filterStatus = doorToDoorFilterStatusEl?.value || "all";
   const filterBox = doorToDoorFilterBoxEl?.value || "all";
-  let list = voters;
-  if (filterBox !== "all") {
-    list = list.filter((v) => (v.ballotBox || "").trim() === filterBox);
-  }
-  if (query) {
-    list = list.filter((v) => {
-      const searchable = [
-        v.fullName,
-        v.nationalId,
-        v.id,
-        v.permanentAddress,
-        v.ballotBox,
-        v.notes,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return searchable.includes(query);
+  const sortBy = doorToDoorSortEl?.value || "sequence";
+
+  let list = voters
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => {
+      if (filterStatus !== "all" && (row.pledgeStatus || "undecided") !== filterStatus) return false;
+      if (filterBox !== "all" && (row.ballotBox || "").trim() !== filterBox) return false;
+      if (query) {
+        const searchable = [
+          row.fullName,
+          row.nationalId,
+          row.id,
+          row.permanentAddress,
+          row.ballotBox,
+          row.notes,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!searchable.includes(query)) return false;
+      }
+      return true;
     });
-  }
-  return list.sort((a, b) => (Number(a.sequence) || 0) - (Number(b.sequence) || 0));
+
+  const cmp = (a, b) => {
+    const va = a.row;
+    const vb = b.row;
+    switch (sortBy) {
+      case "sequence":
+        return (Number(va.sequence) || 0) - (Number(vb.sequence) || 0);
+      case "name-asc":
+        return (va.fullName || "").localeCompare(vb.fullName || "", "en");
+      case "name-desc":
+        return (vb.fullName || "").localeCompare(va.fullName || "", "en");
+      case "id":
+        return (va.nationalId || "").localeCompare(vb.nationalId || "", "en");
+      case "address":
+        return (va.permanentAddress || "").localeCompare(vb.permanentAddress || "", "en");
+      case "pledge":
+        return (va.pledgeStatus || "").localeCompare(vb.pledgeStatus || "", "en");
+      case "box":
+        return (va.ballotBox || "").localeCompare(vb.ballotBox || "", "en");
+      case "volunteer":
+        return (va.volunteer || "").localeCompare(vb.volunteer || "", "en");
+      case "met":
+        return (va.metStatus || "").localeCompare(vb.metStatus || "", "en");
+      case "persuadable":
+        return (va.persuadable || "").localeCompare(vb.persuadable || "", "en");
+      case "date":
+        return (va.pledgedAt || "").localeCompare(vb.pledgedAt || "", "en");
+      case "notes":
+        return (va.notes || "").localeCompare(vb.notes || "", "en");
+      default:
+        return (va.fullName || "").localeCompare(vb.fullName || "", "en");
+    }
+  };
+
+  list.sort(cmp);
+  return list;
 }
 
 function syncBallotBoxFilter() {
@@ -69,21 +111,79 @@ function syncBallotBoxFilter() {
 
 function renderDoorToDoorTable() {
   if (!doorToDoorTableBody) return;
-  const list = getFilteredVoters();
-  const total = list.length;
+  const sortAndFiltered = getFilteredVoters();
+  const groupBy = doorToDoorGroupByEl?.value || "none";
+
+  let displayList;
+  if (groupBy === "none") {
+    displayList = sortAndFiltered.map((x) => ({ type: "row", row: x.row }));
+  } else {
+    displayList = [];
+    let lastKey = null;
+    for (const item of sortAndFiltered) {
+      const v = item.row;
+      const key =
+        groupBy === "box"
+          ? (v.ballotBox || "Unassigned") || "Unassigned"
+          : (v.pledgeStatus === "yes" ? "Yes" : v.pledgeStatus === "no" ? "No" : "Undecided");
+      if (key !== lastKey) {
+        lastKey = key;
+        displayList.push({ type: "group", label: key });
+      }
+      displayList.push({ type: "row", row: v });
+    }
+  }
+
+  const rowsOnly = displayList.filter((x) => x.type === "row");
+  const total = rowsOnly.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (doorToDoorCurrentPage > totalPages) doorToDoorCurrentPage = totalPages;
   const start = (doorToDoorCurrentPage - 1) * PAGE_SIZE;
-  const pageVoters = list.slice(start, start + PAGE_SIZE);
+  const pageRows = rowsOnly.slice(start, start + PAGE_SIZE);
 
   doorToDoorTableBody.innerHTML = "";
-  if (pageVoters.length === 0) {
+  if (pageRows.length === 0) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td colspan="11" class="text-muted" style="text-align:center;padding:24px;">No voters. Import voters in Settings → Data, or adjust filters.</td>`;
     doorToDoorTableBody.appendChild(tr);
   } else {
     const agents = getAgents();
-    pageVoters.forEach((v) => {
+
+    // If grouped, we may need to insert group header rows within the current page.
+    let lastGroupLabel = null;
+    displayList.forEach((item) => {
+      if (item.type === "group") {
+        // Only render group headers that have at least one row in current page
+        if (!rowsOnly.length) return;
+        const label = item.label;
+        // Determine if any row for this group is in the current page
+        const hasRowInPage = rowsOnly.some((r, idx) => {
+          if (idx < start || idx >= start + PAGE_SIZE) return false;
+          if (groupBy === "box") {
+            return (r.row.ballotBox || "Unassigned") === label;
+          }
+          const statusLabel =
+            r.row.pledgeStatus === "yes"
+              ? "Yes"
+              : r.row.pledgeStatus === "no"
+              ? "No"
+              : "Undecided";
+          return statusLabel === label;
+        });
+        if (hasRowInPage && label !== lastGroupLabel) {
+          lastGroupLabel = label;
+          const tr = document.createElement("tr");
+          tr.className = "pledges-toolbar__group-header";
+          tr.innerHTML = `<td colspan="11">${escapeHtml(label)}</td>`;
+          doorToDoorTableBody.appendChild(tr);
+        }
+        return;
+      }
+
+      const v = item.row;
+      // Only render rows in the current page slice
+      const idxInRows = rowsOnly.findIndex((r) => r.row.id === v.id);
+      if (idxInRows < start || idxInRows >= start + PAGE_SIZE) return;
       const tr = document.createElement("tr");
       tr.dataset.voterId = v.id;
       const pledgeStatus = v.pledgeStatus ?? "undecided";

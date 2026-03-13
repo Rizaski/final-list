@@ -52,8 +52,8 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-/** Base path for voter ID-based images (folder must be next to index.html, e.g. images/). */
-const VOTER_IMAGES_BASE = "images/";
+/** Base path for voter ID-based images (folder must be next to index.html, e.g. images/images/). */
+const VOTER_IMAGES_BASE = "images/images/";
 
 /**
  * Returns the first image URL to try for a voter. Uses explicit photoUrl if set,
