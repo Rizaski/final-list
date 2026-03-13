@@ -44,7 +44,7 @@ export const firebaseInitPromise = (async () => {
     let setVotedForMonitor = () => Promise.resolve();
     let deleteMonitorDoc = () => Promise.resolve();
 
-    // Firestore-backed collections for core data
+    // Firestore-backed collections for core data (default to no-op so callers can always call these safely)
     let getAllVotersFs = async () => [];
     let setVoterFs = async () => {};
     let deleteVoterFs = async () => {};
@@ -54,6 +54,12 @@ export const firebaseInitPromise = (async () => {
     let setAgentFs = async () => {};
     let deleteAgentFs = async () => {};
     let onAgentsSnapshotFs = () => noopUnsubscribe;
+
+    // Candidates collection helpers (filled in when Firestore loads)
+    let getAllCandidatesFs = async () => [];
+    let setCandidateFs = async () => {};
+    let deleteCandidateFs = async () => {};
+    let onCandidatesSnapshotFs = () => noopUnsubscribe;
 
     try {
       const firestoreMod = await import(`${SDK_BASE}/firebase-firestore.js`);
@@ -164,24 +170,24 @@ export const firebaseInitPromise = (async () => {
       const CANDIDATES_COLLECTION = "candidates";
       const candidatesColRef = firestoreMod.collection(db, CANDIDATES_COLLECTION);
 
-      let getAllCandidatesFs = async () => {
+      getAllCandidatesFs = async () => {
         const snap = await firestoreMod.getDocs(candidatesColRef);
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
 
-      let setCandidateFs = async (candidate) => {
+      setCandidateFs = async (candidate) => {
         if (!candidate || !candidate.id) return;
         const ref = firestoreMod.doc(db, CANDIDATES_COLLECTION, String(candidate.id));
         await firestoreMod.setDoc(ref, candidate, { merge: true });
       };
 
-      let deleteCandidateFs = async (id) => {
+      deleteCandidateFs = async (id) => {
         if (!id) return;
         const ref = firestoreMod.doc(db, CANDIDATES_COLLECTION, String(id));
         await firestoreMod.deleteDoc(ref);
       };
 
-      let onCandidatesSnapshotFs = (handler) => {
+      onCandidatesSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return firestoreMod.onSnapshot(candidatesColRef, (snap) => {
           const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -225,27 +231,11 @@ export const firebaseInitPromise = (async () => {
       onCandidatesSnapshotFs,
     };
   } catch (err) {
-    console.warn(
-      "[Firebase] Initialization failed — auth disabled. Use demo mode or check network/config.",
+    console.error(
+      "[Firebase] Initialization failed — app cannot run without Firebase. Check network/config and reload.",
       err
     );
-    return {
-      auth: null,
-      db: null,
-      ready: false,
-      onAuthStateChanged: () => noopUnsubscribe,
-      signOut: noopPromise,
-      signInWithEmailAndPassword: () => Promise.reject(new Error("Firebase unavailable")),
-      createUserWithEmailAndPassword: () => Promise.reject(new Error("Firebase unavailable")),
-      getFirestoreCampaignConfig: () => Promise.resolve(null),
-      setFirestoreCampaignConfig: () => Promise.resolve(),
-      updateFirestoreCampaignConfig: () => Promise.resolve(),
-      deleteFirestoreCampaignConfig: () => Promise.resolve(),
-      getMonitorByToken: () => Promise.resolve(null),
-      setMonitorDoc: () => Promise.resolve(),
-      getVotedForMonitor: () => Promise.resolve([]),
-      setVotedForMonitor: () => Promise.resolve(),
-      deleteMonitorDoc: () => Promise.resolve(),
-    };
+    // Make Firebase mandatory: propagate the error so callers know init failed.
+    throw err;
   }
 })();

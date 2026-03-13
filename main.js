@@ -611,7 +611,28 @@ async function handleAuthenticatedUser(firebaseApi, fbUser) {
 
 async function boot() {
   console.log("[App] boot() starting – waiting for Firebase init…");
-  const firebaseApi = await firebaseInitPromise;
+  let firebaseApi;
+  try {
+    firebaseApi = await firebaseInitPromise;
+  } catch (err) {
+    console.error("[App] Firebase failed to initialize. App cannot start without Firebase.", err);
+    const loginError = document.getElementById("loginError");
+    const loginView = document.getElementById("login-view");
+    const appShell = document.querySelector(".app-shell");
+    if (appShell) {
+      appShell.hidden = true;
+      appShell.style.display = "none";
+    }
+    if (loginView) {
+      loginView.hidden = false;
+      loginView.style.display = "";
+    }
+    if (loginError) {
+      loginError.textContent =
+        "Firebase failed to initialize. Please check your network connection and Firebase configuration, then reload this page.";
+    }
+    return;
+  }
   console.log("[App] Firebase initialized", !!firebaseApi);
 
   const monitorToken = new URLSearchParams(window.location.search).get("monitor");
