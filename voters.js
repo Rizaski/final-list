@@ -1,5 +1,15 @@
 import { openModal, closeModal } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
+import { getVotedTimeMarked } from "./zeroDay.js";
+import {
+  getListStatusByVoterId,
+  getListStatusLabel,
+  onListStatusChange,
+  startListStatusSync,
+  getLists,
+  createList,
+  openListWorkspace,
+} from "./lists.js";
 
 const PAGE_SIZE = 15;
 const VOTERS_STORAGE_KEY = "voters-data";
@@ -26,7 +36,7 @@ let selectedVoterId = null;
 let votersCurrentPage = 1;
 let unsubscribeVotersFs = null;
 
-const VOTER_TABLE_COLUMN_COUNT = 7;
+const VOTER_TABLE_COLUMN_COUNT = 8;
 
 const votersTableBody = document.querySelector("#votersTable tbody");
 const votersPaginationEl = document.getElementById("votersPagination");
@@ -171,6 +181,12 @@ function getFilteredSortedGroupedVoters() {
   return displayList;
 }
 
+/** Returns voter IDs from current filter/sort (no grouping). Used for "Create list from search". */
+export function getCurrentFilteredVoterIds() {
+  const displayList = getFilteredSortedGroupedVoters();
+  return displayList.filter((x) => x.type === "row").map((x) => x.voter.id);
+}
+
 function renderVotersTable() {
   if (!votersTableBody) return;
   const displayList = getFilteredSortedGroupedVoters();
@@ -229,6 +245,10 @@ function renderVotersTable() {
     const photoCell = photoSrc
       ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
+    const listStatuses = getListStatusByVoterId(voter.id);
+    const listStatusHtml = listStatuses.length === 0
+      ? "<span class=\"text-muted\">—</span>"
+      : listStatuses.map((s) => `${escapeHtml(s.listName)}: ${getListStatusLabel(s.status)}`).join(", ");
     tr.innerHTML = `
       <td>${voter.sequence ?? ""}</td>
       <td>${photoCell}</td>
@@ -238,6 +258,7 @@ function renderVotersTable() {
       <td><span class="${pledgePillClass(
         voter.pledgeStatus
       )}">${voter.pledgeStatus || "No"}</span></td>
+      <td class="list-status-cell">${listStatusHtml}</td>
       <td style="text-align:right;">
         <button type="button" class="ghost-button ghost-button--small" data-voter-edit="${escapeHtml(voter.id)}" title="Edit">Edit</button>
         <button type="button" class="ghost-button ghost-button--small" data-voter-delete="${escapeHtml(voter.id)}" title="Delete">Delete</button>
@@ -437,6 +458,18 @@ function renderVoterDetails(voter) {
                 voter.pledgeStatus
               )}">${voter.pledgeStatus || "No"}</span>
             </div>
+          </div>
+          <div>
+            <div class="detail-item-label">Marked voted</div>
+            <div class="detail-item-value">${(function () {
+              const timeMarked = getVotedTimeMarked(voter.id);
+              if (timeMarked) {
+                const d = new Date(timeMarked);
+                const formatted = d.toLocaleString("en-MV", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+                return `<span class="pledge-pill pledge-pill--pledged">Yes</span> ${formatted}`;
+              }
+              return '<span class="pledge-pill pledge-pill--undecided">No</span>';
+            })()}</div>
           </div>
         </div>
       </section>
@@ -709,6 +742,98 @@ export async function initVotersModule() {
   const addVoterBtn = document.getElementById("addVoterButton");
   if (addVoterBtn) addVoterBtn.addEventListener("click", () => openVoterForm(null));
 
+  function openCreateListModal() {
+    const body = document.createElement("div");
+    body.className = "form-group";
+    const label = document.createElement("label");
+    label.setAttribute("for", "createListName");
+    label.textContent = "List name";
+    const input = document.createElement("input");
+    input.id = "createListName";
+    input.type = "text";
+    input.placeholder = "e.g. Door-knock North";
+    input.value = "";
+    const p = document.createElement("p");
+    p.className = "helper-text";
+    p.style.marginTop = "8px";
+    p.textContent = "The list will start empty. Add voters by searching and clicking Add to list, or by uploading a file of ID numbers.";
+    body.appendChild(label);
+    body.appendChild(input);
+    body.appendChild(p);
+    const footer = document.createElement("div");
+    footer.style.display = "flex";
+    footer.style.gap = "8px";
+    footer.style.justifyContent = "flex-end";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ghost-button";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => closeModal());
+    const createBtn = document.createElement("button");
+    createBtn.type = "button";
+    createBtn.className = "primary-button";
+    createBtn.textContent = "Create and open";
+    createBtn.addEventListener("click", async () => {
+      const name = (input.value || "").trim() || "Untitled list";
+      try {
+        const list = await createList(name, []);
+        closeModal();
+        openListWorkspace(list.id);
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "List created", meta: list.name });
+        }
+      } catch (e) {
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Could not create list", meta: e?.message || String(e) });
+        }
+      }
+    });
+    footer.appendChild(cancelBtn);
+    footer.appendChild(createBtn);
+    openModal({ title: "Create voter list", body, footer });
+    setTimeout(() => input.focus(), 100);
+  }
+
+  const createListBtn = document.getElementById("createListButton");
+  if (createListBtn) createListBtn.addEventListener("click", openCreateListModal);
+
+  const myListsSelect = document.getElementById("myListsSelect");
+  if (myListsSelect) {
+    const CREATE_NEW_VALUE = "__create__";
+    const refreshMyLists = async () => {
+      const lists = await getLists();
+      const current = myListsSelect.value;
+      myListsSelect.innerHTML = "";
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = "My lists…";
+      myListsSelect.appendChild(opt0);
+      const createOpt = document.createElement("option");
+      createOpt.value = CREATE_NEW_VALUE;
+      createOpt.textContent = "Create new list…";
+      myListsSelect.appendChild(createOpt);
+      (lists || []).forEach((list) => {
+        const opt = document.createElement("option");
+        opt.value = list.id;
+        opt.textContent = (list.name || list.id) + " (" + (list.voterIds?.length || 0) + ")";
+        myListsSelect.appendChild(opt);
+      });
+      if (current && current !== CREATE_NEW_VALUE) myListsSelect.value = current;
+    };
+    refreshMyLists();
+    myListsSelect.addEventListener("change", () => {
+      const id = myListsSelect.value;
+      if (id === CREATE_NEW_VALUE) {
+        myListsSelect.value = "";
+        openCreateListModal();
+      } else if (id) {
+        openListWorkspace(id);
+        myListsSelect.value = "";
+      }
+    });
+    document.addEventListener("voters-updated", refreshMyLists);
+  }
+
   const votersTable = document.getElementById("votersTable");
   if (votersTable) {
     votersTable.addEventListener("click", (e) => {
@@ -773,6 +898,9 @@ export async function initVotersModule() {
   }
 
   if (votersTableLoader) votersTableLoader.hidden = true;
+
+  startListStatusSync().catch(() => {});
+  onListStatusChange(() => renderVotersTable());
 
   return {
     getAllVoters: () => [...currentVoters],

@@ -36,6 +36,11 @@ let votersContext = null;
 let pledgeContextRef = null; // optional: { getPledges() } for agent lookup and sync
 let zeroDayVoteCurrentPage = 1;
 let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
+let votedRealtimeUnsubscribes = []; // unsubscribe fns for Firestore voted listeners
+const votedByMonitor = {}; // token -> [{ voterId, timeMarked }] from real-time snapshots
+let zeroDaySyncInProgress = false;
+let zeroDaySyncIntervalId = null;
+const ZERO_DAY_SYNC_INTERVAL_MS = 5000;
 
 function loadMonitors() {
   try {
@@ -75,15 +80,16 @@ async function syncVotedFromFirestore() {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.getVotedForMonitor) return;
     loadMonitors();
-    const existingById = new Map(zeroDayVotedEntries.map((e) => [e.voterId, e.timeMarked]));
+    const existingById = new Map(zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked]));
     for (const m of zeroDayMonitors) {
       const token = m.shareToken;
       if (!token) continue;
       const entries = await api.getVotedForMonitor(token);
       for (const { voterId, timeMarked } of entries) {
-        const existing = existingById.get(voterId);
+        const key = String(voterId);
+        const existing = existingById.get(key);
         if (!existing || (timeMarked && timeMarked > (existing || ""))) {
-          existingById.set(voterId, timeMarked || existing || "");
+          existingById.set(key, timeMarked || existing || "");
         }
       }
     }
@@ -92,10 +98,57 @@ async function syncVotedFromFirestore() {
   } catch (_) {}
 }
 
+/** Merges votedByMonitor (from real-time Firestore) with local zeroDayVotedEntries and refreshes UI. */
+function mergeRealtimeVotedIntoLocal() {
+  loadVotedEntries();
+  const existingById = new Map(zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked]));
+  for (const token of Object.keys(votedByMonitor)) {
+    const entries = votedByMonitor[token];
+    if (!Array.isArray(entries)) continue;
+    for (const { voterId, timeMarked } of entries) {
+      const key = String(voterId);
+      const existing = existingById.get(key);
+      if (!existing || (timeMarked && timeMarked > (existing || ""))) {
+        existingById.set(key, timeMarked || existing || "");
+      }
+    }
+  }
+  zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({ voterId, timeMarked: timeMarked || "" }));
+  saveVotedEntries();
+  zeroDayVoteCurrentPage = 1;
+  renderZeroDayVoteTable();
+}
+
+/** Subscribes to Firestore voted subcollection for each monitor; ballot box cards update in real time when a monitor marks a voter. */
+function subscribeVotedRealtime() {
+  votedRealtimeUnsubscribes.forEach((fn) => { try { fn(); } catch (_) {} });
+  votedRealtimeUnsubscribes = [];
+  loadMonitors();
+  firebaseInitPromise.then((api) => {
+    if (!api.ready || !api.onVotedSnapshotForMonitor) return;
+    for (const m of zeroDayMonitors) {
+      const token = m.shareToken;
+      if (!token) continue;
+      const unsub = api.onVotedSnapshotForMonitor(token, (entries) => {
+        votedByMonitor[token] = entries;
+        mergeRealtimeVotedIntoLocal();
+      });
+      votedRealtimeUnsubscribes.push(unsub);
+    }
+  }).catch(() => {});
+}
+
 /** Returns set of voter IDs that have been marked as voted (for reports). */
 export function getVotedVoterIds() {
   loadVotedEntries();
-  return new Set(zeroDayVotedEntries.map((e) => e.voterId));
+  return new Set(zeroDayVotedEntries.map((e) => String(e.voterId)));
+}
+
+/** Returns timeMarked string for a voter if they have been marked voted, otherwise null. */
+export function getVotedTimeMarked(voterId) {
+  loadVotedEntries();
+  const entry = zeroDayVotedEntries.find((e) => String(e.voterId) === String(voterId));
+  return (entry && entry.timeMarked) || null;
 }
 
 function generateShareToken() {
@@ -121,6 +174,11 @@ function formatDateTime(dtString) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** Compare voter IDs consistently (string vs number safe). */
+function sameVoterId(a, b) {
+  return String(a || "") === String(b || "");
 }
 
 function initZeroDayTabs() {
@@ -172,7 +230,8 @@ function renderZeroDayTripsTable() {
     return;
   }
   trips.forEach((trip) => {
-    const typeLabel = TRIP_TYPES.find((t) => t.value === trip.tripType)?.label ?? trip.tripType ?? "–";
+    const tripTypeEntry = TRIP_TYPES.find((t) => t.value === trip.tripType);
+    const typeLabel = (tripTypeEntry && tripTypeEntry.label) != null ? tripTypeEntry.label : (trip.tripType != null ? trip.tripType : "–");
     const tr = document.createElement("tr");
     tr.dataset.tripId = String(trip.id);
     tr.innerHTML = `
@@ -181,7 +240,7 @@ function renderZeroDayTripsTable() {
       <td>${escapeHtml(trip.vehicle)}</td>
       <td>${escapeHtml(trip.driver)}</td>
       <td>${formatDateTime(trip.pickupTime)}</td>
-      <td>${trip.voterCount ?? 0}</td>
+      <td>${trip.voterCount != null ? trip.voterCount : 0}</td>
       <td><span class="badge badge--unknown">${escapeHtml(trip.status)}</span></td>
       <td style="text-align:right;">
         <button class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
@@ -422,6 +481,7 @@ function openAddMonitorForm(existing) {
       syncMonitorToFirestore(newMonitor);
     }
     renderMonitorsTable();
+    subscribeVotedRealtime();
     closeModal();
   });
 
@@ -436,6 +496,8 @@ async function syncMonitorToFirestore(monitor) {
   try {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.setMonitorDoc) return;
+    const config = await (api.getFirestoreCampaignConfig && api.getFirestoreCampaignConfig()).catch(() => null);
+    const monitoringEnabled = config && config.voteMonitoringEnabled === true;
     const voterIds = monitor.voterIds || [];
     const allVoters = votersContext ? votersContext.getAllVoters() : [];
     const pledgeRows = pledgeContextRef && typeof pledgeContextRef.getPledges === "function" ? pledgeContextRef.getPledges() : [];
@@ -459,6 +521,7 @@ async function syncMonitorToFirestore(monitor) {
       mobile: monitor.mobile || "",
       voterIds,
       voters,
+      monitoringEnabled,
       createdAt: monitor.createdAt || new Date().toISOString(),
     });
   } catch (_) {}
@@ -501,6 +564,7 @@ function deleteMonitorLink(monitorId) {
   saveMonitors();
   firebaseInitPromise.then((api) => api.deleteMonitorDoc && api.deleteMonitorDoc(token)).catch(() => {});
   renderMonitorsTable();
+  subscribeVotedRealtime();
   if (window.appNotifications) {
     window.appNotifications.push({ title: "Monitor access link deleted", meta: String(label) });
   }
@@ -510,7 +574,7 @@ function getVoteBoxSummaries() {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const filter = zeroDayVoteFilter?.value || "all";
   const query = (zeroDayVoteSearch?.value || "").toLowerCase().trim();
-  const votedSet = new Set(zeroDayVotedEntries.map((e) => e.voterId));
+  const votedSet = new Set(zeroDayVotedEntries.map((e) => String(e.voterId)));
 
   const boxes = new Map();
   voters.forEach((v) => {
@@ -520,7 +584,7 @@ function getVoteBoxSummaries() {
     }
     const entry = boxes.get(key);
     entry.total += 1;
-    if (votedSet.has(v.id)) entry.voted += 1;
+    if (votedSet.has(String(v.id))) entry.voted += 1;
   });
 
   let list = Array.from(boxes.values());
@@ -537,6 +601,289 @@ function getVoteBoxSummaries() {
   }
 
   return list;
+}
+
+/** Returns { voted: voters[], notYet: voters[] } for the given ballot box key. voted entries include timeMarked. */
+function getVotersByBoxSplitByVoted(boxKey) {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const key = (boxKey || "").trim();
+  const boxVoters = voters.filter(
+    (v) => (v.ballotBox || v.island || "Unassigned").trim() === key
+  );
+  const votedSet = new Map(
+    zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked || ""])
+  );
+  const voted = [];
+  const notYet = [];
+  boxVoters.forEach((v) => {
+    const timeMarked = votedSet.get(String(v.id));
+    if (timeMarked != null && timeMarked !== "") {
+      voted.push({ ...v, _timeMarked: timeMarked });
+    } else {
+      notYet.push(v);
+    }
+  });
+  return { voted, notYet };
+}
+
+function getPledgeLabel(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "yes") return "Yes";
+  if (s === "no") return "No";
+  return "Undecided";
+}
+
+function getAgentForVoter(voterId) {
+  if (!pledgeContextRef || typeof pledgeContextRef.getPledges !== "function")
+    return "";
+  const rows = pledgeContextRef.getPledges();
+  const row = rows.find((r) => sameVoterId(r.voterId, voterId));
+  return (row && row.volunteer) != null ? String(row.volunteer) : "";
+}
+
+/** Returns displayList: array of { type: "row", voter } or { type: "group", label }. */
+function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy) {
+  let list = voters.filter((v) => {
+    if (filterPledge !== "all") {
+      const s = (v.pledgeStatus || "undecided").toLowerCase();
+      if (filterPledge === "yes" && s !== "yes") return false;
+      if (filterPledge === "no" && s !== "no") return false;
+      if (filterPledge === "undecided" && s !== "undecided") return false;
+    }
+    return true;
+  });
+
+  const cmp = (a, b) => {
+    switch (sortBy) {
+      case "sequence":
+        return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
+      case "name-desc":
+        return (b.fullName || "").localeCompare(a.fullName || "", "en");
+      case "name-asc":
+        return (a.fullName || "").localeCompare(b.fullName || "", "en");
+      case "id":
+        return (a.nationalId || a.id || "").localeCompare(b.nationalId || b.id || "", "en");
+      case "address":
+        return (a.permanentAddress || "").localeCompare(b.permanentAddress || "", "en");
+      case "pledge":
+        return (a.pledgeStatus || "").localeCompare(b.pledgeStatus || "", "en");
+      case "agent": {
+        const ag = getAgentForVoter(a.id);
+        const bg = getAgentForVoter(b.id);
+        return ag.localeCompare(bg, "en");
+      }
+      case "time":
+        return (a._timeMarked || "").localeCompare(b._timeMarked || "", "en");
+      default:
+        return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
+    }
+  };
+  list = list.slice().sort(cmp);
+
+  if (groupBy === "none") {
+    return list.map((v) => ({ type: "row", voter: v }));
+  }
+
+  const getGroupKey = (v) => {
+    if (groupBy === "pledge") return v.pledgeStatus || "undecided";
+    if (groupBy === "agent") return getAgentForVoter(v.id) || "(No agent)";
+    return "";
+  };
+  const displayList = [];
+  let lastKey = null;
+  list.forEach((v) => {
+    const key = getGroupKey(v);
+    const label = groupBy === "pledge" ? getPledgeLabel(key) : key;
+    if (key !== lastKey) {
+      displayList.push({ type: "group", label });
+      lastKey = key;
+    }
+    displayList.push({ type: "row", voter: v });
+  });
+  return displayList;
+}
+
+function buildTableFromDisplayList(displayList, options = {}) {
+  const includeTimeVoted = !!options.includeTimeVoted;
+  const columns = [
+    "Seq",
+    "Name",
+    "ID Number",
+    "Permanent Address",
+    "Phone",
+    "Ballot box",
+    "Pledge",
+    "Agent",
+  ];
+  if (includeTimeVoted) columns.push("Time voted");
+  const colCount = columns.length;
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrapper";
+  const table = document.createElement("table");
+  table.className = "data-table";
+  const thead = document.createElement("thead");
+  thead.innerHTML =
+    "<tr>" +
+    columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("") +
+    "</tr>";
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+
+  const dataRows = displayList.filter((x) => x.type === "row");
+  if (dataRows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-muted" style="text-align:center;padding:16px;">No voters.</td></tr>`;
+  } else {
+    displayList.forEach((item) => {
+      if (item.type === "group") {
+        const tr = document.createElement("tr");
+        tr.className = "list-toolbar__group-header";
+        tr.innerHTML = `<td colspan="${colCount}">${escapeHtml(item.label)}</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+      const v = item.voter;
+      const pledgeLabel = getPledgeLabel(v.pledgeStatus);
+      const agent = getAgentForVoter(v.id);
+      const row = [
+        v.sequence != null ? v.sequence : "",
+        v.fullName != null ? v.fullName : "",
+        v.nationalId != null ? v.nationalId : (v.id != null ? v.id : ""),
+        v.permanentAddress != null ? v.permanentAddress : "",
+        v.phone != null ? v.phone : "",
+        v.ballotBox || (v.island != null ? v.island : ""),
+        pledgeLabel,
+        agent,
+      ];
+      if (includeTimeVoted) row.push(formatDateTime(v._timeMarked));
+      const tr = document.createElement("tr");
+      tr.innerHTML = row
+        .map((cell) => `<td>${escapeHtml(String(cell))}</td>`)
+        .join("");
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function openBoxVoterListModal(boxKey, kind) {
+  const { voted, notYet } = getVotersByBoxSplitByVoted(boxKey);
+  const voters = kind === "voted" ? voted : notYet;
+  const includeTimeVoted = kind === "voted";
+  const title =
+    kind === "voted"
+      ? `Voted – ${boxKey} (${voters.length})`
+      : `Not yet voted – ${boxKey} (${voters.length})`;
+
+  const body = document.createElement("div");
+  body.className = "modal-body-inner modal-body-inner--with-maximize";
+
+  const listToolbar = document.createElement("div");
+  listToolbar.className = "modal-list-toolbar list-toolbar";
+  listToolbar.innerHTML = `
+    <div class="list-toolbar__search">
+      <label for="zdModalListSearch" class="sr-only">Search</label>
+      <input type="search" id="zdModalListSearch" placeholder="Search by name, ID, address…">
+    </div>
+    <div class="list-toolbar__controls">
+      <div class="field-group field-group--inline">
+        <label for="zdModalListFilter">Filter</label>
+        <select id="zdModalListFilter">
+          <option value="all">All pledge statuses</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+          <option value="undecided">Undecided</option>
+        </select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="zdModalListSort">Sort</label>
+        <select id="zdModalListSort">
+          <option value="sequence">Seq</option>
+          <option value="name-asc">Name A–Z</option>
+          <option value="name-desc">Name Z–A</option>
+          <option value="id">ID Number</option>
+          <option value="address">Permanent address</option>
+          <option value="pledge">Pledge status</option>
+          <option value="agent">Agent</option>
+          ${includeTimeVoted ? '<option value="time">Time voted</option>' : ""}
+        </select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="zdModalListGroupBy">Group by</label>
+        <select id="zdModalListGroupBy">
+          <option value="none">None</option>
+          <option value="pledge">Pledge status</option>
+          <option value="agent">Agent</option>
+        </select>
+      </div>
+    </div>
+  `;
+
+  const topBar = document.createElement("div");
+  topBar.className = "modal-body-toolbar";
+  const maxBtn = document.createElement("button");
+  maxBtn.type = "button";
+  maxBtn.className = "ghost-button ghost-button--small";
+  maxBtn.setAttribute("aria-label", "Maximize");
+  maxBtn.textContent = "Maximize";
+  maxBtn.addEventListener("click", () => {
+    const modal = document.getElementById("modalBackdrop");
+    const dialog = modal ? modal.querySelector(".modal") : null;
+    if (!dialog) return;
+    const isMax = dialog.classList.toggle("modal--maximized");
+    maxBtn.setAttribute("aria-label", isMax ? "Restore" : "Maximize");
+    maxBtn.textContent = isMax ? "Restore" : "Maximize";
+  });
+  topBar.appendChild(maxBtn);
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-wrapper";
+
+  function applySearchFilter(list, query) {
+    const q = (query || "").toLowerCase().trim();
+    if (!q) return list;
+    return list.filter((v) => {
+      const name = (v.fullName || "").toLowerCase();
+      const id = (v.id || "").toLowerCase();
+      const nationalId = (v.nationalId || "").toLowerCase();
+      const address = (v.permanentAddress || "").toLowerCase();
+      const phone = (v.phone || "").toLowerCase();
+      return (
+        name.includes(q) ||
+        id.includes(q) ||
+        nationalId.includes(q) ||
+        address.includes(q) ||
+        phone.includes(q)
+      );
+    });
+  }
+
+  function render() {
+    const filterPledge = (body.querySelector("#zdModalListFilter") || {}).value || "all";
+    const sortBy = (body.querySelector("#zdModalListSort") || {}).value || "sequence";
+    const groupBy = (body.querySelector("#zdModalListGroupBy") || {}).value || "none";
+    const searchQuery = (body.querySelector("#zdModalListSearch") || {}).value || "";
+    let list = applySearchFilter(voters, searchQuery);
+    const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
+    const newTable = buildTableFromDisplayList(displayList, { includeTimeVoted });
+    tableWrap.innerHTML = "";
+    tableWrap.appendChild(newTable.firstElementChild);
+  }
+
+  body.appendChild(topBar);
+  body.appendChild(listToolbar);
+  body.appendChild(tableWrap);
+
+  listToolbar.querySelector("#zdModalListFilter").addEventListener("change", render);
+  listToolbar.querySelector("#zdModalListSort").addEventListener("change", render);
+  listToolbar.querySelector("#zdModalListGroupBy").addEventListener("change", render);
+  const searchEl = listToolbar.querySelector("#zdModalListSearch");
+  if (searchEl) searchEl.addEventListener("input", render);
+
+  render();
+  openModal({ title, body });
 }
 
 /** Gets or creates a monitor for the ballot box (same grouping as cards: ballotBox || island || "Unassigned"). Always refreshes voter list so Firestore has current voters. Returns the monitor (does not copy link). */
@@ -567,6 +914,7 @@ function getOrEnsureMonitorForBallotBox(ballotBox) {
   saveMonitors();
   syncMonitorToFirestore(monitor);
   renderMonitorsTable();
+  subscribeVotedRealtime();
   return monitor;
 }
 
@@ -600,20 +948,45 @@ function renderZeroDayVoteTable() {
       card.className = "vote-box-card";
       const percentage =
         box.total === 0 ? 0 : Math.round((box.voted / box.total) * 100);
+      const notYet = Math.max(0, box.total - box.voted);
+      const votedPct = box.total === 0 ? 0 : (box.voted / box.total) * 100;
+      const badgeClass =
+        percentage >= 100
+          ? "vote-box-card__badge--full"
+          : percentage > 0
+            ? "vote-box-card__badge--partial"
+            : "vote-box-card__badge--none";
       card.innerHTML = `
         <div class="vote-box-card__header">
           <div>
-            <div class="vote-box-card__title">${escapeHtml(box.box)}</div>
+            <div class="vote-box-card__title-wrap">
+              <span class="vote-box-card__title">${escapeHtml(box.box)}</span>
+              <button type="button" class="vote-box-card__copy-btn" data-copy-code="${escapeHtml(
+                box.box
+              )}" title="Copy access code" aria-label="Copy access code">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </div>
             <div class="vote-box-card__meta">${escapeHtml(box.island || "")}</div>
           </div>
-          <span class="badge badge--unknown">${percentage}% voted</span>
+          <span class="vote-box-card__badge ${badgeClass}">${percentage}% voted</span>
+        </div>
+        <div class="vote-box-card__progress" role="img" aria-label="${percentage}% voted">
+          <span class="vote-box-card__progress-seg vote-box-card__progress-seg--voted" style="width:${votedPct}%"></span>
+          <span class="vote-box-card__progress-seg vote-box-card__progress-seg--not-yet" style="width:${100 - votedPct}%"></span>
         </div>
         <div class="vote-box-card__stats">
           <span><strong>Total:</strong> ${box.total}</span>
           <span><strong>Voted:</strong> ${box.voted}</span>
-          <span><strong>Not yet:</strong> ${Math.max(0, box.total - box.voted)}</span>
+          <span><strong>Not yet:</strong> ${notYet}</span>
         </div>
         <div class="vote-box-card__actions">
+          <button type="button" class="ghost-button ghost-button--small" data-view-voted="${escapeHtml(
+            box.box
+          )}">View voted</button>
+          <button type="button" class="ghost-button ghost-button--small" data-view-not-yet="${escapeHtml(
+            box.box
+          )}">View not yet</button>
           <button type="button" class="ghost-button ghost-button--small" data-open-box="${escapeHtml(
             box.box
           )}">Open list</button>
@@ -651,8 +1024,8 @@ function renderZeroDayVoteTable() {
 
 function openMarkVotedModal() {
   const voters = votersContext ? votersContext.getAllVoters() : [];
-  const votedSet = new Set(zeroDayVotedEntries.map((e) => e.voterId));
-  const notVotedYet = voters.filter((v) => !votedSet.has(v.id));
+  const votedSet = new Set(zeroDayVotedEntries.map((e) => String(e.voterId)));
+  const notVotedYet = voters.filter((v) => !votedSet.has(String(v.id)));
 
   const body = document.createElement("div");
   body.innerHTML = `
@@ -703,7 +1076,7 @@ function openMarkVotedModal() {
     renderZeroDayVoteTable();
     if (window.appNotifications) {
       const voters = votersContext ? votersContext.getAllVoters() : [];
-      const voter = voters.find((v) => v.id === voterId);
+      const voter = voters.find((v) => sameVoterId(v.id, voterId));
       window.appNotifications.push({
         title: "Voter marked as voted",
         meta: voter ? `${voter.fullName} • ${voter.nationalId || ""}` : voterId,
@@ -821,29 +1194,120 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   });
 
   const zeroDaySyncVotedBtn = document.getElementById("zeroDaySyncVotedBtn");
-  if (zeroDaySyncVotedBtn) {
-    zeroDaySyncVotedBtn.addEventListener("click", async () => {
+
+  function setSyncButtonState(syncing) {
+    zeroDaySyncInProgress = syncing;
+    if (!zeroDaySyncVotedBtn) return;
+    if (syncing) {
       zeroDaySyncVotedBtn.disabled = true;
+      zeroDaySyncVotedBtn.textContent = "Syncing Votes";
+      zeroDaySyncVotedBtn.classList.add("zero-day-sync-syncing");
+    } else {
+      zeroDaySyncVotedBtn.disabled = false;
+      zeroDaySyncVotedBtn.textContent = "Sync votes";
+      zeroDaySyncVotedBtn.classList.remove("zero-day-sync-syncing");
+    }
+  }
+
+  async function runSyncVotes(showToast = false) {
+    if (zeroDaySyncInProgress) return;
+    setSyncButtonState(true);
+    try {
       await syncVotedFromFirestore();
       zeroDayVoteCurrentPage = 1;
       renderZeroDayVoteTable();
-      zeroDaySyncVotedBtn.disabled = false;
-      if (typeof window.showToast === "function") window.showToast("Votes synced from ballot box links.");
+      if (showToast && typeof window.showToast === "function") window.showToast("Votes synced from ballot box links.");
+    } finally {
+      setSyncButtonState(false);
+    }
+  }
+
+  if (zeroDaySyncVotedBtn) {
+    zeroDaySyncVotedBtn.addEventListener("click", () => runSyncVotes(true));
+  }
+
+  async function updateAllMonitorsMonitoringEnabled(enabled) {
+    try {
+      const api = await firebaseInitPromise;
+      if (!api.ready || !api.setMonitorDoc) return;
+      loadMonitors();
+      for (const m of zeroDayMonitors) {
+        if (m.shareToken) await api.setMonitorDoc(m.shareToken, { monitoringEnabled: !!enabled });
+      }
+    } catch (_) {}
+  }
+
+  const zeroDayMonitorVotesToggle = document.getElementById("zeroDayMonitorVotesToggle");
+  if (zeroDayMonitorVotesToggle) {
+    zeroDayMonitorVotesToggle.addEventListener("change", async () => {
+      const enabled = zeroDayMonitorVotesToggle.checked;
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.setVoteMonitoringEnabled) await api.setVoteMonitoringEnabled(enabled);
+        await updateAllMonitorsMonitoringEnabled(enabled);
+        if (enabled) {
+          runSyncVotes();
+          if (zeroDaySyncIntervalId != null) clearInterval(zeroDaySyncIntervalId);
+          zeroDaySyncIntervalId = setInterval(runSyncVotes, ZERO_DAY_SYNC_INTERVAL_MS);
+        } else {
+          if (zeroDaySyncIntervalId != null) {
+            clearInterval(zeroDaySyncIntervalId);
+            zeroDaySyncIntervalId = null;
+          }
+        }
+      } catch (_) {}
     });
   }
 
   firebaseInitPromise.then(async (api) => {
-    if (api.ready && api.getVotedForMonitor) {
-      await syncVotedFromFirestore();
-      zeroDayVoteCurrentPage = 1;
-      renderZeroDayVoteTable();
+    if (!api.ready || !api.getVotedForMonitor) return;
+    await syncVotedFromFirestore();
+    zeroDayVoteCurrentPage = 1;
+    renderZeroDayVoteTable();
+    subscribeVotedRealtime();
+    const monitoringEnabled = api.getVoteMonitoringEnabled ? await api.getVoteMonitoringEnabled() : true;
+    if (zeroDayMonitorVotesToggle) {
+      zeroDayMonitorVotesToggle.checked = monitoringEnabled;
+      zeroDayMonitorVotesToggle.setAttribute("aria-checked", monitoringEnabled ? "true" : "false");
+    }
+    if (monitoringEnabled) {
+      if (zeroDaySyncIntervalId != null) clearInterval(zeroDaySyncIntervalId);
+      zeroDaySyncIntervalId = setInterval(runSyncVotes, ZERO_DAY_SYNC_INTERVAL_MS);
     }
   }).catch(() => {});
 
   if (zeroDayVoteCardsContainer) {
     zeroDayVoteCardsContainer.addEventListener("click", (e) => {
+      const copyBtn = e.target.closest("[data-copy-code]");
+      const viewVotedBtn = e.target.closest("[data-view-voted]");
+      const viewNotYetBtn = e.target.closest("[data-view-not-yet]");
       const openBtn = e.target.closest("[data-open-box]");
       const shareBtn = e.target.closest("[data-share-box]");
+
+      if (copyBtn) {
+        const code = copyBtn.getAttribute("data-copy-code");
+        if (code) {
+          navigator.clipboard
+            .writeText(code)
+            .then(() => {
+              if (typeof window.showToast === "function") {
+                window.showToast("Access code copied to clipboard.");
+              }
+            })
+            .catch(() => {});
+        }
+        return;
+      }
+      if (viewVotedBtn) {
+        const box = viewVotedBtn.getAttribute("data-view-voted");
+        if (box) openBoxVoterListModal(box, "voted");
+        return;
+      }
+      if (viewNotYetBtn) {
+        const box = viewNotYetBtn.getAttribute("data-view-not-yet");
+        if (box) openBoxVoterListModal(box, "not-yet");
+        return;
+      }
       if (openBtn) {
         const box = openBtn.getAttribute("data-open-box");
         if (box && votersContext) {
@@ -878,6 +1342,7 @@ function getMonitorAccessCode(monitor) {
 export function initMonitorView(token, votersContextParam, options = {}) {
   const isRemote = options.remoteMonitor != null;
   const isBallotBoxOnly = !!(options.ballotBoxOnly && votersContextParam);
+  const monitoringDisabled = options.monitoringDisabled === true;
   let monitor = options.remoteMonitor;
   let assignedVoters = [];
   let votedEntries = options.remoteVotedEntries != null ? options.remoteVotedEntries : [];
@@ -897,9 +1362,9 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     monitor = zeroDayMonitors.find((m) => m.shareToken === token);
     const allVoters = (votersContextParam && votersContextParam.getAllVoters) ? votersContextParam.getAllVoters() : [];
     const voterIds = monitor ? (monitor.voterIds || []) : [];
-    const voterIdsSet = new Set(voterIds);
+    const voterIdsSet = new Set(voterIds.map((id) => String(id)));
     if (voterIdsSet.size > 0) {
-      assignedVoters = allVoters.filter((v) => voterIdsSet.has(v.id));
+      assignedVoters = allVoters.filter((v) => voterIdsSet.has(String(v.id)));
     } else if (monitor && monitor.ballotBox) {
       const boxKey = String(monitor.ballotBox || "").trim();
       assignedVoters = allVoters.filter(
@@ -1009,7 +1474,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       (v) =>
         String(v.id || "").toLowerCase() === q.toLowerCase() ||
         String(v.nationalId || "").toLowerCase() === q.toLowerCase() ||
-        String(v.sequence ?? "").trim() === q.trim()
+        String(v.sequence != null ? v.sequence : "").trim() === q.trim()
     );
     if (exact) return [exact];
 
@@ -1053,14 +1518,47 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     return { label, phone };
   }
 
+  let monitorViewStartedAt = null;
+
+  function renderMonitorViewHeader() {
+    const header = monitorViewEl.querySelector(".monitor-view__header");
+    if (!header) return;
+    const backBtn = header.querySelector("[data-monitor-back]");
+    if (!monitorViewStartedAt) monitorViewStartedAt = new Date().toISOString();
+    const fragment = document.createDocumentFragment();
+    if (backBtn) fragment.appendChild(backBtn);
+    const main = document.createElement("div");
+    main.className = "monitor-view__header-main";
+    main.innerHTML =
+      "<h1 id=\"monitorViewTitle\" class=\"monitor-view__title\">" +
+      escapeHtml(monitor.ballotBox || "Ballot box") +
+      "</h1>" +
+      "<div class=\"monitor-view__header-stats\">" +
+      "<span class=\"monitor-view__stat\"><strong>Started:</strong> " +
+      escapeHtml(formatDateTime(monitorViewStartedAt)) +
+      "</span>" +
+      "<span class=\"monitor-view__stat\"><strong>Voters:</strong> " +
+      String(assignedVoters.length) +
+      "</span>" +
+      "<span class=\"monitor-view__stat\"><strong>Voted:</strong> " +
+      String(votedEntries.length) +
+      "</span>" +
+      "</div>" +
+      "<p class=\"monitor-view__subtitle\" id=\"monitorViewSubtitle\">Search by name, ID, or Sequence to find a voter.</p>";
+    fragment.appendChild(main);
+    header.innerHTML = "";
+    header.appendChild(fragment);
+  }
+
   function markVoterVoted(voterId) {
     const timeMarked = new Date().toISOString();
-    const idx = votedEntries.findIndex((e) => e.voterId === voterId);
+    const idx = votedEntries.findIndex((e) => sameVoterId(e.voterId, voterId));
     if (idx >= 0) votedEntries[idx].timeMarked = timeMarked;
     else votedEntries.push({ voterId, timeMarked });
     if (isRemote && options.onSaveVoted) options.onSaveVoted(token, voterId, timeMarked).catch(() => {});
     else saveVotedEntries();
-    const v = assignedVoters.find((x) => x.id === voterId);
+    renderMonitorViewHeader();
+    const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
     if (v && monitorViewResult) renderMonitorViewResult(v);
   }
 
@@ -1072,13 +1570,13 @@ export function initMonitorView(token, votersContextParam, options = {}) {
 
     if (!voterOrNull) {
       monitorViewResult.innerHTML = `
-        <p class="monitor-view-result__empty" role="status">No voter found. Try searching by name, ID, or Sequence.</p>
+        <p class="monitor-view-result__empty" role="status">No voter found with that ID or Sequence. Please check and try again.</p>
       `;
       return;
     }
 
     const voter = voterOrNull;
-    const timeMarked = votedEntries.find((e) => e.voterId === voter.id)?.timeMarked;
+    const timeMarked = votedEntries.find((e) => sameVoterId(e.voterId, voter.id))?.timeMarked;
     const agent = getAgent(voter);
 
     monitorViewResult.innerHTML = `
@@ -1111,14 +1609,16 @@ export function initMonitorView(token, votersContextParam, options = {}) {
           <span class="monitor-voter-card__label">Vote status</span>
           <span class="monitor-voter-card__value">${timeMarked ? '<span class="pledge-pill pledge-pill--pledged">Voted</span> ' + formatDateTime(timeMarked) : '<span class="pledge-pill pledge-pill--undecided">Not voted</span>'}</span>
         </div>
-        ${!timeMarked ? `<div class="monitor-voter-card__action"><button type="button" class="primary-button" data-monitor-mark-voted="${escapeHtml(voter.id)}">Mark voted</button></div>` : ""}
+        ${!monitoringDisabled && !timeMarked ? `<div class="monitor-voter-card__action"><button type="button" class="primary-button" data-monitor-mark-voted="${escapeHtml(voter.id)}">Mark voted</button></div>` : ""}
       </div>
     `;
 
-    monitorViewResult.querySelector("[data-monitor-mark-voted]")?.addEventListener("click", (e) => {
-      const vid = e.target.getAttribute("data-monitor-mark-voted");
-      if (vid) markVoterVoted(vid);
-    });
+    if (!monitoringDisabled) {
+      monitorViewResult.querySelector("[data-monitor-mark-voted]")?.addEventListener("click", (e) => {
+        const vid = e.target.getAttribute("data-monitor-mark-voted");
+        if (vid) markVoterVoted(vid);
+      });
+    }
   }
 
   function doSearch() {
@@ -1178,15 +1678,26 @@ export function initMonitorView(token, votersContextParam, options = {}) {
 
   function showMonitorContent() {
     monitorViewEl.setAttribute("data-state", "list");
-    if (monitorViewTitle) monitorViewTitle.textContent = (monitor.ballotBox || "Ballot box");
-    if (monitorViewSubtitle) monitorViewSubtitle.textContent = "Search by name, ID, or Sequence to find a voter.";
+    renderMonitorViewHeader();
     if (contentEl) contentEl.setAttribute("aria-hidden", "false");
     if (monitorViewEl) monitorViewEl.hidden = false;
     if (monitorViewResult) monitorViewResult.innerHTML = "";
 
-    if (monitorViewSearchBtn) monitorViewSearchBtn.addEventListener("click", doSearch);
-    if (monitorViewSearch) {
-      monitorViewSearch.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
+    if (monitoringDisabled) {
+      if (monitorViewSearch) monitorViewSearch.disabled = true;
+      if (monitorViewSearchBtn) monitorViewSearchBtn.disabled = true;
+      const msgEl = document.createElement("p");
+      msgEl.className = "monitor-view-result__empty";
+      msgEl.setAttribute("role", "status");
+      msgEl.textContent = "Monitoring is disabled by Campaign Office.";
+      if (monitorViewResult) monitorViewResult.appendChild(msgEl);
+    } else {
+      if (monitorViewSearch) monitorViewSearch.disabled = false;
+      if (monitorViewSearchBtn) monitorViewSearchBtn.disabled = false;
+      if (monitorViewSearchBtn) monitorViewSearchBtn.addEventListener("click", doSearch);
+      if (monitorViewSearch) {
+        monitorViewSearch.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
+      }
     }
   }
 

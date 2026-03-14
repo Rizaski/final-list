@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Assigned list – Campaign</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .list-view-page { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .list-view-page__header { margin-bottom: 20px; }
+    .list-view-page__table-wrap { overflow: auto; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface); }
+    .list-view-page__table-wrap table { width: 100%; }
+    .list-view-page .status-select { min-width: 160px; }
+  </style>
+</head>
+<body>
+  <div class="list-view-page">
+    <header class="list-view-page__header">
+      <h1 id="listViewTitle">Loading…</h1>
+      <p class="helper-text" id="listViewSubtitle">You can mark status for each voter. Changes sync in real time.</p>
+    </header>
+
+    <div class="list-view-page__table-wrap">
+      <table class="data-table" id="listViewTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>ID Number</th>
+            <th>Address</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="listViewTbody"></tbody>
+      </table>
+    </div>
+    <p id="listViewEmpty" class="text-muted" style="display:none;">No voters in this list.</p>
+  </div>
+
+  <script type="module" src="list-view.js"></script>
+</body>
+</html>

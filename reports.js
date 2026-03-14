@@ -30,7 +30,7 @@ function renderBarSet(container, items) {
   });
 }
 
-function renderPledgePie(container, { yesPct, noPct, undecidedPct }) {
+function renderPledgePie(container, { yesPct, noPct, undecidedPct, yesCount = 0, noCount = 0, undecidedCount = 0 }) {
   if (!container) return;
   const total = yesPct + noPct + undecidedPct;
   if (total === 0) {
@@ -49,15 +49,15 @@ function renderPledgePie(container, { yesPct, noPct, undecidedPct }) {
       <div class="pie-chart__legend">
         <div class="pie-chart__legend-item">
           <span class="pie-chart__legend-color" style="background: var(--color-pledged);"></span>
-          Yes – ${yesPct.toFixed(1)}%
+          Yes – ${yesCount.toLocaleString("en-MV")} (${yesPct.toFixed(1)}%)
         </div>
         <div class="pie-chart__legend-item">
           <span class="pie-chart__legend-color" style="background: var(--color-not-pledged);"></span>
-          No – ${noPct.toFixed(1)}%
+          No – ${noCount.toLocaleString("en-MV")} (${noPct.toFixed(1)}%)
         </div>
         <div class="pie-chart__legend-item">
           <span class="pie-chart__legend-color" style="background: var(--color-undecided);"></span>
-          Undecided – ${undecidedPct.toFixed(1)}%
+          Undecided – ${undecidedCount.toLocaleString("en-MV")} (${undecidedPct.toFixed(1)}%)
         </div>
       </div>
     </div>
@@ -339,7 +339,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     const noPct = totalVoters === 0 ? 0 : (noCount / totalVoters) * 100;
     const undecidedPct =
       totalVoters === 0 ? 0 : (undecidedCount / totalVoters) * 100;
-    renderPledgePie(registrationChart, { yesPct, noPct, undecidedPct });
+    renderPledgePie(registrationChart, { yesPct, noPct, undecidedPct, yesCount, noCount, undecidedCount });
 
     // Box-wise pledge voter result
     const pledgeByBoxDetailed = getPledgeByBallotBox();

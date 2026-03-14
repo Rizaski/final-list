@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>List workspace – Campaign</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="list-workspace-page">
+  <div class="list-workspace">
+    <header class="list-workspace__header">
+      <div>
+        <h1 id="listWorkspaceTitle">List</h1>
+        <p class="helper-text" id="listWorkspaceSubtitle">Loading…</p>
+      </div>
+      <div class="panel-header-actions">
+        <button type="button" class="ghost-button" id="listWorkspaceBack">Back to app</button>
+      </div>
+    </header>
+
+    <section class="list-workspace__add-upload-section" aria-labelledby="addVotersHeading uploadIdsHeading">
+      <div class="list-workspace__add-upload-row">
+        <div class="list-workspace__add-block">
+          <h2 id="addVotersHeading" class="list-workspace__add-heading">Add voters to this list</h2>
+          <p class="helper-text list-workspace__add-hint">Search the voter roll below. Click <strong>Add to list</strong> on a voter to add them — only then will they appear in the table.</p>
+          <div class="list-workspace__add-search-row">
+            <label for="listWorkspaceAddSearch" class="sr-only">Search voters to add</label>
+            <input type="search" id="listWorkspaceAddSearch" class="list-workspace__add-search-input" placeholder="Search by name, ID, address, island…" aria-label="Search voters to add to list">
+            <span class="list-workspace__add-search-status" id="listWorkspaceAddSearchStatus" aria-live="polite"></span>
+          </div>
+          <div id="listWorkspaceAddResults" class="list-workspace__add-results"></div>
+        </div>
+        <div class="list-workspace__upload-block">
+          <h2 id="uploadIdsHeading" class="list-workspace__upload-heading">Or upload list of ID numbers</h2>
+          <p class="helper-text list-workspace__upload-hint">Upload a CSV or text file (one ID per line). The list will be replaced with only those voters — only they will show in the table.</p>
+          <div class="list-workspace__upload-row">
+            <label for="listWorkspaceUploadIds" class="list-workspace__upload-btn ghost-button">Choose file…</label>
+            <input type="file" id="listWorkspaceUploadIds" accept=".csv,.txt,text/csv,text/plain" class="list-workspace__upload-input" aria-label="Upload file with ID numbers">
+            <span class="list-workspace__upload-status" id="listWorkspaceUploadStatus" aria-live="polite"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="list-workspace__show-table-bar" id="listWorkspaceShowTableBar">
+      <span class="list-workspace__show-table-summary" id="listWorkspaceShowTableSummary">0 voter(s) in list</span>
+      <button type="button" class="ghost-button" id="listWorkspaceShowTableBtn">Show voters in list</button>
+    </div>
+
+    <section class="list-workspace__table-section" id="listWorkspaceTableSection" hidden>
+      <h2 class="list-workspace__list-heading">Voters in this list</h2>
+    <div class="list-workspace-toolbar list-toolbar">
+      <div class="list-toolbar__search">
+        <label for="listWorkspaceSearch" class="sr-only">Search</label>
+        <input type="search" id="listWorkspaceSearch" placeholder="Search by name, ID, address, island…" aria-label="Search voters in list">
+      </div>
+      <div class="list-toolbar__controls">
+        <div class="field-group field-group--inline">
+          <label for="listWorkspaceFilterPledge">Filter</label>
+          <select id="listWorkspaceFilterPledge">
+            <option value="all">All</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+            <option value="undecided">Undecided</option>
+          </select>
+        </div>
+        <div class="field-group field-group--inline">
+          <label for="listWorkspaceSort">Sort</label>
+          <select id="listWorkspaceSort">
+            <option value="sequence">Seq</option>
+            <option value="name-asc">Name A–Z</option>
+            <option value="name-desc">Name Z–A</option>
+            <option value="id">ID Number</option>
+            <option value="address">Address</option>
+            <option value="pledge">Pledge</option>
+          </select>
+        </div>
+        <div class="field-group field-group--inline">
+          <label for="listWorkspaceGroupBy">Group by</label>
+          <select id="listWorkspaceGroupBy">
+            <option value="none">None</option>
+            <option value="island">Ballot box</option>
+            <option value="pledge">Pledge</option>
+            <option value="permanentAddress">Permanent address</option>
+          </select>
+        </div>
+      </div>
+      <div class="list-workspace-toolbar-actions">
+        <button type="button" class="ghost-button" id="listWorkspaceColumnsBtn">Columns</button>
+        <button type="button" class="ghost-button" id="listWorkspaceExportBtn">Export CSV</button>
+        <div class="field-group field-group--inline">
+          <label for="listWorkspaceAssignCandidate">Candidate</label>
+          <select id="listWorkspaceAssignCandidate">
+            <option value="">—</option>
+          </select>
+        </div>
+        <div class="field-group field-group--inline">
+          <label for="listWorkspaceAssignAgent">Agent</label>
+          <select id="listWorkspaceAssignAgent">
+            <option value="">—</option>
+          </select>
+        </div>
+        <button type="button" class="primary-button" id="listWorkspaceShareLinkBtn">Create share link</button>
+      </div>
+    </div>
+
+    <div class="table-wrapper table-wrapper--sticky-header">
+      <table class="data-table" id="listWorkspaceTable">
+        <thead id="listWorkspaceThead">
+          <tr><th>Seq</th><th>ID</th><th>Name</th><th>Address</th><th>Pledge</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="listWorkspaceTbody"></tbody>
+      </table>
+    </div>
+    <div id="listWorkspacePagination" class="pagination-bar"></div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <h2 id="modalTitle">Modal</h2>
+        <button type="button" class="icon-button" id="modalCloseButton" aria-label="Close">
+          <svg viewBox="0 0 24 24" class="icon-svg"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="modal-body" id="modalBody"></div>
+      <footer class="modal-footer" id="modalFooter"></footer>
+    </div>
+  </div>
+
+  <script type="module" src="list-workspace.js"></script>
+</body>
+</html>

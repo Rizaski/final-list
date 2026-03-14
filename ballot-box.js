@@ -21,6 +21,7 @@ async function main() {
       const monitor = await api.getMonitorByToken(token);
       if (monitor) {
         const remoteVotedEntries = await api.getVotedForMonitor(token);
+        const monitoringDisabled = monitor.monitoringEnabled === false;
         const remoteMonitor = {
           shareToken: token,
           ballotBox: monitor.ballotBox || "",
@@ -32,7 +33,8 @@ async function main() {
         initMonitorView(token, null, {
           remoteMonitor,
           remoteVotedEntries,
-          onSaveVoted: (t, voterId, timeMarked) => api.setVotedForMonitor(t, voterId, timeMarked),
+          monitoringDisabled,
+          onSaveVoted: monitoringDisabled ? undefined : (t, voterId, timeMarked) => api.setVotedForMonitor(t, voterId, timeMarked),
           onRefreshVoted: async () => {
             const entries = await api.getVotedForMonitor(token);
             remoteVotedEntries.length = 0;

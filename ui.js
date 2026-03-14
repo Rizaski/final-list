@@ -8,6 +8,8 @@ export function openModal({ title, body, footer }) {
   modalTitle.textContent = title || "";
   modalBody.innerHTML = "";
   modalFooter.innerHTML = "";
+  const modalDialog = modalBackdrop ? modalBackdrop.querySelector(".modal") : null;
+  if (modalDialog) modalDialog.classList.remove("modal--maximized");
   if (body) modalBody.appendChild(body);
   if (footer) modalFooter.appendChild(footer);
   modalBackdrop.hidden = false;

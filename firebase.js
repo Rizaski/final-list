@@ -24,6 +24,8 @@ const noopPromise = () => Promise.resolve();
 const CAMPAIGN_CONFIG_COLLECTION = "campaign";
 const CAMPAIGN_CONFIG_DOC = "config";
 const MONITORS_COLLECTION = "monitors";
+const VOTER_LISTS_COLLECTION = "voterLists";
+const VOTER_LIST_SHARES_COLLECTION = "voterListShares";
 
 export const firebaseInitPromise = (async () => {
   try {
@@ -39,10 +41,13 @@ export const firebaseInitPromise = (async () => {
     let setFirestoreCampaignConfig = () => Promise.resolve();
     let updateFirestoreCampaignConfig = () => Promise.resolve();
     let deleteFirestoreCampaignConfig = () => Promise.resolve();
+    let getVoteMonitoringEnabled = () => Promise.resolve(true);
+    let setVoteMonitoringEnabled = () => Promise.resolve();
     let getMonitorByToken = () => Promise.resolve(null);
     let setMonitorDoc = () => Promise.resolve();
     let getVotedForMonitor = () => Promise.resolve([]);
     let setVotedForMonitor = () => Promise.resolve();
+    let onVotedSnapshotForMonitor = () => noopUnsubscribe;
     let deleteMonitorDoc = () => Promise.resolve();
 
     // Firestore-backed collections for core data (default to no-op so callers can always call these safely)
@@ -62,6 +67,19 @@ export const firebaseInitPromise = (async () => {
     let deleteCandidateFs = async () => {};
     let onCandidatesSnapshotFs = () => noopUnsubscribe;
 
+    let getAllVoterListsFs = async () => [];
+    let getVoterListFs = async () => null;
+    let getVoterListFromServerFs = async () => null;
+    let setVoterListFs = async () => {};
+    let deleteVoterListFs = async () => {};
+    let onVoterListsSnapshotFs = () => noopUnsubscribe;
+    let getListShareByToken = async () => null;
+    let setListShareFs = async () => {};
+    let setListShareStatusFs = async () => {};
+    let getListShareStatusFs = async () => [];
+    let onListShareStatusSnapshotFs = () => noopUnsubscribe;
+    let getListStatusByVoterIdFs = async () => [];
+
     try {
       const firestoreMod = await import(`${SDK_BASE}/firebase-firestore.js`);
       db = firestoreMod.getFirestore(app);
@@ -71,6 +89,14 @@ export const firebaseInitPromise = (async () => {
         const snap = await firestoreMod.getDoc(configRef);
         if (snap && snap.exists()) return snap.data();
         return null;
+      };
+      getVoteMonitoringEnabled = async () => {
+        const config = await getFirestoreCampaignConfig();
+        return config && config.voteMonitoringEnabled === true;
+      };
+      setVoteMonitoringEnabled = async (enabled) => {
+        const config = (await getFirestoreCampaignConfig()) || {};
+        await firestoreMod.setDoc(configRef, { ...config, voteMonitoringEnabled: !!enabled }, { merge: true });
       };
       setFirestoreCampaignConfig = (data) =>
         firestoreMod.setDoc(configRef, data || {}, { merge: true });
@@ -102,6 +128,14 @@ export const firebaseInitPromise = (async () => {
         if (!token || !voterId) return;
         const ref = firestoreMod.doc(db, MONITORS_COLLECTION, String(token), "voted", String(voterId));
         await firestoreMod.setDoc(ref, { timeMarked: timeMarked || new Date().toISOString() });
+      };
+      onVotedSnapshotForMonitor = (token, handler) => {
+        if (!token || typeof handler !== "function") return noopUnsubscribe;
+        const ref = firestoreMod.collection(db, MONITORS_COLLECTION, String(token), "voted");
+        return firestoreMod.onSnapshot(ref, (snap) => {
+          const entries = snap.docs.map((d) => ({ voterId: d.id, timeMarked: d.data().timeMarked }));
+          handler(entries);
+        });
       };
       deleteMonitorDoc = async (token) => {
         if (!token) return;
@@ -200,6 +234,93 @@ export const firebaseInitPromise = (async () => {
           handler(items);
         });
       };
+
+      // Voter lists (saved lists)
+      const voterListsColRef = firestoreMod.collection(db, VOTER_LISTS_COLLECTION);
+      getAllVoterListsFs = async () => {
+        const snap = await firestoreMod.getDocs(voterListsColRef);
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      };
+      getVoterListFs = async (listId) => {
+        if (!listId) return null;
+        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(listId));
+        const snap = await firestoreMod.getDoc(ref);
+        if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
+        return null;
+      };
+      getVoterListFromServerFs = async (listId) => {
+        if (!listId) return null;
+        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(listId));
+        const getDocFromServer = firestoreMod.getDocFromServer || firestoreMod.getDoc;
+        const snap = await getDocFromServer(ref);
+        if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
+        return null;
+      };
+      setVoterListFs = async (list) => {
+        if (!list || !list.id) return;
+        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(list.id));
+        const data = { ...list, updatedAt: new Date().toISOString() };
+        delete data.id;
+        await firestoreMod.setDoc(ref, data, { merge: true });
+      };
+      deleteVoterListFs = async (listId) => {
+        if (!listId) return;
+        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(listId));
+        await firestoreMod.deleteDoc(ref);
+      };
+      onVoterListsSnapshotFs = (handler) => {
+        if (typeof handler !== "function") return noopUnsubscribe;
+        return firestoreMod.onSnapshot(voterListsColRef, (snap) => {
+          handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        });
+      };
+
+      // Shared list (candidate link) – doc id = token
+      getListShareByToken = async (token) => {
+        if (!token) return null;
+        const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token));
+        const snap = await firestoreMod.getDoc(ref);
+        if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
+        return null;
+      };
+      setListShareFs = async (token, data) => {
+        if (!token) return;
+        const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token));
+        await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+      };
+      setListShareStatusFs = async (token, voterId, status) => {
+        if (!token || !voterId) return;
+        const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status", String(voterId));
+        await firestoreMod.setDoc(ref, { status: status || "", updatedAt: new Date().toISOString() });
+      };
+      getListShareStatusFs = async (token) => {
+        if (!token) return [];
+        const ref = firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status");
+        const snap = await firestoreMod.getDocs(ref);
+        return snap.docs.map((d) => ({ voterId: d.id, ...d.data() }));
+      };
+      onListShareStatusSnapshotFs = (token, handler) => {
+        if (!token || typeof handler !== "function") return noopUnsubscribe;
+        const ref = firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status");
+        return firestoreMod.onSnapshot(ref, (snap) => {
+          handler(snap.docs.map((d) => ({ voterId: d.id, ...d.data() })));
+        });
+      };
+      getListStatusByVoterIdFs = async (voterId) => {
+        const lists = await firestoreMod.getDocs(voterListsColRef);
+        const out = [];
+        for (const listDoc of lists.docs) {
+          const list = listDoc.data();
+          const shareToken = list.shareToken;
+          if (!shareToken) continue;
+          const statusRef = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, shareToken, "status", String(voterId));
+          const statusSnap = await firestoreMod.getDoc(statusRef);
+          if (statusSnap && statusSnap.exists()) {
+            out.push({ listId: listDoc.id, listName: list.name, shareToken, ...statusSnap.data() });
+          }
+        }
+        return out;
+      };
     } catch (fsErr) {
       // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
       console.error(
@@ -222,10 +343,13 @@ export const firebaseInitPromise = (async () => {
       setFirestoreCampaignConfig,
       updateFirestoreCampaignConfig,
       deleteFirestoreCampaignConfig,
+      getVoteMonitoringEnabled,
+      setVoteMonitoringEnabled,
       getMonitorByToken,
       setMonitorDoc,
       getVotedForMonitor,
       setVotedForMonitor,
+      onVotedSnapshotForMonitor,
       deleteMonitorDoc,
       // Firestore-backed core collections
       getAllVotersFs,
@@ -240,6 +364,18 @@ export const firebaseInitPromise = (async () => {
       setCandidateFs,
       deleteCandidateFs,
       onCandidatesSnapshotFs,
+      getAllVoterListsFs,
+      getVoterListFs,
+      getVoterListFromServerFs,
+      setVoterListFs,
+      deleteVoterListFs,
+      onVoterListsSnapshotFs,
+      getListShareByToken,
+      setListShareFs,
+      setListShareStatusFs,
+      getListShareStatusFs,
+      onListShareStatusSnapshotFs,
+      getListStatusByVoterIdFs,
     };
   } catch (err) {
     console.error(
