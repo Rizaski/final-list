@@ -1,4 +1,4 @@
-import { openModal, closeModal } from "./ui.js";
+import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { importVotersFromTemplateRows } from "./voters.js";
 import { firebaseInitPromise } from "./firebase.js";
 
@@ -838,13 +838,14 @@ export function initSettingsModule() {
 
   if (deleteAllVotersButton) {
     deleteAllVotersButton.addEventListener("click", async () => {
-      if (
-        !confirm(
-          "Delete all voters in this campaign? This will remove the voters list from this browser and from Firebase (if connected). This cannot be undone."
-        )
-      ) {
-        return;
-      }
+      const confirmed = await confirmDialog({
+        title: "Delete all voters",
+        message: "Delete all voters in this campaign? This will remove the voters list from this browser and from Firebase (if connected). This cannot be undone.",
+        confirmLabel: "Delete all",
+        cancelLabel: "Cancel",
+        danger: true,
+      });
+      if (!confirmed) return;
 
       // Clear local cache first.
       try {

@@ -342,7 +342,19 @@ export function initDoorToDoorModule(votersContextParam) {
     doorToDoorCurrentPage = 1;
     renderDoorToDoorTable();
   });
+  doorToDoorFilterStatusEl?.addEventListener("change", () => {
+    doorToDoorCurrentPage = 1;
+    renderDoorToDoorTable();
+  });
   doorToDoorFilterBoxEl?.addEventListener("change", () => {
+    doorToDoorCurrentPage = 1;
+    renderDoorToDoorTable();
+  });
+  doorToDoorSortEl?.addEventListener("change", () => {
+    doorToDoorCurrentPage = 1;
+    renderDoorToDoorTable();
+  });
+  doorToDoorGroupByEl?.addEventListener("change", () => {
     doorToDoorCurrentPage = 1;
     renderDoorToDoorTable();
   });

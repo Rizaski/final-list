@@ -3,7 +3,7 @@
  * Election day transport trips and voter vote-marking.
  */
 
-import { openModal, closeModal } from "./ui.js";
+import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import { getAgents } from "./settings.js";
 
@@ -354,10 +354,20 @@ function openTripForm(existing, defaultType) {
   });
 }
 
-function deleteTrip(id) {
+async function deleteTrip(id) {
+  const trip = zeroDayTrips.find((t) => t.id === id);
+  if (!trip) return;
+  const label = trip.name || trip.tripType || "this trip";
+  const confirmed = await confirmDialog({
+    title: "Delete trip",
+    message: `Delete "${label}"? This cannot be undone.`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+    danger: true,
+  });
+  if (!confirmed) return;
   const idx = zeroDayTrips.findIndex((t) => t.id === id);
-  if (idx === -1) return;
-  zeroDayTrips.splice(idx, 1);
+  if (idx !== -1) zeroDayTrips.splice(idx, 1);
   renderZeroDayTripsTable();
 }
 
@@ -553,11 +563,18 @@ function copyMonitorLink(monitorId) {
   }).catch(() => alert("Could not copy. Link: " + url + " (Access code: " + accessCode + ")"));
 }
 
-function deleteMonitorLink(monitorId) {
+async function deleteMonitorLink(monitorId) {
   const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
   if (!monitor) return;
   const label = monitor.ballotBox || monitor.name || "this monitor";
-  if (!confirm(`Delete the access link for "${label}"? The monitor will be removed and the link will stop working.`)) return;
+  const confirmed = await confirmDialog({
+    title: "Delete access link",
+    message: `Delete the access link for "${label}"? The monitor will be removed and the link will stop working.`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+    danger: true,
+  });
+  if (!confirmed) return;
   const token = monitor.shareToken;
   const idx = zeroDayMonitors.findIndex((m) => m.id === monitorId);
   if (idx !== -1) zeroDayMonitors.splice(idx, 1);

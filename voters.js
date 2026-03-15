@@ -1,4 +1,4 @@
-import { openModal, closeModal } from "./ui.js";
+import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import { getVotedTimeMarked } from "./zeroDay.js";
 import {
@@ -709,28 +709,34 @@ function openVoterForm(existingVoter) {
   });
 }
 
-function deleteVoter(voterId) {
+async function deleteVoter(voterId) {
   const voter = currentVoters.find((v) => v.id === voterId);
   if (!voter) return;
-  if (!confirm(`Delete voter "${voter.fullName || voter.nationalId || voterId}"? This cannot be undone.`)) return;
-  (async () => {
-    try {
-      const api = await firebaseInitPromise;
-      if (api.ready && api.deleteVoterFs) await api.deleteVoterFs(voterId);
-      const idx = currentVoters.findIndex((v) => v.id === voterId);
-      if (idx !== -1) currentVoters.splice(idx, 1);
-      if (selectedVoterId === voterId) {
-        selectedVoterId = null;
-        renderVoterDetails(null);
-      }
-      saveVotersToStorage();
-      renderVotersTable();
-      document.dispatchEvent(new CustomEvent("voters-updated"));
-      if (window.appNotifications) {
-        window.appNotifications.push({ title: "Voter deleted", meta: voter.fullName || voter.nationalId || voterId });
-      }
-    } catch (_) {}
-  })();
+  const name = voter.fullName || voter.nationalId || voterId;
+  const confirmed = await confirmDialog({
+    title: "Delete voter",
+    message: `Delete voter "${name}"? This cannot be undone.`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.deleteVoterFs) await api.deleteVoterFs(voterId);
+    const idx = currentVoters.findIndex((v) => v.id === voterId);
+    if (idx !== -1) currentVoters.splice(idx, 1);
+    if (selectedVoterId === voterId) {
+      selectedVoterId = null;
+      renderVoterDetails(null);
+    }
+    saveVotersToStorage();
+    renderVotersTable();
+    document.dispatchEvent(new CustomEvent("voters-updated"));
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "Voter deleted", meta: name });
+    }
+  } catch (_) {}
 }
 
 export async function initVotersModule() {
