@@ -739,6 +739,9 @@ export async function initVotersModule() {
 
   bindVoterTableHeaderSort();
 
+  // Refresh Voted column when ballot box link (or Zero Day) marks voters as voted
+  document.addEventListener("voted-entries-updated", () => renderVotersTable());
+
   const addVoterBtn = document.getElementById("addVoterButton");
   if (addVoterBtn) addVoterBtn.addEventListener("click", () => openVoterForm(null));
 

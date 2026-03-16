@@ -74,8 +74,15 @@ function saveVotedEntries() {
   } catch (_) {}
 }
 
+/** Notify other modules (e.g. Voters list) that voted entries changed so they can refresh. */
+function notifyVotedEntriesUpdated() {
+  try {
+    document.dispatchEvent(new CustomEvent("voted-entries-updated"));
+  } catch (_) {}
+}
+
 /** Fetches voted entries from Firestore (all monitors) and merges into zeroDayVotedEntries so ballot box counts reflect votes from the link. */
-async function syncVotedFromFirestore() {
+export async function syncVotedFromFirestore() {
   try {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.getVotedForMonitor) return;
@@ -95,6 +102,7 @@ async function syncVotedFromFirestore() {
     }
     zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({ voterId, timeMarked: timeMarked || "" }));
     saveVotedEntries();
+    notifyVotedEntriesUpdated();
   } catch (_) {}
 }
 
@@ -117,6 +125,7 @@ function mergeRealtimeVotedIntoLocal() {
   saveVotedEntries();
   zeroDayVoteCurrentPage = 1;
   renderZeroDayVoteTable();
+  notifyVotedEntriesUpdated();
 }
 
 /** Subscribes to Firestore voted subcollection for each monitor; ballot box cards update in real time when a monitor marks a voter. */
@@ -1077,16 +1086,30 @@ function openMarkVotedModal() {
 
   if (notVotedYet.length === 0) saveBtn.disabled = true;
 
-  saveBtn.addEventListener("click", () => {
+  saveBtn.addEventListener("click", async () => {
     const voterId = body.querySelector("#zdMarkVoter").value.trim();
     const timeVal = body.querySelector("#zdMarkTime").value;
     if (!voterId) return;
     const timeMarked = timeVal ? new Date(timeVal).toISOString() : new Date().toISOString();
     zeroDayVotedEntries.push({ voterId, timeMarked });
     saveVotedEntries();
+    // Write to Firestore so ballot box link and other devices see the update
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVotedForMonitor) {
+        const voter = voters.find((v) => sameVoterId(v.id, voterId));
+        const boxKey = voter
+          ? ((voter.ballotBox || voter.island || "").trim() || "Unassigned")
+          : "";
+        if (boxKey) {
+          const monitor = getOrEnsureMonitorForBallotBox(boxKey);
+          if (monitor?.shareToken) await api.setVotedForMonitor(monitor.shareToken, voterId, timeMarked);
+        }
+      }
+    } catch (_) {}
     renderZeroDayVoteTable();
+    notifyVotedEntriesUpdated();
     if (window.appNotifications) {
-      const voters = votersContext ? votersContext.getAllVoters() : [];
       const voter = voters.find((v) => sameVoterId(v.id, voterId));
       window.appNotifications.push({
         title: "Voter marked as voted",

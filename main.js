@@ -6,7 +6,7 @@ import { initEventsModule, getUpcomingEventsSummary } from "./events.js";
 import { initReportsModule } from "./reports.js";
 import { initSettingsModule, getCampaignConfig, syncCampaignConfigFromFirestore } from "./settings.js";
 import { initCallsModule } from "./calls.js";
-import { initZeroDayModule, initMonitorView } from "./zeroDay.js";
+import { initZeroDayModule, initMonitorView, syncVotedFromFirestore } from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
 
 const modulesMap = {
@@ -132,6 +132,8 @@ function switchModule(key) {
       btn.dataset.module === key
     );
   });
+  // Sync voted data from Firestore when opening Voters so Ballot Box link marks show in Voted column
+  if (key === "voters") syncVotedFromFirestore().catch(() => {});
 }
 
 function closeSidebar() {
