@@ -194,6 +194,17 @@ function initZeroDayTabs() {
     panels.forEach((panel) => {
       panel.hidden = panel.id !== `zero-day-tab-${tabKey}`;
     });
+    // When showing Vote Marking tab, sync voted data from Firestore so ballot box link marks are reflected
+    if (tabKey === "vote") {
+      firebaseInitPromise.then(async (api) => {
+        if (!api.ready || !api.getVotedForMonitor) return;
+        loadMonitors();
+        await syncVotedFromFirestore();
+        zeroDayVoteCurrentPage = 1;
+        renderZeroDayVoteTable();
+        subscribeVotedRealtime();
+      }).catch(() => {});
+    }
   }
 
   tabButtons.forEach((btn) => {

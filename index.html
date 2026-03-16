@@ -939,9 +939,12 @@
                     <p class="card-subtitle">Mark voters as having voted and see who still needs to be reminded or transported.</p>
                   </div>
                   <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                    <label class="toggle-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <label class="toggle">
                       <input type="checkbox" id="zeroDayMonitorVotesToggle" role="switch" aria-checked="false" aria-label="Monitor votes">
-                      <span>Monitor votes</span>
+                      <span class="toggle__track">
+                        <span class="toggle__thumb"></span>
+                      </span>
+                      <span class="toggle__label">Monitor votes</span>
                     </label>
                     <button type="button" class="primary-button" id="zeroDayMarkVotedButton">Mark voter as voted</button>
                     <div class="key-legend">

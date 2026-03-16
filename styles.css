@@ -1975,6 +1975,58 @@ body.list-workspace-page {
   gap: 16px;
 }
 
+/* Monitor votes toggle – align with app style */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle__track {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--color-border-subtle);
+  border: 1px solid var(--color-border-subtle);
+  display: inline-flex;
+  align-items: center;
+  padding: 1px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toggle__thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+  transform: translateX(0);
+  transition: transform 0.15s ease;
+}
+
+.toggle input:checked + .toggle__track {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+.toggle input:checked + .toggle__track .toggle__thumb {
+  transform: translateX(14px);
+}
+
+.toggle__label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
 .vote-box-card {
   border-radius: 14px;
   border: 1px solid var(--color-border-subtle);
