@@ -54,6 +54,12 @@ service cloud.firestore {
       allow write: if signedIn() && sizeOk();
     }
 
+    // Campaign events (Events module)
+    match /events/{eventId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
+    }
+
     // Shared list view (candidate opens by link; doc id = share token)
     match /voterListShares/{token} {
       allow read: if true;
@@ -61,6 +67,12 @@ service cloud.firestore {
       match /status/{voterId} {
         allow read, write: if true;
       }
+    }
+
+    // Pledged voters report share (Reports → View pledged voters → Share link; doc id = token)
+    match /pledgedReportShares/{token} {
+      allow read: if true;
+      allow create, update: if signedIn() && sizeOk();
     }
 
     // Deny any other path by default

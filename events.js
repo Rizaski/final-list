@@ -1,4 +1,5 @@
 import { openModal, closeModal } from "./ui.js";
+import { firebaseInitPromise } from "./firebase.js";
 
 const PAGE_SIZE = 15;
 
@@ -7,9 +8,10 @@ const eventsTimeline = document.getElementById("eventsTimeline");
 const addEventButton = document.getElementById("addEventButton");
 const eventsPaginationEl = document.getElementById("eventsPagination");
 
-// Dynamic events collection – initially empty.
+// Dynamic events collection – starts empty, then loaded from Firestore.
 let events = [];
 let eventsCurrentPage = 1;
+let eventsUnsubscribe = null;
 
 function formatDateTime(dtString) {
   const dt = new Date(dtString);
@@ -138,7 +140,7 @@ function openEventForm(existing) {
   saveBtn.textContent = isEdit ? "Save changes" : "Add event";
   footer.appendChild(saveBtn);
 
-  saveBtn.addEventListener("click", () => {
+  saveBtn.addEventListener("click", async () => {
     const name = body.querySelector("#eventName").value.trim();
     const location = body.querySelector("#eventLocation").value.trim();
     const scope = body.querySelector("#eventScope").value.trim();
@@ -154,25 +156,44 @@ function openEventForm(existing) {
       return;
     }
 
-    if (isEdit) {
-      existing.name = name;
-      existing.location = location;
-      existing.scope = scope;
-      existing.dateTime = dateTime;
-      existing.team = team;
-      existing.expectedAttendees = attendees;
+    let id = existing?.id;
+    if (!id) {
+      // Generate a stable numeric id based on current max
+      id = events.reduce((max, ev) => Math.max(max, Number(ev.id) || 0), 0) + 1;
+    }
+
+    // Update local array optimistically
+    const idx = events.findIndex((ev) => String(ev.id) === String(id));
+    const updated = {
+      id,
+      name,
+      location,
+      scope,
+      dateTime,
+      team,
+      expectedAttendees: attendees,
+    };
+    if (idx >= 0) {
+      events[idx] = updated;
     } else {
-      const nextId =
-        events.reduce((max, ev) => Math.max(max, ev.id), 0) + 1;
-      events.push({
-        id: nextId,
-        name,
-        location,
-        scope,
-        dateTime,
-        team,
-        expectedAttendees: attendees,
-      });
+      events.push(updated);
+    }
+
+    // Persist to Firestore if available
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setEventFs) {
+        await api.setEventFs(id, {
+          name,
+          location,
+          scope,
+          dateTime,
+          team,
+          expectedAttendees: attendees,
+        });
+      }
+    } catch (e) {
+      console.error("[Events] Failed to save event to Firestore", e);
     }
 
     renderEventsTable();
@@ -197,8 +218,54 @@ function openEventForm(existing) {
 }
 
 export function initEventsModule() {
-  renderEventsTable();
-  renderEventsTimeline();
+  // Load from Firestore and subscribe to changes
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.getAllEventsFs && api.onEventsSnapshotFs) {
+        const initial = await api.getAllEventsFs();
+        events = initial.map((ev) => ({
+          id: ev.id,
+          name: ev.name || "",
+          location: ev.location || "",
+          scope: ev.scope || "",
+          dateTime: ev.dateTime || new Date().toISOString(),
+          team: ev.team || "",
+          expectedAttendees: ev.expectedAttendees ?? 0,
+        }));
+        renderEventsTable();
+        renderEventsTimeline();
+        document.dispatchEvent(
+          new CustomEvent("events-updated", { detail: { events: [...events] } })
+        );
+
+        eventsUnsubscribe = api.onEventsSnapshotFs((items) => {
+          events = items.map((ev) => ({
+            id: ev.id,
+            name: ev.name || "",
+            location: ev.location || "",
+            scope: ev.scope || "",
+            dateTime: ev.dateTime || new Date().toISOString(),
+            team: ev.team || "",
+            expectedAttendees: ev.expectedAttendees ?? 0,
+          }));
+          renderEventsTable();
+          renderEventsTimeline();
+          document.dispatchEvent(
+            new CustomEvent("events-updated", { detail: { events: [...events] } })
+          );
+        });
+      } else {
+        // Fallback to empty local state
+        renderEventsTable();
+        renderEventsTimeline();
+      }
+    } catch (e) {
+      console.error("[Events] Failed to initialize events from Firestore", e);
+      renderEventsTable();
+      renderEventsTimeline();
+    }
+  })();
 
   eventsTableBody.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-edit-event]");

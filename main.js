@@ -26,78 +26,6 @@ const SETTINGS_MODULE_KEY = "settings";
 const ADMIN_EMAIL = "alirixamv@gmail.com";
 const AUTH_STORAGE_KEY = "campaign-auth-user";
 
-/** Default login screen copy — matches current app use (voter lists, ballot boxes, pledges, candidates). Override via Firestore campaign/config: loginAppName, loginTagline, loginHeading, loginSubheading, loginEmailPlaceholder, loginHelper, loginFooterHelper, loginLogoMark. */
-const DEFAULT_LOGIN_CONFIG = {
-  loginAppName: "Maldives Campaign Management",
-  loginTagline: "Voter lists, ballot boxes, pledges and candidates — secure access for campaign staff.",
-  loginHeading: "Sign in",
-  loginSubheading: "Use the credentials shared by your campaign administrator.",
-  loginEmailPlaceholder: "name@campaign.mv",
-  loginHelper: "Your activity may be monitored for security and audit purposes.",
-  loginFooterHelper: "Trouble signing in? Contact your campaign administrator.",
-  loginLogoMark: "MV",
-};
-
-function applyLoginConfig(cfg) {
-  if (!cfg || typeof cfg !== "object") return;
-  const set = (id, value, attr = "textContent") => {
-    const el = document.getElementById(id);
-    if (el && value != null && value !== "") {
-      if (attr === "placeholder") el.placeholder = String(value);
-      else el[attr] = String(value);
-    }
-  };
-  set("loginLogoMark", cfg.loginLogoMark);
-  set("loginLogoMarkRight", cfg.loginLogoMark);
-  set("loginPageTitle", cfg.loginAppName);
-  set("loginPageTagline", cfg.loginTagline);
-  set("loginCardHeading", cfg.loginHeading);
-  set("loginCardSubheading", cfg.loginSubheading);
-  set("loginEmail", cfg.loginEmailPlaceholder, "placeholder");
-  set("loginHelper", cfg.loginHelper);
-  set("loginFooterHelper", cfg.loginFooterHelper);
-}
-
-async function refreshLoginConfig(firebaseApi) {
-  const merged = { ...DEFAULT_LOGIN_CONFIG };
-  try {
-    if (firebaseApi && typeof firebaseApi.getFirestoreCampaignConfig === "function") {
-      const config = await firebaseApi.getFirestoreCampaignConfig();
-      if (config && typeof config === "object") {
-        if (config.loginAppName != null) merged.loginAppName = String(config.loginAppName);
-        if (config.loginTagline != null) merged.loginTagline = String(config.loginTagline);
-        if (config.loginHeading != null) merged.loginHeading = String(config.loginHeading);
-        if (config.loginSubheading != null) merged.loginSubheading = String(config.loginSubheading);
-        if (config.loginEmailPlaceholder != null) merged.loginEmailPlaceholder = String(config.loginEmailPlaceholder);
-        if (config.loginHelper != null) merged.loginHelper = String(config.loginHelper);
-        if (config.loginFooterHelper != null) merged.loginFooterHelper = String(config.loginFooterHelper);
-        if (config.loginLogoMark != null) merged.loginLogoMark = String(config.loginLogoMark);
-        // Campaign name and island from Settings (Firestore) override login title and tagline when set
-        const name = (config.campaignName != null && String(config.campaignName).trim()) ? String(config.campaignName).trim() : "";
-        const island = (config.island != null && String(config.island).trim()) ? String(config.island).trim() : "";
-        if (name) merged.loginAppName = name;
-        if (island) merged.loginTagline = island;
-      }
-    }
-    // If no campaign name/island from Firestore, use Settings from localStorage (saved in app)
-    if (merged.loginAppName === DEFAULT_LOGIN_CONFIG.loginAppName || merged.loginTagline === DEFAULT_LOGIN_CONFIG.loginTagline) {
-      try {
-        const raw = localStorage.getItem("campaign-config");
-        if (raw) {
-          const local = JSON.parse(raw);
-          if (local && typeof local === "object") {
-            const name = (local.campaignName != null && String(local.campaignName).trim()) ? String(local.campaignName).trim() : "";
-            const island = (local.island != null && String(local.island).trim()) ? String(local.island).trim() : "";
-            if (name) merged.loginAppName = name;
-            if (island) merged.loginTagline = island;
-          }
-        }
-      } catch (_) {}
-    }
-  } catch (_) {}
-  applyLoginConfig(merged);
-}
-
 function getCurrentUser() {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
@@ -751,7 +679,6 @@ async function boot() {
       loginView.hidden = false;
       loginView.style.display = "";
     }
-    applyLoginConfig(DEFAULT_LOGIN_CONFIG);
     if (loginError) {
       loginError.textContent =
         "Firebase failed to initialize. Please check your network connection and Firebase configuration, then reload this page.";
@@ -790,7 +717,6 @@ async function boot() {
     loginView.hidden = false;
     loginView.style.display = "";
   }
-  refreshLoginConfig(firebaseApi);
 
   // React to auth state
   if (firebaseApi.onAuthStateChanged) {
@@ -802,7 +728,6 @@ async function boot() {
         setCurrentUser(null);
         if (appShell) appShell.hidden = true;
         if (loginView) loginView.hidden = false;
-        refreshLoginConfig(firebaseApi);
       }
     });
   }
@@ -881,7 +806,6 @@ async function boot() {
           loginViewEl.hidden = false;
           loginViewEl.style.display = "";
         }
-        refreshLoginConfig(firebaseApi);
       }
     });
   }

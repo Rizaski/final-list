@@ -1,7 +1,10 @@
-import { getPledgeByBallotBox } from "./voters.js";
-import { getVotedVoterIds } from "./zeroDay.js";
+import { getPledgeByBallotBox, getVoterImageSrc } from "./voters.js";
+import { getVotedVoterIds, getVotedTimeMarked } from "./zeroDay.js";
 import { openModal, closeModal } from "./ui.js";
 import { getCandidates } from "./settings.js";
+import { firebaseInitPromise } from "./firebase.js";
+
+const REPORT_PLEDGED_PAGE_SIZE = 20;
 
 function escapeHtml(str) {
   if (str == null) return "";
@@ -92,6 +95,89 @@ function buildDetailTable(columns, rows) {
     });
   }
   table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+// Rich voter detail table used in Reports → View details (same columns as Candidate pledge summary → View pledged voters)
+function buildVoterDetailTable(voters) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrapper";
+  const table = document.createElement("table");
+  table.className = "data-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Seq</th>
+        <th>Image</th>
+        <th>ID Number</th>
+        <th>Name</th>
+        <th>Permanent Address</th>
+        <th>Pledge</th>
+        <th>Ballot box</th>
+        <th>Phone</th>
+        <th>Island</th>
+        <th>Voted</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const tbody = table.querySelector("tbody");
+  voters.forEach((v) => {
+    const initials =
+      (v.fullName || "")
+        .split(" ")
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0]?.toUpperCase() || "")
+        .join("") || "?";
+    const photoSrc = getVoterImageSrc(v);
+    const photoCell = photoSrc
+      ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(
+          photoSrc
+        )}" alt="" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(
+          initials
+        )}</div></div>`
+      : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(
+          initials
+        )}</div></div>`;
+    const pledgeStatus = v.pledgeStatus ?? "undecided";
+    const pledgeClass =
+      pledgeStatus === "yes"
+        ? "pledge-pill pledge-pill--pledged"
+        : pledgeStatus === "undecided"
+        ? "pledge-pill pledge-pill--undecided"
+        : "pledge-pill pledge-pill--not-pledged";
+    const timeMarked = getVotedTimeMarked(v.id);
+    const votedCell = timeMarked
+      ? (() => {
+          const d = new Date(timeMarked);
+          const formatted = d.toLocaleString("en-MV", {
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(
+            formatted
+          )}">Voted</span>`;
+        })()
+      : '<span class="text-muted">—</span>';
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${v.sequence ?? ""}</td>
+      <td>${photoCell}</td>
+      <td>${escapeHtml(v.nationalId ?? "")}</td>
+      <td>${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
+      <td>${escapeHtml(v.permanentAddress ?? "")}</td>
+      <td><span class="${pledgeClass}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
+      <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
+      <td>${escapeHtml(v.phone ?? "")}</td>
+      <td>${escapeHtml(v.island ?? "")}</td>
+      <td class="voted-status-cell">${votedCell}</td>
+    `;
+    tbody.appendChild(tr);
+  });
   wrap.appendChild(table);
   return wrap;
 }
@@ -190,56 +276,39 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     const voters = votersContext.getAllVoters();
     const events = eventsContext.getEvents();
     let title = "";
-    let body = document.createElement("div");
+    // Use the same inner layout shell as the pledged voters window for consistent styling
+    const body = document.createElement("div");
+    body.className = "modal-body-inner";
 
     if (reportType === "pledge-by-island") {
       const byBox = voters
         .filter((v) => (v.ballotBox || "").trim())
         .slice()
         .sort((a, b) => (a.ballotBox || "").localeCompare(b.ballotBox || "", "en"));
-      const rows = byBox.map((v) => [
-        (v.ballotBox || "").trim() || "–",
-        v.fullName || v.id || "–",
-        v.nationalId || v.id || "–",
-        (v.pledgeStatus === "yes" ? "Yes" : v.pledgeStatus === "no" ? "No" : "Undecided"),
-      ]);
       title = "Pledge by ballot box – voters";
-      body.appendChild(buildDetailTable(["Ballot box", "Name", "ID number", "Pledge"], rows));
+      body.appendChild(buildVoterDetailTable(byBox));
     } else if (reportType === "pledge-pie") {
       const byPledge = voters
         .slice()
         .sort((a, b) => (a.pledgeStatus || "").localeCompare(b.pledgeStatus || "", "en"));
-      const rows = byPledge.map((v) => [
-        v.fullName || v.id || "–",
-        v.nationalId || v.id || "–",
-        (v.pledgeStatus === "yes" ? "Yes" : v.pledgeStatus === "no" ? "No" : "Undecided"),
-      ]);
       title = "Pledge distribution – voters";
-      body.appendChild(buildDetailTable(["Name", "ID number", "Pledge status"], rows));
+      body.appendChild(buildVoterDetailTable(byPledge));
     } else if (reportType === "box-pledge") {
       const votedIds = getVotedVoterIds();
-      const pledgedAndVoted = voters.filter(
-        (v) => (v.ballotBox || "").trim() && v.pledgeStatus === "yes" && votedIds.has(v.id)
-      );
-      const rows = pledgedAndVoted
+      const pledgedAndVoted = voters
+        .filter(
+          (v) => (v.ballotBox || "").trim() && v.pledgeStatus === "yes" && votedIds.has(v.id)
+        )
         .slice()
-        .sort((a, b) => (a.ballotBox || "").localeCompare(b.ballotBox || "", "en"))
-        .map((v) => [v.ballotBox || "–", v.fullName || v.id || "–", v.nationalId || v.id || "–"]);
+        .sort((a, b) => (a.ballotBox || "").localeCompare(b.ballotBox || "", "en"));
       title = "Box-wise pledge – voters who pledged and have voted";
-      body.appendChild(buildDetailTable(["Ballot box", "Name", "ID number"], rows));
+      body.appendChild(buildVoterDetailTable(pledgedAndVoted));
     } else if (reportType === "support") {
       const bySupport = voters
         .slice()
         .sort((a, b) => (a.supportStatus || "").localeCompare(b.supportStatus || "", "en"));
-      const supportLabel = (s) =>
-        !s ? "Unknown" : s.charAt(0).toUpperCase() + s.slice(1).replace("-", " ");
-      const rows = bySupport.map((v) => [
-        v.fullName || v.id || "–",
-        v.nationalId || v.id || "–",
-        supportLabel(v.supportStatus),
-      ]);
       title = "Support distribution – voters";
-      body.appendChild(buildDetailTable(["Name", "ID number", "Support"], rows));
+      body.appendChild(buildVoterDetailTable(bySupport));
     } else if (reportType === "events") {
       const sorted = [...events].sort(
         (a, b) => new Date(a.dateTime || 0) - new Date(b.dateTime || 0)
@@ -276,39 +345,321 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     openModal({ title, body, footer });
   }
 
+  function pledgePillClass(status) {
+    if (status === "yes") return "pledge-pill pledge-pill--pledged";
+    if (status === "undecided") return "pledge-pill pledge-pill--undecided";
+    return "pledge-pill pledge-pill--not-pledged";
+  }
+
   function openCandidatePledgedVoters(candidateId) {
     if (!candidateId) return;
-    const voters = votersContext.getAllVoters();
+    const allVoters = votersContext.getAllVoters();
+    const baseList = allVoters.filter((v) => {
+      const cp = v.candidatePledges || {};
+      return cp[String(candidateId)] === "yes";
+    });
     const candidates = getCandidates();
     const candidate = candidates.find((c) => String(c.id) === String(candidateId));
     const title = candidate
       ? `Pledged voters – ${candidate.name || candidateId}`
       : "Pledged voters – Candidate";
 
-    const rows = voters
-      .filter((v) => {
-        const cp = v.candidatePledges || {};
-        return cp[String(candidateId)] === "yes";
-      })
-      .slice()
-      .sort((a, b) => (a.fullName || "").localeCompare(b.fullName || "", "en"))
-      .map((v) => [
-        v.fullName || v.id || "–",
-        v.nationalId || v.id || "–",
-        (v.ballotBox || "").trim() || "–",
-        v.permanentAddress || "",
-        v.phone || "",
-      ]);
-
     const body = document.createElement("div");
-    body.appendChild(
-      buildDetailTable(
-        ["Name", "ID number", "Ballot box", "Permanent address", "Phone"],
-        rows
-      )
-    );
+    body.className = "modal-body-inner";
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "modal-list-toolbar list-toolbar";
+    const boxes = [...new Set(baseList.map((v) => (v.ballotBox || "").trim()).filter(Boolean))].sort();
+    toolbar.innerHTML = `
+      <div class="list-toolbar__search">
+        <label for="reportPledgedSearch" class="sr-only">Search</label>
+        <input type="search" id="reportPledgedSearch" placeholder="Search by name, ID, address, island…" aria-label="Search pledged voters">
+      </div>
+      <div class="list-toolbar__controls">
+        <div class="field-group field-group--inline">
+          <label for="reportPledgedFilterPledge">Filter</label>
+          <select id="reportPledgedFilterPledge">
+            <option value="all">All</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+            <option value="undecided">Undecided</option>
+          </select>
+        </div>
+        <div class="field-group field-group--inline">
+          <label for="reportPledgedFilterBox">Ballot box</label>
+          <select id="reportPledgedFilterBox">
+            <option value="all">All</option>
+            ${boxes.map((b) => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field-group field-group--inline">
+          <label for="reportPledgedSort">Sort</label>
+          <select id="reportPledgedSort">
+            <option value="sequence">Sequence</option>
+            <option value="name-asc">Name A–Z</option>
+            <option value="name-desc">Name Z–A</option>
+            <option value="id">ID Number</option>
+            <option value="address">Address</option>
+            <option value="pledge">Pledge</option>
+            <option value="box">Ballot box</option>
+          </select>
+        </div>
+        <div class="field-group field-group--inline">
+          <label for="reportPledgedGroupBy">Group by</label>
+          <select id="reportPledgedGroupBy">
+            <option value="none">None</option>
+            <option value="box">Ballot box</option>
+            <option value="pledge">Pledge</option>
+          </select>
+        </div>
+      </div>
+    `;
+    body.appendChild(toolbar);
+
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "table-wrapper";
+    const table = document.createElement("table");
+    table.className = "data-table";
+    table.id = "reportPledgedTable";
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Seq</th>
+          <th>Image</th>
+          <th>ID Number</th>
+          <th>Name</th>
+          <th>Permanent Address</th>
+          <th>Pledge</th>
+          <th>Ballot box</th>
+          <th>Phone</th>
+          <th>Island</th>
+          <th>Voted</th>
+        </tr>
+      </thead>
+      <tbody id="reportPledgedTableBody"></tbody>
+    `;
+    tableWrap.appendChild(table);
+    body.appendChild(tableWrap);
+
+    const tbody = table.querySelector("#reportPledgedTableBody");
+    const COL_COUNT = 10;
+    let currentPage = 1;
+
+    function getFilteredSortedGrouped() {
+      const query = (body.querySelector("#reportPledgedSearch")?.value || "").toLowerCase().trim();
+      const filterPledge = body.querySelector("#reportPledgedFilterPledge")?.value || "all";
+      const filterBox = body.querySelector("#reportPledgedFilterBox")?.value || "all";
+      const sortBy = body.querySelector("#reportPledgedSort")?.value || "sequence";
+      const groupBy = body.querySelector("#reportPledgedGroupBy")?.value || "none";
+
+      let list = baseList.filter((v) => {
+        if (filterPledge !== "all" && (v.pledgeStatus || "undecided") !== filterPledge) return false;
+        if (filterBox !== "all" && (v.ballotBox || "").trim() !== filterBox) return false;
+        if (query) {
+          const s = [v.fullName, v.nationalId, v.id, v.permanentAddress, v.ballotBox, v.phone, v.island].filter(Boolean).join(" ").toLowerCase();
+          if (!s.includes(query)) return false;
+        }
+        return true;
+      });
+
+      const cmp = (a, b) => {
+        switch (sortBy) {
+          case "sequence": return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
+          case "name-desc": return (b.fullName || "").localeCompare(a.fullName || "", "en");
+          case "name-asc": return (a.fullName || "").localeCompare(b.fullName || "", "en");
+          case "id": return (a.nationalId || "").localeCompare(b.nationalId || "", "en");
+          case "address": return (a.permanentAddress || "").localeCompare(b.permanentAddress || "", "en");
+          case "pledge": return (a.pledgeStatus || "").localeCompare(b.pledgeStatus || "", "en");
+          case "box": return (a.ballotBox || "").localeCompare(b.ballotBox || "", "en");
+          default: return (a.fullName || "").localeCompare(b.fullName || "", "en");
+        }
+      };
+      list = list.slice().sort(cmp);
+
+      if (groupBy === "none") return list.map((v) => ({ type: "row", voter: v }));
+      const out = [];
+      let lastKey = null;
+      const getKey = (v) => groupBy === "box" ? (v.ballotBox || "Unassigned") : (v.pledgeStatus === "yes" ? "Yes" : v.pledgeStatus === "no" ? "No" : "Undecided");
+      list.forEach((v) => {
+        const key = getKey(v);
+        if (key !== lastKey) { out.push({ type: "group", label: key }); lastKey = key; }
+        out.push({ type: "row", voter: v });
+      });
+      return out;
+    }
+
+    function renderReportTable() {
+      const displayList = getFilteredSortedGrouped();
+      const rowsOnly = displayList.filter((x) => x.type === "row");
+      const total = rowsOnly.length;
+      const totalPages = Math.max(1, Math.ceil(total / REPORT_PLEDGED_PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      const start = (currentPage - 1) * REPORT_PLEDGED_PAGE_SIZE;
+      const pageRows = rowsOnly.slice(start, start + REPORT_PLEDGED_PAGE_SIZE);
+
+      tbody.innerHTML = "";
+      if (rowsOnly.length === 0) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="${COL_COUNT}" class="text-muted" style="text-align:center;padding:24px;">No voters match the filters.</td>`;
+        tbody.appendChild(tr);
+      } else {
+        let pendingGroupLabel = null;
+        displayList.forEach((item) => {
+          if (item.type === "group") {
+            pendingGroupLabel = item.label;
+            return;
+          }
+          const v = item.voter;
+          const idxInRows = rowsOnly.findIndex((r) => r.voter.id === v.id);
+          if (idxInRows < start || idxInRows >= start + REPORT_PLEDGED_PAGE_SIZE) return;
+          if (pendingGroupLabel) {
+            const tr = document.createElement("tr");
+            tr.className = "list-toolbar__group-header";
+            tr.innerHTML = `<td colspan="${COL_COUNT}">${escapeHtml(pendingGroupLabel)}</td>`;
+            tbody.appendChild(tr);
+            pendingGroupLabel = null;
+          }
+          const initials = (v.fullName || "").split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase() || "").join("") || "?";
+          const photoSrc = getVoterImageSrc(v);
+          const photoCell = photoSrc
+            ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+            : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+          const pledgeStatus = v.pledgeStatus ?? "undecided";
+          const timeMarked = getVotedTimeMarked(v.id);
+          const votedCell = timeMarked
+            ? (() => {
+                const d = new Date(timeMarked);
+                const formatted = d.toLocaleString("en-MV", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+                return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(formatted)}">Voted</span>`;
+              })()
+            : '<span class="text-muted">—</span>';
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${v.sequence ?? ""}</td>
+            <td>${photoCell}</td>
+            <td>${escapeHtml(v.nationalId ?? "")}</td>
+            <td>${escapeHtml(v.fullName ?? "")}</td>
+            <td>${escapeHtml(v.permanentAddress ?? "")}</td>
+            <td><span class="${pledgePillClass(pledgeStatus)}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
+            <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
+            <td>${escapeHtml(v.phone ?? "")}</td>
+            <td>${escapeHtml(v.island ?? "")}</td>
+            <td class="voted-status-cell">${votedCell}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      const paginationEl = body.querySelector("#reportPledgedPagination");
+      if (paginationEl) {
+        const from = total === 0 ? 0 : start + 1;
+        const to = Math.min(start + REPORT_PLEDGED_PAGE_SIZE, total);
+        paginationEl.innerHTML = `
+          <span class="pagination-bar__summary">Showing ${from}–${to} of ${total}</span>
+          <div class="pagination-bar__nav">
+            <button type="button" class="pagination-bar__btn" data-page="prev" ${currentPage <= 1 ? "disabled" : ""}>Previous</button>
+            <span class="pagination-bar__summary">Page ${currentPage} of ${totalPages}</span>
+            <button type="button" class="pagination-bar__btn" data-page="next" ${currentPage >= totalPages ? "disabled" : ""}>Next</button>
+          </div>
+        `;
+        paginationEl.querySelectorAll("[data-page]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            if (btn.dataset.page === "prev" && currentPage > 1) currentPage--;
+            if (btn.dataset.page === "next" && currentPage < totalPages) currentPage++;
+            renderReportTable();
+          });
+        });
+      }
+    }
+
+    const paginationBar = document.createElement("div");
+    paginationBar.id = "reportPledgedPagination";
+    paginationBar.className = "pagination-bar";
+    body.appendChild(paginationBar);
+
+    const searchEl = body.querySelector("#reportPledgedSearch");
+    const filterPledgeEl = body.querySelector("#reportPledgedFilterPledge");
+    const filterBoxEl = body.querySelector("#reportPledgedFilterBox");
+    const sortEl = body.querySelector("#reportPledgedSort");
+    const groupByEl = body.querySelector("#reportPledgedGroupBy");
+    [searchEl, filterPledgeEl, filterBoxEl, sortEl, groupByEl].forEach((el) => {
+      if (el) el.addEventListener(el.id === "reportPledgedSearch" ? "input" : "change", () => { currentPage = 1; renderReportTable(); });
+    });
+
+    renderReportTable();
 
     const footer = document.createElement("div");
+    footer.style.display = "flex";
+    footer.style.flexWrap = "wrap";
+    footer.style.gap = "10px";
+    footer.style.alignItems = "center";
+    footer.style.justifyContent = "space-between";
+
+    const shareLinkBtn = document.createElement("button");
+    shareLinkBtn.type = "button";
+    shareLinkBtn.className = "ghost-button";
+    shareLinkBtn.textContent = "Share link";
+    shareLinkBtn.addEventListener("click", async () => {
+      const api = await firebaseInitPromise;
+      if (!api.ready || !api.setPledgedReportShareFs) {
+        alert("Sharing is not available. Check your connection and try again.");
+        return;
+      }
+      const token = "pr-" + Math.random().toString(36).slice(2, 12) + "-" + Date.now().toString(36);
+      const voters = baseList.map((v) => ({
+        id: v.id,
+        sequence: v.sequence,
+        fullName: v.fullName,
+        nationalId: v.nationalId,
+        permanentAddress: v.permanentAddress,
+        ballotBox: (v.ballotBox || "").trim(),
+        phone: v.phone,
+        island: v.island,
+      }));
+      await api.setPledgedReportShareFs(token, {
+        candidateId,
+        candidateName: candidate ? (candidate.name || candidateId) : String(candidateId),
+        voters,
+        updatedAt: new Date().toISOString(),
+      });
+      const pathBase = window.location.pathname.replace(/index\.html$/i, "").replace(/\/$/, "");
+      const baseUrl = window.location.origin + pathBase + (pathBase ? "/" : "");
+      const url = `${baseUrl}pledged-report-view.html?token=${encodeURIComponent(token)}`;
+      const shareBody = document.createElement("div");
+      shareBody.innerHTML = `
+        <p class="helper-text">Anyone with this link can view the pledged voters list (read-only).</p>
+        <div class="form-group" style="margin-top:12px;">
+          <label for="reportShareLinkInput">Link</label>
+          <input type="text" id="reportShareLinkInput" readonly value="${escapeHtml(url)}" style="width:100%; padding:8px 12px; font-size:13px;">
+        </div>
+      `;
+      const shareFooter = document.createElement("div");
+      shareFooter.style.display = "flex";
+      shareFooter.style.gap = "8px";
+      shareFooter.style.justifyContent = "flex-end";
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "primary-button";
+      copyBtn.textContent = "Copy link";
+      copyBtn.addEventListener("click", () => {
+        const input = document.getElementById("reportShareLinkInput");
+        if (input) {
+          input.select();
+          document.execCommand("copy");
+          copyBtn.textContent = "Copied";
+        }
+      });
+      const closeShareBtn = document.createElement("button");
+      closeShareBtn.type = "button";
+      closeShareBtn.className = "ghost-button";
+      closeShareBtn.textContent = "Close";
+      closeShareBtn.addEventListener("click", closeModal);
+      shareFooter.appendChild(copyBtn);
+      shareFooter.appendChild(closeShareBtn);
+      openModal({ title: "Share pledged voters list", body: shareBody, footer: shareFooter });
+    });
+    footer.appendChild(shareLinkBtn);
+
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "ghost-button";
@@ -316,7 +667,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     closeBtn.addEventListener("click", closeModal);
     footer.appendChild(closeBtn);
 
-    openModal({ title, body, footer });
+    openModal({ title, body, footer, startMaximized: true });
   }
 
   function recomputeReports() {
@@ -341,9 +692,28 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       totalVoters === 0 ? 0 : (undecidedCount / totalVoters) * 100;
     renderPledgePie(registrationChart, { yesPct, noPct, undecidedPct, yesCount, noCount, undecidedCount });
 
-    // Box-wise pledge voter result
-    const pledgeByBoxDetailed = getPledgeByBallotBox();
-    renderBarSet(boxPledgeChart, pledgeByBoxDetailed);
+    // Candidate-level vote result: among pledged voters, how many have voted (per candidate)
+    const candidates = getCandidates();
+    const votedIds = getVotedVoterIds();
+    const candidateResults = candidates
+      .map((cand) => {
+        const id = String(cand.id);
+        let pledged = 0;
+        let voted = 0;
+        voters.forEach((v) => {
+          const cp = v.candidatePledges || {};
+          if (cp[id] === "yes") {
+            pledged += 1;
+            if (votedIds.has(String(v.id))) voted += 1;
+          }
+        });
+        const value = pledged === 0 ? 0 : (voted / pledged) * 100;
+        const label = `${cand.name || id} (${voted}/${pledged} voted)`;
+        return { label, value, pledged, voted };
+      })
+      .filter((r) => r.pledged > 0)
+      .sort((a, b) => b.value - a.value);
+    renderBarSet(boxPledgeChart, candidateResults);
 
     const supportTypes = ["supporting", "leaning", "opposed", "unknown"];
     const supportDistribution = supportTypes.map((type) => {

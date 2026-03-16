@@ -26,6 +26,8 @@ const CAMPAIGN_CONFIG_DOC = "config";
 const MONITORS_COLLECTION = "monitors";
 const VOTER_LISTS_COLLECTION = "voterLists";
 const VOTER_LIST_SHARES_COLLECTION = "voterListShares";
+const PLEDGED_REPORT_SHARES_COLLECTION = "pledgedReportShares";
+const EVENTS_COLLECTION = "events";
 
 export const firebaseInitPromise = (async () => {
   try {
@@ -67,6 +69,12 @@ export const firebaseInitPromise = (async () => {
     let deleteCandidateFs = async () => {};
     let onCandidatesSnapshotFs = () => noopUnsubscribe;
 
+    // Events collection helpers
+    let getAllEventsFs = async () => [];
+    let setEventFs = async () => {};
+    let deleteEventFs = async () => {};
+    let onEventsSnapshotFs = () => noopUnsubscribe;
+
     let getAllVoterListsFs = async () => [];
     let getVoterListFs = async () => null;
     let getVoterListFromServerFs = async () => null;
@@ -75,6 +83,8 @@ export const firebaseInitPromise = (async () => {
     let onVoterListsSnapshotFs = () => noopUnsubscribe;
     let getListShareByToken = async () => null;
     let setListShareFs = async () => {};
+    let getPledgedReportShareByTokenFs = async () => null;
+    let setPledgedReportShareFs = async () => {};
     let setListShareStatusFs = async () => {};
     let getListShareStatusFs = async () => [];
     let onListShareStatusSnapshotFs = () => noopUnsubscribe;
@@ -288,6 +298,18 @@ export const firebaseInitPromise = (async () => {
         const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token));
         await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
       };
+      getPledgedReportShareByTokenFs = async (token) => {
+        if (!token) return null;
+        const ref = firestoreMod.doc(db, PLEDGED_REPORT_SHARES_COLLECTION, String(token));
+        const snap = await firestoreMod.getDoc(ref);
+        if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
+        return null;
+      };
+      setPledgedReportShareFs = async (token, data) => {
+        if (!token) return;
+        const ref = firestoreMod.doc(db, PLEDGED_REPORT_SHARES_COLLECTION, String(token));
+        await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+      };
       setListShareStatusFs = async (token, voterId, status) => {
         if (!token || !voterId) return;
         const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status", String(voterId));
@@ -320,6 +342,29 @@ export const firebaseInitPromise = (async () => {
           }
         }
         return out;
+      };
+
+      // Events collection
+      const eventsColRef = firestoreMod.collection(db, EVENTS_COLLECTION);
+      getAllEventsFs = async () => {
+        const snap = await firestoreMod.getDocs(eventsColRef);
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      };
+      setEventFs = async (id, data) => {
+        if (!id) return;
+        const ref = firestoreMod.doc(db, EVENTS_COLLECTION, String(id));
+        await firestoreMod.setDoc(ref, { ...data }, { merge: true });
+      };
+      deleteEventFs = async (id) => {
+        if (!id) return;
+        const ref = firestoreMod.doc(db, EVENTS_COLLECTION, String(id));
+        await firestoreMod.deleteDoc(ref);
+      };
+      onEventsSnapshotFs = (handler) => {
+        if (typeof handler !== "function") return noopUnsubscribe;
+        return firestoreMod.onSnapshot(eventsColRef, (snap) => {
+          handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        });
       };
     } catch (fsErr) {
       // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
@@ -372,10 +417,16 @@ export const firebaseInitPromise = (async () => {
       onVoterListsSnapshotFs,
       getListShareByToken,
       setListShareFs,
+      getPledgedReportShareByTokenFs,
+      setPledgedReportShareFs,
       setListShareStatusFs,
       getListShareStatusFs,
       onListShareStatusSnapshotFs,
       getListStatusByVoterIdFs,
+      getAllEventsFs,
+      setEventFs,
+      deleteEventFs,
+      onEventsSnapshotFs,
     };
   } catch (err) {
     console.error(

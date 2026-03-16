@@ -1,11 +1,7 @@
-import { openModal, closeModal, confirmDialog } from "./ui.js";
+import { openModal, closeModal } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import { getVotedTimeMarked } from "./zeroDay.js";
 import {
-  getListStatusByVoterId,
-  getListStatusLabel,
-  onListStatusChange,
-  startListStatusSync,
   getLists,
   createList,
   openListWorkspace,
@@ -245,10 +241,14 @@ function renderVotersTable() {
     const photoCell = photoSrc
       ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
-    const listStatuses = getListStatusByVoterId(voter.id);
-    const listStatusHtml = listStatuses.length === 0
-      ? "<span class=\"text-muted\">—</span>"
-      : listStatuses.map((s) => `${escapeHtml(s.listName)}: ${getListStatusLabel(s.status)}`).join(", ");
+    const timeMarked = getVotedTimeMarked(voter.id);
+    const votedCell = timeMarked
+      ? (() => {
+          const d = new Date(timeMarked);
+          const formatted = d.toLocaleString("en-MV", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+          return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(formatted)}">Voted</span>`;
+        })()
+      : '<span class="text-muted">—</span>';
     tr.innerHTML = `
       <td>${voter.sequence ?? ""}</td>
       <td>${photoCell}</td>
@@ -258,7 +258,7 @@ function renderVotersTable() {
       <td><span class="${pledgePillClass(
         voter.pledgeStatus
       )}">${voter.pledgeStatus || "No"}</span></td>
-      <td class="list-status-cell">${listStatusHtml}</td>
+      <td class="voted-status-cell">${votedCell}</td>
       <td style="text-align:right;">
         <button type="button" class="ghost-button ghost-button--small" data-voter-edit="${escapeHtml(voter.id)}" title="Edit">Edit</button>
         <button type="button" class="ghost-button ghost-button--small" data-voter-delete="${escapeHtml(voter.id)}" title="Delete">Delete</button>
@@ -709,34 +709,28 @@ function openVoterForm(existingVoter) {
   });
 }
 
-async function deleteVoter(voterId) {
+function deleteVoter(voterId) {
   const voter = currentVoters.find((v) => v.id === voterId);
   if (!voter) return;
-  const name = voter.fullName || voter.nationalId || voterId;
-  const confirmed = await confirmDialog({
-    title: "Delete voter",
-    message: `Delete voter "${name}"? This cannot be undone.`,
-    confirmLabel: "Delete",
-    cancelLabel: "Cancel",
-    danger: true,
-  });
-  if (!confirmed) return;
-  try {
-    const api = await firebaseInitPromise;
-    if (api.ready && api.deleteVoterFs) await api.deleteVoterFs(voterId);
-    const idx = currentVoters.findIndex((v) => v.id === voterId);
-    if (idx !== -1) currentVoters.splice(idx, 1);
-    if (selectedVoterId === voterId) {
-      selectedVoterId = null;
-      renderVoterDetails(null);
-    }
-    saveVotersToStorage();
-    renderVotersTable();
-    document.dispatchEvent(new CustomEvent("voters-updated"));
-    if (window.appNotifications) {
-      window.appNotifications.push({ title: "Voter deleted", meta: name });
-    }
-  } catch (_) {}
+  if (!confirm(`Delete voter "${voter.fullName || voter.nationalId || voterId}"? This cannot be undone.`)) return;
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.deleteVoterFs) await api.deleteVoterFs(voterId);
+      const idx = currentVoters.findIndex((v) => v.id === voterId);
+      if (idx !== -1) currentVoters.splice(idx, 1);
+      if (selectedVoterId === voterId) {
+        selectedVoterId = null;
+        renderVoterDetails(null);
+      }
+      saveVotersToStorage();
+      renderVotersTable();
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Voter deleted", meta: voter.fullName || voter.nationalId || voterId });
+      }
+    } catch (_) {}
+  })();
 }
 
 export async function initVotersModule() {
@@ -904,9 +898,6 @@ export async function initVotersModule() {
   }
 
   if (votersTableLoader) votersTableLoader.hidden = true;
-
-  startListStatusSync().catch(() => {});
-  onListStatusChange(() => renderVotersTable());
 
   return {
     getAllVoters: () => [...currentVoters],

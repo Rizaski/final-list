@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pledged voters – Campaign</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .pledged-view-page { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .pledged-view-page__header { margin-bottom: 20px; }
+    .pledged-view-page__table-wrap { overflow: auto; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface); }
+    .pledged-view-page__table-wrap table { width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="pledged-view-page">
+    <header class="pledged-view-page__header">
+      <h1 id="pledgedViewTitle">Loading…</h1>
+      <p class="helper-text" id="pledgedViewSubtitle">Read-only list of pledged voters. Shared from Campaign Reports.</p>
+    </header>
+
+    <div class="pledged-view-page__table-wrap">
+      <table class="data-table" id="pledgedViewTable">
+        <thead>
+          <tr>
+            <th>Seq</th>
+            <th>ID Number</th>
+            <th>Name</th>
+            <th>Permanent Address</th>
+            <th>Ballot box</th>
+            <th>Phone</th>
+            <th>Island</th>
+          </tr>
+        </thead>
+        <tbody id="pledgedViewTbody"></tbody>
+      </table>
+    </div>
+    <p id="pledgedViewEmpty" class="text-muted" style="display:none;">No voters in this list.</p>
+  </div>
+
+  <script type="module" src="pledged-report-view.js"></script>
+</body>
+</html>

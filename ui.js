@@ -4,15 +4,41 @@ const modalBody = document.getElementById("modalBody");
 const modalFooter = document.getElementById("modalFooter");
 const modalCloseButton = document.getElementById("modalCloseButton");
 
-export function openModal({ title, body, footer }) {
+export function openModal({ title, body, footer, startMaximized }) {
   modalTitle.textContent = title || "";
   modalBody.innerHTML = "";
   modalFooter.innerHTML = "";
   const modalDialog = modalBackdrop ? modalBackdrop.querySelector(".modal") : null;
-  if (modalDialog) modalDialog.classList.remove("modal--maximized");
+  if (modalDialog) {
+    modalDialog.classList.remove("modal--maximized");
+    if (startMaximized) modalDialog.classList.add("modal--maximized");
+  }
+  const maxBtn = document.getElementById("modalMaximizeButton");
+  if (maxBtn) {
+    const isMax = modalDialog && modalDialog.classList.contains("modal--maximized");
+    maxBtn.setAttribute("aria-label", isMax ? "Restore" : "Maximize");
+    const iconMax = maxBtn.querySelector(".modal-icon-maximize");
+    const iconRestore = maxBtn.querySelector(".modal-icon-restore");
+    if (iconMax) iconMax.hidden = isMax;
+    if (iconRestore) iconRestore.hidden = !isMax;
+  }
   if (body) modalBody.appendChild(body);
   if (footer) modalFooter.appendChild(footer);
   modalBackdrop.hidden = false;
+}
+
+function toggleModalMaximized() {
+  const modalDialog = modalBackdrop ? modalBackdrop.querySelector(".modal") : null;
+  if (!modalDialog) return;
+  const maxBtn = document.getElementById("modalMaximizeButton");
+  const isMax = modalDialog.classList.toggle("modal--maximized");
+  if (maxBtn) {
+    maxBtn.setAttribute("aria-label", isMax ? "Restore" : "Maximize");
+    const iconMax = maxBtn.querySelector(".modal-icon-maximize");
+    const iconRestore = maxBtn.querySelector(".modal-icon-restore");
+    if (iconMax) iconMax.hidden = isMax;
+    if (iconRestore) iconRestore.hidden = !isMax;
+  }
 }
 
 export function closeModal() {
@@ -23,6 +49,14 @@ if (modalCloseButton) {
   modalCloseButton.addEventListener("click", (e) => {
     e.preventDefault();
     closeModal();
+  });
+}
+
+const modalMaximizeButton = document.getElementById("modalMaximizeButton");
+if (modalMaximizeButton) {
+  modalMaximizeButton.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleModalMaximized();
   });
 }
 
@@ -40,57 +74,4 @@ document.addEventListener("keydown", (e) => {
     closeModal();
   }
 });
-
-// --- Confirmation dialog (app-styled) ---
-const confirmBackdrop = document.getElementById("confirmDialogBackdrop");
-const confirmTitleEl = document.getElementById("confirmDialogTitle");
-const confirmMessageEl = document.getElementById("confirmDialogMessage");
-const confirmCancelBtn = document.getElementById("confirmDialogCancel");
-const confirmConfirmBtn = document.getElementById("confirmDialogConfirm");
-
-/**
- * Show a confirmation dialog matching application style.
- * @param {Object} opts
- * @param {string} opts.title - Dialog title
- * @param {string} opts.message - Body message (HTML is escaped; use plain text)
- * @param {string} [opts.confirmLabel="Confirm"]
- * @param {string} [opts.cancelLabel="Cancel"]
- * @param {boolean} [opts.danger=false] - Use danger style for confirm button (e.g. delete)
- * @returns {Promise<boolean>} - true if user clicked Confirm, false if Cancel/backdrop/Escape
- */
-export function confirmDialog({ title = "Confirm", message = "", confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false }) {
-  if (!confirmBackdrop || !confirmTitleEl || !confirmMessageEl || !confirmCancelBtn || !confirmConfirmBtn) {
-    return Promise.resolve(false);
-  }
-  confirmTitleEl.textContent = title;
-  confirmMessageEl.textContent = message;
-  confirmCancelBtn.textContent = cancelLabel;
-  confirmConfirmBtn.textContent = confirmLabel;
-  confirmConfirmBtn.classList.toggle("confirm-dialog__btn--danger", danger);
-
-  confirmBackdrop.hidden = false;
-  confirmBackdrop.setAttribute("aria-hidden", "false");
-
-  return new Promise((resolve) => {
-    const onEscape = (e) => {
-      if (e.key === "Escape") finish(false);
-    };
-    const onBackdrop = (e) => {
-      if (e.target === confirmBackdrop) finish(false);
-    };
-
-    const finish = (result) => {
-      confirmBackdrop.hidden = true;
-      confirmBackdrop.setAttribute("aria-hidden", "true");
-      document.removeEventListener("keydown", onEscape);
-      confirmBackdrop.removeEventListener("click", onBackdrop);
-      resolve(result);
-    };
-
-    document.addEventListener("keydown", onEscape);
-    confirmBackdrop.addEventListener("click", onBackdrop);
-    confirmConfirmBtn.addEventListener("click", () => finish(true), { once: true });
-    confirmCancelBtn.addEventListener("click", () => finish(false), { once: true });
-  });
-}
 
