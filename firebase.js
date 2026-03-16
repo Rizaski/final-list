@@ -55,6 +55,7 @@ export const firebaseInitPromise = (async () => {
     // Firestore-backed collections for core data (default to no-op so callers can always call these safely)
     let getAllVotersFs = async () => [];
     let setVoterFs = async () => {};
+    let setVoterVotedAtFs = async () => {};
     let deleteVoterFs = async () => {};
     let onVotersSnapshotFs = () => noopUnsubscribe;
 
@@ -166,6 +167,12 @@ export const firebaseInitPromise = (async () => {
         if (!voter || !voter.id) return;
         const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voter.id));
         await firestoreMod.setDoc(ref, voter, { merge: true });
+      };
+
+      setVoterVotedAtFs = async (voterId, timeMarked) => {
+        if (!voterId) return;
+        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        await firestoreMod.setDoc(ref, { votedAt: timeMarked || new Date().toISOString() }, { merge: true });
       };
 
       deleteVoterFs = async (id) => {
@@ -399,6 +406,7 @@ export const firebaseInitPromise = (async () => {
       // Firestore-backed core collections
       getAllVotersFs,
       setVoterFs,
+      setVoterVotedAtFs,
       deleteVoterFs,
       onVotersSnapshotFs,
       getAllAgentsFs,

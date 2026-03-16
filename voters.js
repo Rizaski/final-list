@@ -1,6 +1,6 @@
 import { openModal, closeModal } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
-import { getVotedTimeMarked } from "./zeroDay.js";
+import { getVotedTimeMarked, mergeVotedAtFromVoters } from "./zeroDay.js";
 import {
   getLists,
   createList,
@@ -241,7 +241,7 @@ function renderVotersTable() {
     const photoCell = photoSrc
       ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
-    const timeMarked = getVotedTimeMarked(voter.id);
+    const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
     const votedCell = timeMarked
       ? (() => {
           const d = new Date(timeMarked);
@@ -462,7 +462,7 @@ function renderVoterDetails(voter) {
           <div>
             <div class="detail-item-label">Marked voted</div>
             <div class="detail-item-value">${(function () {
-              const timeMarked = getVotedTimeMarked(voter.id);
+              const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
               if (timeMarked) {
                 const d = new Date(timeMarked);
                 const formatted = d.toLocaleString("en-MV", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -864,6 +864,7 @@ export async function initVotersModule() {
       if (Array.isArray(initial)) {
         currentVoters = initial;
         saveVotersToStorage();
+        mergeVotedAtFromVoters(initial);
       } else {
         loadVotersFromStorage();
       }
@@ -874,6 +875,7 @@ export async function initVotersModule() {
       unsubscribeVotersFs = api.onVotersSnapshotFs((items) => {
         if (Array.isArray(items)) {
           currentVoters = items;
+          mergeVotedAtFromVoters(items);
           renderVotersTable();
           const selected =
             selectedVoterId &&

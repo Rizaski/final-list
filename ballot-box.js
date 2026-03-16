@@ -34,7 +34,10 @@ async function main() {
           remoteMonitor,
           remoteVotedEntries,
           monitoringDisabled,
-          onSaveVoted: monitoringDisabled ? undefined : (t, voterId, timeMarked) => api.setVotedForMonitor(t, voterId, timeMarked),
+          onSaveVoted: monitoringDisabled ? undefined : async (t, voterId, timeMarked) => {
+            await api.setVotedForMonitor(t, voterId, timeMarked);
+            if (api.setVoterVotedAtFs) await api.setVoterVotedAtFs(voterId, timeMarked);
+          },
           onRefreshVoted: async () => {
             const entries = await api.getVotedForMonitor(token);
             remoteVotedEntries.length = 0;

@@ -160,6 +160,23 @@ export function getVotedTimeMarked(voterId) {
   return (entry && entry.timeMarked) || null;
 }
 
+/** Merge votedAt from Firestore voter docs into zeroDayVotedEntries so Vote Marking and reports stay in sync. */
+export function mergeVotedAtFromVoters(votersArray) {
+  if (!Array.isArray(votersArray) || votersArray.length === 0) return;
+  loadVotedEntries();
+  const existingById = new Map(zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked]));
+  for (const v of votersArray) {
+    const votedAt = v && (v.votedAt || v.votedTimeMarked);
+    if (!votedAt || !v.id) continue;
+    const key = String(v.id);
+    const existing = existingById.get(key);
+    if (!existing || (votedAt > (existing || ""))) existingById.set(key, votedAt);
+  }
+  zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({ voterId, timeMarked: timeMarked || "" }));
+  saveVotedEntries();
+  notifyVotedEntriesUpdated();
+}
+
 function generateShareToken() {
   return "zd-" + Math.random().toString(36).slice(2, 12) + "-" + Date.now().toString(36);
 }
@@ -1093,18 +1110,23 @@ function openMarkVotedModal() {
     const timeMarked = timeVal ? new Date(timeVal).toISOString() : new Date().toISOString();
     zeroDayVotedEntries.push({ voterId, timeMarked });
     saveVotedEntries();
-    // Write to Firestore so ballot box link and other devices see the update
+    // Write to Firestore so ballot box link and other devices see the update; sync to voter doc
     try {
       const api = await firebaseInitPromise;
-      if (api.ready && api.setVotedForMonitor) {
-        const voter = voters.find((v) => sameVoterId(v.id, voterId));
-        const boxKey = voter
-          ? ((voter.ballotBox || voter.island || "").trim() || "Unassigned")
-          : "";
-        if (boxKey) {
-          const monitor = getOrEnsureMonitorForBallotBox(boxKey);
-          if (monitor?.shareToken) await api.setVotedForMonitor(monitor.shareToken, voterId, timeMarked);
+      const voter = voters.find((v) => sameVoterId(v.id, voterId));
+      if (api.ready) {
+        if (api.setVotedForMonitor) {
+          const boxKey = voter
+            ? ((voter.ballotBox || voter.island || "").trim() || "Unassigned")
+            : "";
+          if (boxKey) {
+            const monitor = getOrEnsureMonitorForBallotBox(boxKey);
+            if (monitor?.shareToken) await api.setVotedForMonitor(monitor.shareToken, voterId, timeMarked);
+          }
         }
+        // Sync voted status to voter document so Voters list and reports stay in sync
+        if (voter && api.setVoterFs) await api.setVoterFs({ ...voter, votedAt: timeMarked });
+        else if (api.setVoterVotedAtFs) await api.setVoterVotedAtFs(voterId, timeMarked);
       }
     } catch (_) {}
     renderZeroDayVoteTable();
