@@ -932,9 +932,9 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
 
 function buildTableFromDisplayList(displayList, options = {}) {
   const includeTimeVoted = !!options.includeTimeVoted;
-  const selectable = !!options.selectable;
+  const showUnmarkAction = !!options.showUnmarkAction;
   const columns = [
-    ...(selectable ? [""] : []),
+    "Image",
     "Seq",
     "Name",
     "ID Number",
@@ -945,6 +945,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
     "Agent",
   ];
   if (includeTimeVoted) columns.push("Time voted");
+  if (showUnmarkAction) columns.push("Actions");
   const colCount = columns.length;
 
   const wrap = document.createElement("div");
@@ -954,13 +955,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
   const thead = document.createElement("thead");
   thead.innerHTML =
     "<tr>" +
-    columns
-      .map((c) =>
-        c
-          ? `<th>${escapeHtml(c)}</th>`
-          : '<th style="width:1%;"><input type="checkbox" id="zdSelectAllVoted"></th>'
-      )
-      .join("") +
+    columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("") +
     "</tr>";
   table.appendChild(thead);
   const tbody = document.createElement("tbody");
@@ -980,8 +975,28 @@ function buildTableFromDisplayList(displayList, options = {}) {
       const v = item.voter;
       const pledgeLabel = getPledgeLabel(v.pledgeStatus);
       const agent = getAgentForVoter(v.id);
+      const rawId = (v.nationalId || v.id || "").toString().trim().replace(/\s+/g, "");
+      const photoSrc = rawId ? "photos/" + rawId + ".jpg" : "";
+      const imageCell = photoSrc
+        ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(
+            photoSrc
+          )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(
+            (v.fullName || v.id || "?")
+              .toString()
+              .split(/\s+/)
+              .map((part) => part[0]?.toUpperCase() || "")
+              .join("") || "?"
+          )}</div></div>`
+        : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(
+            (v.fullName || v.id || "?")
+              .toString()
+              .split(/\s+/)
+              .map((part) => part[0]?.toUpperCase() || "")
+              .join("") || "?"
+          )}</div></div>`;
+
       const row = [
-        ...(selectable ? [`<input type="checkbox" data-voter-id="${escapeHtml(String(v.id))}">`] : []),
+        imageCell,
         v.sequence != null ? v.sequence : "",
         v.fullName != null ? v.fullName : "",
         v.nationalId != null ? v.nationalId : (v.id != null ? v.id : ""),
@@ -992,26 +1007,29 @@ function buildTableFromDisplayList(displayList, options = {}) {
         agent,
       ];
       if (includeTimeVoted) row.push(formatDateTime(v._timeMarked));
+      if (showUnmarkAction) {
+        row.push(
+          `<button type="button" class="ghost-button ghost-button--small" data-unmark-voted="${escapeHtml(
+            String(v.id)
+          )}">Mark not voted</button>`
+        );
+      }
       const tr = document.createElement("tr");
-      tr.innerHTML = row
-        .map((cell) => `<td>${escapeHtml(String(cell))}</td>`)
-        .join("");
+      const [imageHtml, ...rest] = row;
+      tr.innerHTML =
+        `<td>${imageHtml}</td>` +
+        rest
+          .map((cell) =>
+            typeof cell === "string" && cell.startsWith("<button")
+              ? `<td>${cell}</td>`
+              : `<td>${escapeHtml(String(cell))}</td>`
+          )
+          .join("");
       tbody.appendChild(tr);
     });
   }
   table.appendChild(tbody);
   wrap.appendChild(table);
-  if (selectable) {
-    const selectAll = wrap.querySelector("#zdSelectAllVoted");
-    if (selectAll) {
-      selectAll.addEventListener("change", () => {
-        const checkboxes = wrap.querySelectorAll('tbody input[type="checkbox"][data-voter-id]');
-        checkboxes.forEach((cb) => {
-          cb.checked = selectAll.checked;
-        });
-      });
-    }
-  }
   return wrap;
 }
 
@@ -1065,13 +1083,6 @@ function openBoxVoterListModal(boxKey, kind) {
           <option value="agent">Agent</option>
         </select>
       </div>
-      ${
-        kind === "voted"
-          ? `<div class="field-group field-group--inline">
-               <button type="button" class="ghost-button ghost-button--danger" id="zdUnmarkVotedButton">Mark selected as not voted</button>
-             </div>`
-          : ""
-      }
     </div>
   `;
 
@@ -1121,7 +1132,10 @@ function openBoxVoterListModal(boxKey, kind) {
     const searchQuery = (body.querySelector("#zdModalListSearch") || {}).value || "";
     let list = applySearchFilter(voters, searchQuery);
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
-    const newTable = buildTableFromDisplayList(displayList, { includeTimeVoted, selectable: kind === "voted" });
+    const newTable = buildTableFromDisplayList(displayList, {
+      includeTimeVoted,
+      showUnmarkAction: kind === "voted",
+    });
     tableWrap.innerHTML = "";
     tableWrap.appendChild(newTable.firstElementChild);
   }
@@ -1137,30 +1151,27 @@ function openBoxVoterListModal(boxKey, kind) {
   if (searchEl) searchEl.addEventListener("input", render);
 
   if (kind === "voted") {
-    listToolbar.querySelector("#zdUnmarkVotedButton")?.addEventListener("click", async () => {
-      const table = tableWrap.querySelector("table");
-      if (!table) return;
-      const checkboxes = table.querySelectorAll('tbody input[type="checkbox"][data-voter-id]:checked');
-      if (!checkboxes.length) return;
+    tableWrap.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-unmark-voted]");
+      if (!btn) return;
+      const voterId = btn.getAttribute("data-unmark-voted");
+      if (!voterId) return;
       if (
         !confirm(
-          `Mark ${checkboxes.length} selected voters as not voted for ballot box ${boxKey}? This will remove their voted status from Zero Day and the voter database.`
+          `Mark this voter as not voted for ballot box ${boxKey}? This will remove their voted status from Zero Day and the voter database.`
         )
       ) {
         return;
       }
-      const voterIds = Array.from(checkboxes).map((el) => el.getAttribute("data-voter-id"));
-      const idSet = new Set(voterIds.map(String));
-      // Remove from local zeroDayVotedEntries
-      zeroDayVotedEntries = zeroDayVotedEntries.filter((e) => !idSet.has(String(e.voterId)));
+      const key = String(voterId);
+      zeroDayVotedEntries = zeroDayVotedEntries.filter((e) => String(e.voterId) !== key);
       saveVotedEntries();
       notifyVotedEntriesUpdated();
-      // Clear votedAt in voter documents
       try {
         const api = await firebaseInitPromise;
         if (api.ready && api.setVoterFs) {
           const all = votersContext ? votersContext.getAllVoters() : [];
-          const toUpdate = all.filter((v) => idSet.has(String(v.id)));
+          const toUpdate = all.filter((v) => String(v.id) === key || String(v.nationalId) === key);
           await Promise.all(
             toUpdate.map((v) =>
               api.setVoterFs({
@@ -1171,7 +1182,6 @@ function openBoxVoterListModal(boxKey, kind) {
           );
         }
       } catch (_) {}
-      // Re-render modal and main Zero Day view
       renderZeroDayVoteTable();
       render();
     });
