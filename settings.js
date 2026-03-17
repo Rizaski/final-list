@@ -91,6 +91,7 @@ const candidatesPaginationEl = document.getElementById("candidatesPagination");
 const votersUploadFileInput = document.getElementById("votersUploadFile");
 const importVotersButton = document.getElementById("importVotersButton");
 const votersUploadFileNameEl = document.getElementById("votersUploadFileName");
+const exportVotersCsvButton = document.getElementById("exportVotersCsvButton");
 const syncVotersToFirebaseButton = document.getElementById("syncVotersToFirebaseButton");
 const deleteAllVotersButton = document.getElementById("deleteAllVotersButton");
 
@@ -720,6 +721,14 @@ export function initSettingsModule() {
     return out;
   }
 
+  function csvEscape(val) {
+    const s = String(val == null ? "" : val);
+    if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
   importVotersButton.addEventListener("click", () => {
     const file = votersUploadFileInput.files?.[0];
     if (!file) return;
@@ -776,6 +785,105 @@ export function initSettingsModule() {
     };
     reader.readAsText(file);
   });
+
+  if (exportVotersCsvButton) {
+    exportVotersCsvButton.addEventListener("click", async () => {
+      try {
+        // Prefer live voters from Firebase so we capture latest updates (votedAt, pledge, notes, etc.)
+        let voters = [];
+        try {
+          const api = await firebaseInitPromise;
+          if (api.ready && api.getAllVotersFs) {
+            voters = await api.getAllVotersFs();
+          }
+        } catch (_) {}
+        if (!Array.isArray(voters) || voters.length === 0) {
+          // Fallback to local cache if Firebase is not ready.
+          try {
+            const raw = localStorage.getItem("voters-data");
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) voters = parsed;
+            }
+          } catch (_) {}
+        }
+        if (!Array.isArray(voters) || voters.length === 0) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "No voters to export",
+              meta: "There are no voters in this campaign to download.",
+            });
+          }
+          return;
+        }
+
+        const headers = [
+          "Sequence",
+          "Ballot Box",
+          "ID Number",
+          "Name",
+          "Permanent Address",
+          "Date of Birth",
+          "Age",
+          "Pledge",
+          "Gender",
+          "Island",
+          "Current Location",
+          "Phone",
+          "Notes",
+          "Support status",
+          "Met?",
+          "Persuadable?",
+          "Date pledged",
+          "Voted at",
+        ];
+        const lines = [headers.map(csvEscape).join(",")];
+        voters.forEach((v) => {
+          const row = [
+            v.sequence ?? "",
+            v.ballotBox || "",
+            v.nationalId || "",
+            v.fullName || v.name || "",
+            v.permanentAddress || "",
+            v.dateOfBirth || "",
+            v.age ?? "",
+            v.pledgeStatus || "",
+            v.gender || "",
+            v.island || "",
+            v.currentLocation || "",
+            v.phone || "",
+            v.notes || v.callComments || "",
+            v.supportStatus || "",
+            v.metStatus || "",
+            v.persuadable || "",
+            v.pledgedAt || "",
+            v.votedAt || "",
+          ];
+          lines.push(row.map(csvEscape).join(","));
+        });
+        const csv = lines.join("\r\n");
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `voters-export-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Voters exported",
+            meta: `${voters.length.toLocaleString("en-MV")} voters as CSV`,
+          });
+        }
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Could not export voters",
+            meta: err?.message || String(err),
+          });
+        }
+      }
+    });
+  }
 
   if (syncVotersToFirebaseButton) {
     syncVotersToFirebaseButton.addEventListener("click", async () => {

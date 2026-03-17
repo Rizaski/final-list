@@ -28,8 +28,10 @@ const TRIP_STATUSES = ["Scheduled", "In progress", "Completed"];
 const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
 const VOTED_STORAGE_KEY = "zero-day-voted";
+const TRIPS_STORAGE_KEY = "zero-day-trips";
 
 let zeroDayTrips = [];
+let transportTripsUnsubscribe = null;
 let zeroDayVotedEntries = []; // { voterId, timeMarked }
 let zeroDayMonitors = []; // { id, name, mobile, ballotBox, voterIds: [], shareToken }
 let votersContext = null;
@@ -41,6 +43,36 @@ const votedByMonitor = {}; // token -> [{ voterId, timeMarked }] from real-time 
 let zeroDaySyncInProgress = false;
 let zeroDaySyncIntervalId = null;
 const ZERO_DAY_SYNC_INTERVAL_MS = 5000;
+
+function loadTrips() {
+  try {
+    const raw = localStorage.getItem(TRIPS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) zeroDayTrips = parsed.map(normalizeTrip);
+    }
+  } catch (_) {}
+}
+
+function saveTrips() {
+  try {
+    localStorage.setItem(TRIPS_STORAGE_KEY, JSON.stringify(zeroDayTrips));
+  } catch (_) {}
+}
+
+function normalizeTrip(t) {
+  return {
+    id: t.id,
+    tripType: t.tripType || "flight",
+    route: t.route || "",
+    driver: t.driver || "",
+    vehicle: t.vehicle || "",
+    pickupTime: t.pickupTime || "",
+    status: t.status || "Scheduled",
+    voterCount: t.voterCount != null ? t.voterCount : (Array.isArray(t.voterIds) ? t.voterIds.length : 0),
+    voterIds: Array.isArray(t.voterIds) ? t.voterIds : [],
+  };
+}
 
 function loadMonitors() {
   try {
@@ -243,9 +275,20 @@ function initZeroDayTabs() {
 }
 
 function getFilteredTransportTrips() {
-  if (transportViewFilter === "flight") return zeroDayTrips.filter((t) => t.tripType === "flight");
-  if (transportViewFilter === "speedboat") return zeroDayTrips.filter((t) => t.tripType === "speedboat");
-  return zeroDayTrips;
+  let list = zeroDayTrips;
+  if (transportViewFilter === "flight") list = list.filter((t) => t.tripType === "flight");
+  else if (transportViewFilter === "speedboat") list = list.filter((t) => t.tripType === "speedboat");
+  return [...list].sort((a, b) => {
+    const ta = a.pickupTime ? new Date(a.pickupTime).getTime() : 0;
+    const tb = b.pickupTime ? new Date(b.pickupTime).getTime() : 0;
+    return ta - tb;
+  });
+}
+
+function tripStatusBadgeClass(status) {
+  if (status === "Completed") return "badge badge--success";
+  if (status === "In progress") return "badge badge--warning";
+  return "badge badge--secondary";
 }
 
 function getEmptyTransportMessage() {
@@ -269,6 +312,8 @@ function renderZeroDayTripsTable() {
   trips.forEach((trip) => {
     const tripTypeEntry = TRIP_TYPES.find((t) => t.value === trip.tripType);
     const typeLabel = (tripTypeEntry && tripTypeEntry.label) != null ? tripTypeEntry.label : (trip.tripType != null ? trip.tripType : "–");
+    const count = trip.voterCount != null ? trip.voterCount : (Array.isArray(trip.voterIds) ? trip.voterIds.length : 0);
+    const statusClass = tripStatusBadgeClass(trip.status);
     const tr = document.createElement("tr");
     tr.dataset.tripId = String(trip.id);
     tr.innerHTML = `
@@ -277,9 +322,12 @@ function renderZeroDayTripsTable() {
       <td>${escapeHtml(trip.vehicle)}</td>
       <td>${escapeHtml(trip.driver)}</td>
       <td>${formatDateTime(trip.pickupTime)}</td>
-      <td>${trip.voterCount != null ? trip.voterCount : 0}</td>
-      <td><span class="badge badge--unknown">${escapeHtml(trip.status)}</span></td>
-      <td style="text-align:right;">
+      <td>${count}</td>
+      <td><span class="${escapeHtml(statusClass)}">${escapeHtml(trip.status)}</span></td>
+      <td style="text-align:right; white-space:nowrap;">
+        <button class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
+        <button class="ghost-button ghost-button--small" data-assign-trip="${trip.id}" title="Assign voters">Assign</button>
+        <button class="ghost-button ghost-button--small" data-duplicate-trip="${trip.id}" title="Duplicate trip">Duplicate</button>
         <button class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
         <button class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
       </td>
@@ -351,7 +399,7 @@ function openTripForm(existing, defaultType) {
   footer.appendChild(cancelBtn);
   footer.appendChild(saveBtn);
 
-  saveBtn.addEventListener("click", () => {
+  saveBtn.addEventListener("click", async () => {
     const type = body.querySelector("#zdTripType").value;
     const route = body.querySelector("#zdTripRoute").value.trim();
     const driver = body.querySelector("#zdTripDriver").value.trim();
@@ -369,7 +417,7 @@ function openTripForm(existing, defaultType) {
     } else {
       const nextId =
         zeroDayTrips.reduce((max, t) => Math.max(max, t.id), 0) + 1;
-      zeroDayTrips.push({
+      zeroDayTrips.push(normalizeTrip({
         id: nextId,
         tripType: type,
         route,
@@ -378,8 +426,17 @@ function openTripForm(existing, defaultType) {
         pickupTime: pickupTime ? new Date(pickupTime).toISOString() : "",
         status: status || "Scheduled",
         voterCount: 0,
-      });
+        voterIds: [],
+      }));
     }
+    saveTrips();
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setTransportTripFs) {
+        const t = zeroDayTrips.find((x) => x.id === (isEdit ? existing.id : zeroDayTrips[zeroDayTrips.length - 1].id));
+        if (t) await api.setTransportTripFs(t);
+      }
+    } catch (_) {}
     renderZeroDayTripsTable();
     closeModal();
   });
@@ -395,7 +452,135 @@ function deleteTrip(id) {
   const idx = zeroDayTrips.findIndex((t) => t.id === id);
   if (idx === -1) return;
   zeroDayTrips.splice(idx, 1);
+  saveTrips();
+  firebaseInitPromise.then((api) => {
+    if (api.ready && api.deleteTransportTripFs) return api.deleteTransportTripFs(id);
+  }).catch(() => {});
   renderZeroDayTripsTable();
+}
+
+function setTripStatus(tripId, status) {
+  const trip = zeroDayTrips.find((t) => t.id === tripId);
+  if (!trip || !TRIP_STATUSES.includes(status)) return;
+  trip.status = status;
+  saveTrips();
+  firebaseInitPromise.then((api) => {
+    if (api.ready && api.setTransportTripFs) return api.setTransportTripFs(trip);
+  }).catch(() => {});
+  renderZeroDayTripsTable();
+}
+
+function openTripStatusModal(tripId) {
+  const trip = zeroDayTrips.find((t) => t.id === tripId);
+  if (!trip) return;
+  const body = document.createElement("div");
+  body.style.display = "flex";
+  body.style.flexWrap = "wrap";
+  body.style.gap = "8px";
+  TRIP_STATUSES.forEach((status) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = trip.status === status ? "primary-button" : "ghost-button";
+    btn.textContent = status;
+    btn.addEventListener("click", () => {
+      setTripStatus(tripId, status);
+      closeModal();
+    });
+    body.appendChild(btn);
+  });
+  openModal({ title: `Set status: ${escapeHtml(trip.route)}`, body });
+}
+
+function duplicateTrip(sourceTrip) {
+  const nextId = zeroDayTrips.reduce((max, t) => Math.max(max, t.id), 0) + 1;
+  const copy = normalizeTrip({
+    id: nextId,
+    tripType: sourceTrip.tripType,
+    route: sourceTrip.route,
+    driver: sourceTrip.driver,
+    vehicle: sourceTrip.vehicle,
+    pickupTime: new Date(Date.now() + 3600000).toISOString(),
+    status: "Scheduled",
+    voterCount: 0,
+    voterIds: [],
+  });
+  zeroDayTrips.push(copy);
+  saveTrips();
+  firebaseInitPromise.then((api) => {
+    if (api.ready && api.setTransportTripFs) return api.setTransportTripFs(copy);
+  }).catch(() => {});
+  renderZeroDayTripsTable();
+  openTripForm(copy);
+}
+
+function openAssignVotersModal(trip) {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const assignedSet = new Set((trip.voterIds || []).map(String));
+  const body = document.createElement("div");
+  body.className = "form-group";
+  body.innerHTML = `<p class="helper-text" style="margin-bottom:8px">Select voters to assign to <strong>${escapeHtml(trip.route)}</strong>. Assigned count will update the trip.</p>`;
+  const list = document.createElement("div");
+  list.style.maxHeight = "320px";
+  list.style.overflowY = "auto";
+  list.style.border = "1px solid var(--color-border, #e5e7eb)";
+  list.style.borderRadius = "6px";
+  list.style.padding = "8px";
+  const boxes = getUniqueBallotBoxes();
+  boxes.forEach((box) => {
+    const inBox = voters.filter((v) => (v.ballotBox || "").trim() === box);
+    if (!inBox.length) return;
+    const heading = document.createElement("div");
+    heading.style.fontWeight = "600";
+    heading.style.marginTop = "8px";
+    heading.style.marginBottom = "4px";
+    heading.textContent = box;
+    list.appendChild(heading);
+    inBox.forEach((v) => {
+      const label = document.createElement("label");
+      label.style.display = "flex";
+      label.style.alignItems = "center";
+      label.style.gap = "8px";
+      label.style.padding = "4px 0";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = assignedSet.has(String(v.id));
+      cb.dataset.voterId = String(v.id);
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(`${v.fullName || v.id} ${(v.nationalId || "").slice(0, 12)}`));
+      list.appendChild(label);
+    });
+  });
+  if (!boxes.length) {
+    list.innerHTML = "<p class=\"text-muted\">No voters with ballot box. Import voters first.</p>";
+  }
+  body.appendChild(list);
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Save assignment";
+  saveBtn.addEventListener("click", async () => {
+    const checked = list.querySelectorAll("input[type=checkbox]:checked");
+    const voterIds = Array.from(checked).map((el) => el.dataset.voterId);
+    trip.voterIds = voterIds;
+    trip.voterCount = voterIds.length;
+    saveTrips();
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(trip);
+    } catch (_) {}
+    renderZeroDayTripsTable();
+    closeModal();
+  });
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+  openModal({ title: "Assign voters to trip", body, footer });
 }
 
 function getUniqueBallotBoxes() {
@@ -611,6 +796,7 @@ function getVoteBoxSummaries() {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const filter = zeroDayVoteFilter?.value || "all";
   const query = (zeroDayVoteSearch?.value || "").toLowerCase().trim();
+  // Treat a voter as voted if they are in zeroDayVotedEntries OR have votedAt on their voter record
   const votedSet = new Set(zeroDayVotedEntries.map((e) => String(e.voterId)));
 
   const boxes = new Map();
@@ -621,7 +807,9 @@ function getVoteBoxSummaries() {
     }
     const entry = boxes.get(key);
     entry.total += 1;
-    if (votedSet.has(String(v.id))) entry.voted += 1;
+    if (votedSet.has(String(v.id)) || (v.votedAt && String(v.votedAt).trim() !== "")) {
+      entry.voted += 1;
+    }
   });
 
   let list = Array.from(boxes.values());
@@ -653,8 +841,10 @@ function getVotersByBoxSplitByVoted(boxKey) {
   const voted = [];
   const notYet = [];
   boxVoters.forEach((v) => {
-    const timeMarked = votedSet.get(String(v.id));
-    if (timeMarked != null && timeMarked !== "") {
+    const fromEntries = votedSet.get(String(v.id)) || "";
+    const fromVoter = v.votedAt || "";
+    const timeMarked = fromVoter || fromEntries;
+    if (timeMarked != null && String(timeMarked).trim() !== "") {
       voted.push({ ...v, _timeMarked: timeMarked });
     } else {
       notYet.push(v);
@@ -742,7 +932,9 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
 
 function buildTableFromDisplayList(displayList, options = {}) {
   const includeTimeVoted = !!options.includeTimeVoted;
+  const selectable = !!options.selectable;
   const columns = [
+    ...(selectable ? [""] : []),
     "Seq",
     "Name",
     "ID Number",
@@ -762,7 +954,13 @@ function buildTableFromDisplayList(displayList, options = {}) {
   const thead = document.createElement("thead");
   thead.innerHTML =
     "<tr>" +
-    columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("") +
+    columns
+      .map((c) =>
+        c
+          ? `<th>${escapeHtml(c)}</th>`
+          : '<th style="width:1%;"><input type="checkbox" id="zdSelectAllVoted"></th>'
+      )
+      .join("") +
     "</tr>";
   table.appendChild(thead);
   const tbody = document.createElement("tbody");
@@ -783,6 +981,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
       const pledgeLabel = getPledgeLabel(v.pledgeStatus);
       const agent = getAgentForVoter(v.id);
       const row = [
+        ...(selectable ? [`<input type="checkbox" data-voter-id="${escapeHtml(String(v.id))}">`] : []),
         v.sequence != null ? v.sequence : "",
         v.fullName != null ? v.fullName : "",
         v.nationalId != null ? v.nationalId : (v.id != null ? v.id : ""),
@@ -802,6 +1001,17 @@ function buildTableFromDisplayList(displayList, options = {}) {
   }
   table.appendChild(tbody);
   wrap.appendChild(table);
+  if (selectable) {
+    const selectAll = wrap.querySelector("#zdSelectAllVoted");
+    if (selectAll) {
+      selectAll.addEventListener("change", () => {
+        const checkboxes = wrap.querySelectorAll('tbody input[type="checkbox"][data-voter-id]');
+        checkboxes.forEach((cb) => {
+          cb.checked = selectAll.checked;
+        });
+      });
+    }
+  }
   return wrap;
 }
 
@@ -855,6 +1065,13 @@ function openBoxVoterListModal(boxKey, kind) {
           <option value="agent">Agent</option>
         </select>
       </div>
+      ${
+        kind === "voted"
+          ? `<div class="field-group field-group--inline">
+               <button type="button" class="ghost-button ghost-button--danger" id="zdUnmarkVotedButton">Mark selected as not voted</button>
+             </div>`
+          : ""
+      }
     </div>
   `;
 
@@ -904,7 +1121,7 @@ function openBoxVoterListModal(boxKey, kind) {
     const searchQuery = (body.querySelector("#zdModalListSearch") || {}).value || "";
     let list = applySearchFilter(voters, searchQuery);
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
-    const newTable = buildTableFromDisplayList(displayList, { includeTimeVoted });
+    const newTable = buildTableFromDisplayList(displayList, { includeTimeVoted, selectable: kind === "voted" });
     tableWrap.innerHTML = "";
     tableWrap.appendChild(newTable.firstElementChild);
   }
@@ -918,6 +1135,47 @@ function openBoxVoterListModal(boxKey, kind) {
   listToolbar.querySelector("#zdModalListGroupBy").addEventListener("change", render);
   const searchEl = listToolbar.querySelector("#zdModalListSearch");
   if (searchEl) searchEl.addEventListener("input", render);
+
+  if (kind === "voted") {
+    listToolbar.querySelector("#zdUnmarkVotedButton")?.addEventListener("click", async () => {
+      const table = tableWrap.querySelector("table");
+      if (!table) return;
+      const checkboxes = table.querySelectorAll('tbody input[type="checkbox"][data-voter-id]:checked');
+      if (!checkboxes.length) return;
+      if (
+        !confirm(
+          `Mark ${checkboxes.length} selected voters as not voted for ballot box ${boxKey}? This will remove their voted status from Zero Day and the voter database.`
+        )
+      ) {
+        return;
+      }
+      const voterIds = Array.from(checkboxes).map((el) => el.getAttribute("data-voter-id"));
+      const idSet = new Set(voterIds.map(String));
+      // Remove from local zeroDayVotedEntries
+      zeroDayVotedEntries = zeroDayVotedEntries.filter((e) => !idSet.has(String(e.voterId)));
+      saveVotedEntries();
+      notifyVotedEntriesUpdated();
+      // Clear votedAt in voter documents
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.setVoterFs) {
+          const all = votersContext ? votersContext.getAllVoters() : [];
+          const toUpdate = all.filter((v) => idSet.has(String(v.id)));
+          await Promise.all(
+            toUpdate.map((v) =>
+              api.setVoterFs({
+                ...v,
+                votedAt: "",
+              })
+            )
+          );
+        }
+      } catch (_) {}
+      // Re-render modal and main Zero Day view
+      renderZeroDayVoteTable();
+      render();
+    });
+  }
 
   render();
   openModal({ title, body });
@@ -1186,12 +1444,33 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   pledgeContextRef = options.pledgesContext || null;
   loadVotedEntries();
   loadMonitors();
+  loadTrips();
   initZeroDayTabs();
   bindTransportMenu();
   renderZeroDayTripsTable();
   renderZeroDayVoteTable();
   renderMonitorsTable();
   bindZeroDayToolbar();
+
+  firebaseInitPromise.then((api) => {
+    if (!api.ready || !api.getAllTransportTripsFs) return;
+    api.getAllTransportTripsFs().then((remote) => {
+      if (Array.isArray(remote) && remote.length > 0) {
+        zeroDayTrips = remote.map(normalizeTrip);
+        saveTrips();
+      }
+      renderZeroDayTripsTable();
+    }).catch(() => {});
+    if (api.onTransportTripsSnapshotFs) {
+      transportTripsUnsubscribe = api.onTransportTripsSnapshotFs((items) => {
+        if (Array.isArray(items)) {
+          zeroDayTrips = items.map(normalizeTrip);
+          saveTrips();
+          renderZeroDayTripsTable();
+        }
+      });
+    }
+  }).catch(() => {});
 
   if (zeroDayAddTripButton) {
     zeroDayAddTripButton.addEventListener("click", () => openTripForm(null));
@@ -1223,9 +1502,23 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   const transportPanel = document.getElementById("zero-day-tab-transport");
   if (transportPanel) {
     transportPanel.addEventListener("click", (e) => {
+      const statusBtn = e.target.closest("[data-trip-status]");
+      const assignBtn = e.target.closest("[data-assign-trip]");
+      const duplicateBtn = e.target.closest("[data-duplicate-trip]");
       const editBtn = e.target.closest("[data-edit-trip]");
       const deleteBtn = e.target.closest("[data-delete-trip]");
-      if (editBtn) {
+      if (statusBtn) {
+        const id = Number(statusBtn.getAttribute("data-trip-status"));
+        openTripStatusModal(id);
+      } else if (assignBtn) {
+        const id = Number(assignBtn.getAttribute("data-assign-trip"));
+        const trip = zeroDayTrips.find((t) => t.id === id);
+        if (trip) openAssignVotersModal(trip);
+      } else if (duplicateBtn) {
+        const id = Number(duplicateBtn.getAttribute("data-duplicate-trip"));
+        const trip = zeroDayTrips.find((t) => t.id === id);
+        if (trip) duplicateTrip(trip);
+      } else if (editBtn) {
         const id = Number(editBtn.getAttribute("data-edit-trip"));
         const trip = zeroDayTrips.find((t) => t.id === id);
         if (trip) openTripForm(trip);

@@ -60,6 +60,12 @@ service cloud.firestore {
       allow write: if signedIn() && sizeOk();
     }
 
+    // Zero Day transport trips (flights / speed boats)
+    match /transportTrips/{tripId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
+    }
+
     // Shared list view (candidate opens by link; doc id = share token)
     match /voterListShares/{token} {
       allow read: if true;

@@ -28,6 +28,7 @@ const VOTER_LISTS_COLLECTION = "voterLists";
 const VOTER_LIST_SHARES_COLLECTION = "voterListShares";
 const PLEDGED_REPORT_SHARES_COLLECTION = "pledgedReportShares";
 const EVENTS_COLLECTION = "events";
+const TRANSPORT_TRIPS_COLLECTION = "transportTrips";
 
 export const firebaseInitPromise = (async () => {
   try {
@@ -75,6 +76,11 @@ export const firebaseInitPromise = (async () => {
     let setEventFs = async () => {};
     let deleteEventFs = async () => {};
     let onEventsSnapshotFs = () => noopUnsubscribe;
+
+    let getAllTransportTripsFs = async () => [];
+    let setTransportTripFs = async () => {};
+    let deleteTransportTripFs = async () => {};
+    let onTransportTripsSnapshotFs = () => noopUnsubscribe;
 
     let getAllVoterListsFs = async () => [];
     let getVoterListFs = async () => null;
@@ -373,6 +379,38 @@ export const firebaseInitPromise = (async () => {
           handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
         });
       };
+
+      // Zero Day transport trips
+      const transportTripsColRef = firestoreMod.collection(db, TRANSPORT_TRIPS_COLLECTION);
+      getAllTransportTripsFs = async () => {
+        const snap = await firestoreMod.getDocs(transportTripsColRef);
+        return snap.docs.map((d) => {
+          const id = Number(d.id);
+          const data = d.data();
+          return { id: isNaN(id) ? d.id : id, ...data, voterIds: Array.isArray(data.voterIds) ? data.voterIds : [] };
+        });
+      };
+      setTransportTripFs = async (trip) => {
+        if (!trip || trip.id == null) return;
+        const ref = firestoreMod.doc(db, TRANSPORT_TRIPS_COLLECTION, String(trip.id));
+        const data = { tripType: trip.tripType, route: trip.route, driver: trip.driver || "", vehicle: trip.vehicle || "", pickupTime: trip.pickupTime || "", status: trip.status || "Scheduled", voterCount: trip.voterCount != null ? trip.voterCount : 0, voterIds: Array.isArray(trip.voterIds) ? trip.voterIds : [] };
+        await firestoreMod.setDoc(ref, data, { merge: true });
+      };
+      deleteTransportTripFs = async (tripId) => {
+        if (tripId == null) return;
+        const ref = firestoreMod.doc(db, TRANSPORT_TRIPS_COLLECTION, String(tripId));
+        await firestoreMod.deleteDoc(ref);
+      };
+      onTransportTripsSnapshotFs = (handler) => {
+        if (typeof handler !== "function") return noopUnsubscribe;
+        return firestoreMod.onSnapshot(transportTripsColRef, (snap) => {
+          handler(snap.docs.map((d) => {
+            const id = Number(d.id);
+            const data = d.data();
+            return { id: isNaN(id) ? d.id : id, ...data, voterIds: Array.isArray(data.voterIds) ? data.voterIds : [] };
+          }));
+        });
+      };
     } catch (fsErr) {
       // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
       console.error(
@@ -435,6 +473,10 @@ export const firebaseInitPromise = (async () => {
       setEventFs,
       deleteEventFs,
       onEventsSnapshotFs,
+      getAllTransportTripsFs,
+      setTransportTripFs,
+      deleteTransportTripFs,
+      onTransportTripsSnapshotFs,
     };
   } catch (err) {
     console.error(

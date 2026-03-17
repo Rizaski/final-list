@@ -2714,6 +2714,21 @@ body.list-workspace-page {
   color: #4b5563;
 }
 
+.badge--secondary {
+  background-color: #e0e7ff;
+  color: #3730a3;
+}
+
+.badge--warning {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.badge--success {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
 .pledge-pill {
   display: inline-flex;
   align-items: center;
