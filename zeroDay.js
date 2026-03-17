@@ -1034,13 +1034,10 @@ function buildTableFromDisplayList(displayList, options = {}) {
 }
 
 function openBoxVoterListModal(boxKey, kind) {
-  const { voted, notYet } = getVotersByBoxSplitByVoted(boxKey);
-  const voters = kind === "voted" ? voted : notYet;
   const includeTimeVoted = kind === "voted";
+  // Title will be kept generic; counts are reflected in the table itself.
   const title =
-    kind === "voted"
-      ? `Voted – ${boxKey} (${voters.length})`
-      : `Not yet voted – ${boxKey} (${voters.length})`;
+    kind === "voted" ? `Voted – ${boxKey}` : `Not yet voted – ${boxKey}`;
 
   const body = document.createElement("div");
   body.className = "modal-body-inner modal-body-inner--with-maximize";
@@ -1126,6 +1123,8 @@ function openBoxVoterListModal(boxKey, kind) {
   }
 
   function render() {
+    const { voted, notYet } = getVotersByBoxSplitByVoted(boxKey);
+    const voters = kind === "voted" ? voted : notYet;
     const filterPledge = (body.querySelector("#zdModalListFilter") || {}).value || "all";
     const sortBy = (body.querySelector("#zdModalListSort") || {}).value || "sequence";
     const groupBy = (body.querySelector("#zdModalListGroupBy") || {}).value || "none";
