@@ -44,6 +44,17 @@ let zeroDaySyncInProgress = false;
 let zeroDaySyncIntervalId = null;
 const ZERO_DAY_SYNC_INTERVAL_MS = 5000;
 
+/** Returns array of unique transport route names from Zero Day trips. */
+export function getAvailableTransportRoutes() {
+  loadTrips();
+  const routes = new Set();
+  zeroDayTrips.forEach((t) => {
+    const name = (t.route || "").trim();
+    if (name) routes.add(name);
+  });
+  return Array.from(routes).sort((a, b) => a.localeCompare(b, "en"));
+}
+
 function loadTrips() {
   try {
     const raw = localStorage.getItem(TRIPS_STORAGE_KEY);
@@ -190,6 +201,47 @@ export function getVotedTimeMarked(voterId) {
   loadVotedEntries();
   const entry = zeroDayVotedEntries.find((e) => String(e.voterId) === String(voterId));
   return (entry && entry.timeMarked) || null;
+}
+
+/** Clears voted status for a single voter across Zero Day local state, voter docs, and all monitor voted entries. */
+export async function clearVotedForVoter(voterId) {
+  const key = String(voterId);
+  loadVotedEntries();
+  zeroDayVotedEntries = zeroDayVotedEntries.filter(
+    (e) => String(e.voterId) !== key
+  );
+  saveVotedEntries();
+  notifyVotedEntriesUpdated();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setVoterFs) {
+      const all = votersContext ? votersContext.getAllVoters() : [];
+      const toUpdate = all.filter(
+        (v) => String(v.id) === key || String(v.nationalId) === key
+      );
+      await Promise.all(
+        toUpdate.map((v) =>
+          api.setVoterFs({
+            ...v,
+            votedAt: "",
+          })
+        )
+      );
+    }
+    if (api.ready && api.deleteVotedForMonitor) {
+      loadMonitors();
+      const tokenSet = new Set(
+        zeroDayMonitors
+          .map((m) => m && m.shareToken)
+          .filter((t) => typeof t === "string" && t.trim() !== "")
+      );
+      await Promise.all(
+        Array.from(tokenSet).map((token) =>
+          api.deleteVotedForMonitor(token, voterId)
+        )
+      );
+    }
+  } catch (_) {}
 }
 
 /** Merge votedAt from Firestore voter docs into zeroDayVotedEntries so Vote Marking and reports stay in sync. */
@@ -1080,6 +1132,15 @@ function openBoxVoterListModal(boxKey, kind) {
           <option value="agent">Agent</option>
         </select>
       </div>
+      ${
+        kind === "voted"
+          ? `<div class="field-group field-group--inline">
+               <button type="button" class="ghost-button ghost-button--danger" id="zdUnmarkAllVotedButton">
+                 Mark all not voted
+               </button>
+             </div>`
+          : ""
+      }
     </div>
   `;
 
@@ -1150,6 +1211,118 @@ function openBoxVoterListModal(boxKey, kind) {
   if (searchEl) searchEl.addEventListener("input", render);
 
   if (kind === "voted") {
+    // Bulk: mark all voters in this box as not voted (password protected)
+    listToolbar.querySelector("#zdUnmarkAllVotedButton")?.addEventListener("click", () => {
+      const { voted } = getVotersByBoxSplitByVoted(boxKey);
+      if (!voted.length) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "No voted voters",
+            meta: "There are no voted voters in this ballot box to mark as not voted.",
+          });
+        }
+        return;
+      }
+
+      const body = document.createElement("div");
+      body.className = "form-grid";
+      body.innerHTML = `
+        <div class="form-group">
+          <p class="helper-text" style="margin-bottom:8px;">
+            Mark <strong>${voted.length}</strong> voters in <strong>${escapeHtml(
+              boxKey
+            )}</strong> as <strong>Not voted</strong>. This will clear their voted status across the application.
+          </p>
+          <label for="zdUnmarkAllPassword">Password</label>
+          <input id="zdUnmarkAllPassword" type="password" class="input" autocomplete="off" placeholder="Enter password to confirm">
+          <p class="helper-text">This action cannot be undone.</p>
+        </div>
+      `;
+
+      const footer = document.createElement("div");
+      footer.className = "form-actions";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "ghost-button";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", () => closeModal());
+      const confirmBtn = document.createElement("button");
+      confirmBtn.type = "button";
+      confirmBtn.className = "primary-button primary-button--danger";
+      confirmBtn.textContent = "Mark all not voted";
+      confirmBtn.addEventListener("click", async () => {
+        const input = body.querySelector("#zdUnmarkAllPassword");
+        const password = (input && input.value) || "";
+        if (password !== "PNC@2026") {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Incorrect password",
+              meta: "Bulk mark not voted was cancelled.",
+            });
+          }
+          return;
+        }
+        const latest = getVotersByBoxSplitByVoted(boxKey).voted;
+        if (!latest.length) {
+          closeModal();
+          return;
+        }
+        const idSet = new Set(latest.map((v) => String(v.id)));
+        // Remove from local Zero Day voted entries
+        zeroDayVotedEntries = zeroDayVotedEntries.filter(
+          (e) => !idSet.has(String(e.voterId))
+        );
+        saveVotedEntries();
+        notifyVotedEntriesUpdated();
+        // Clear votedAt on voter docs in Firestore and delete monitor voted entries
+        try {
+          const api = await firebaseInitPromise;
+          if (api.ready && api.setVoterFs) {
+            const all = votersContext ? votersContext.getAllVoters() : [];
+            const toUpdate = all.filter(
+              (v) =>
+                idSet.has(String(v.id)) || idSet.has(String(v.nationalId))
+            );
+            await Promise.all(
+              toUpdate.map((v) =>
+                api.setVoterFs({
+                  ...v,
+                  votedAt: "",
+                })
+              )
+            );
+          }
+          // Also remove voted entries from monitors/{token}/voted in Firestore
+          if (api.ready && api.deleteVotedForMonitor) {
+            loadMonitors();
+            const monitor = zeroDayMonitors.find(
+              (m) => (m.ballotBox || "").trim() === boxKey
+            );
+            if (monitor && monitor.shareToken) {
+              const token = monitor.shareToken;
+              await Promise.all(
+                Array.from(idSet).map((id) =>
+                  api.deleteVotedForMonitor(token, id)
+                )
+              );
+            }
+          }
+        } catch (_) {}
+        renderZeroDayVoteTable();
+        render();
+        closeModal();
+      });
+      footer.appendChild(cancelBtn);
+      footer.appendChild(confirmBtn);
+
+      openModal({
+        title: "Mark all as not voted",
+        body,
+        footer,
+      });
+    });
+
+    // Row-level: mark a single voter as not voted
     tableWrap.addEventListener("click", async (e) => {
       const btn = e.target.closest("[data-unmark-voted]");
       if (!btn) return;
@@ -1162,25 +1335,7 @@ function openBoxVoterListModal(boxKey, kind) {
       ) {
         return;
       }
-      const key = String(voterId);
-      zeroDayVotedEntries = zeroDayVotedEntries.filter((e) => String(e.voterId) !== key);
-      saveVotedEntries();
-      notifyVotedEntriesUpdated();
-      try {
-        const api = await firebaseInitPromise;
-        if (api.ready && api.setVoterFs) {
-          const all = votersContext ? votersContext.getAllVoters() : [];
-          const toUpdate = all.filter((v) => String(v.id) === key || String(v.nationalId) === key);
-          await Promise.all(
-            toUpdate.map((v) =>
-              api.setVoterFs({
-                ...v,
-                votedAt: "",
-              })
-            )
-          );
-        }
-      } catch (_) {}
+      await clearVotedForVoter(voterId);
       renderZeroDayVoteTable();
       render();
     });

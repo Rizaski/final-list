@@ -50,6 +50,7 @@ export const firebaseInitPromise = (async () => {
     let setMonitorDoc = () => Promise.resolve();
     let getVotedForMonitor = () => Promise.resolve([]);
     let setVotedForMonitor = () => Promise.resolve();
+    let deleteVotedForMonitor = () => Promise.resolve();
     let onVotedSnapshotForMonitor = () => noopUnsubscribe;
     let deleteMonitorDoc = () => Promise.resolve();
 
@@ -143,8 +144,27 @@ export const firebaseInitPromise = (async () => {
       };
       setVotedForMonitor = async (token, voterId, timeMarked) => {
         if (!token || !voterId) return;
-        const ref = firestoreMod.doc(db, MONITORS_COLLECTION, String(token), "voted", String(voterId));
-        await firestoreMod.setDoc(ref, { timeMarked: timeMarked || new Date().toISOString() });
+        const ref = firestoreMod.doc(
+          db,
+          MONITORS_COLLECTION,
+          String(token),
+          "voted",
+          String(voterId)
+        );
+        await firestoreMod.setDoc(ref, {
+          timeMarked: timeMarked || new Date().toISOString(),
+        });
+      };
+      deleteVotedForMonitor = async (token, voterId) => {
+        if (!token || !voterId) return;
+        const ref = firestoreMod.doc(
+          db,
+          MONITORS_COLLECTION,
+          String(token),
+          "voted",
+          String(voterId)
+        );
+        await firestoreMod.deleteDoc(ref);
       };
       onVotedSnapshotForMonitor = (token, handler) => {
         if (!token || typeof handler !== "function") return noopUnsubscribe;
@@ -439,6 +459,7 @@ export const firebaseInitPromise = (async () => {
       setMonitorDoc,
       getVotedForMonitor,
       setVotedForMonitor,
+      deleteVotedForMonitor,
       onVotedSnapshotForMonitor,
       deleteMonitorDoc,
       // Firestore-backed core collections

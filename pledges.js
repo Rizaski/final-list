@@ -547,33 +547,41 @@ export function initPledgesModule(votersContext) {
     if (index < 0) return;
     const row = pledgeRows[index];
     const body = document.createElement("div");
+    const agents = getAgents();
+    const candidates = getCandidates();
+    const cp = row.candidatePledges || {};
+
     body.innerHTML = `
       <div class="form-grid">
         <div class="form-group">
-          <label>Voter name</label>
-          <input type="text" value="${row.name}" disabled>
+          <label for="pledgeEditName">Voter name</label>
+          <input id="pledgeEditName" type="text" value="${escapeHtml(
+            row.name
+          )}" disabled>
         </div>
         <div class="form-group">
-          <label>Island / Ward</label>
-          <input type="text" value="${row.island}" disabled>
+          <label for="pledgeEditIsland">Island / Ward</label>
+          <input id="pledgeEditIsland" type="text" value="${escapeHtml(
+            row.island
+          )}" disabled>
         </div>
         <div class="form-group">
-          <label>Assigned agent</label>
-          <select>
+          <label for="pledgeEditAgent">Assigned agent</label>
+          <select id="pledgeEditAgent">
             <option value="">Unassigned</option>
-            ${getAgents()
+            ${agents
               .map(
                 (a) =>
-                  `<option value="${a.name}"${
+                  `<option value="${escapeHtml(a.name)}"${
                     a.name === row.volunteer ? " selected" : ""
-                  }>${a.name}</option>`
+                  }>${escapeHtml(a.name)}</option>`
               )
               .join("")}
           </select>
         </div>
         <div class="form-group">
-          <label>Pledge status</label>
-          <select>
+          <label for="pledgeEditStatus">Overall pledge status</label>
+          <select id="pledgeEditStatus">
             <option value="yes"${
               row.pledgeStatus === "yes" ? " selected" : ""
             }>Yes</option>
@@ -586,8 +594,8 @@ export function initPledgesModule(votersContext) {
           </select>
         </div>
         <div class="form-group">
-          <label>Met during door-to-door / event?</label>
-          <select>
+          <label for="pledgeEditMet">Met during door-to-door / event?</label>
+          <select id="pledgeEditMet">
             <option value="not-met"${
               row.metStatus === "not-met" ? " selected" : ""
             }>No</option>
@@ -597,8 +605,8 @@ export function initPledgesModule(votersContext) {
           </select>
         </div>
         <div class="form-group">
-          <label>Persuadable?</label>
-          <select>
+          <label for="pledgeEditPersuadable">Persuadable?</label>
+          <select id="pledgeEditPersuadable">
             <option value="unknown"${
               row.persuadable === "unknown" ? " selected" : ""
             }>Unknown</option>
@@ -610,12 +618,71 @@ export function initPledgesModule(votersContext) {
             }>No</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>Notes</label>
-          <textarea rows="3">${row.notes || ""}</textarea>
+        <div class="form-group form-group--full">
+          <label for="pledgeEditNotes">Notes</label>
+          <textarea id="pledgeEditNotes" rows="3">${escapeHtml(
+            row.notes || ""
+          )}</textarea>
         </div>
       </div>
+      <div class="form-group form-group--full">
+        <label>Candidate pledges</label>
+        <div class="candidate-pledge-list">
+          ${candidates
+            .map((c) => {
+              const cid = String(c.id);
+              const current = cp[cid] || "undecided";
+              const isYes = current === "yes";
+              const isNo = current === "no";
+              const isUndecided = current === "undecided";
+              return `
+                <div class="candidate-pledge-row" data-candidate-id="${escapeHtml(
+                  cid
+                )}">
+                  <div class="candidate-pledge-name">${escapeHtml(
+                    c.name || "Candidate"
+                  )}</div>
+                  <div class="pill-toggle-group">
+                    <button type="button" class="pill-toggle${
+                      isYes ? " pill-toggle--active" : ""
+                    }" data-pledge-status="yes">Yes</button>
+                    <button type="button" class="pill-toggle${
+                      isNo ? " pill-toggle--active" : ""
+                    }" data-pledge-status="no">No</button>
+                    <button type="button" class="pill-toggle${
+                      isUndecided ? " pill-toggle--active" : ""
+                    }" data-pledge-status="undecided">Undecided</button>
+                  </div>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      </div>
+      <div class="form-group form-group--full">
+        <label for="pledgeEditPassword">Approval password</label>
+        <input id="pledgeEditPassword" type="password" class="input" autocomplete="off" placeholder="Enter password to save candidate pledges">
+        <p class="helper-text">Required only if candidate pledges are changed.</p>
+      </div>
     `;
+
+    // Bind candidate pledge pill toggles (local state only until Save)
+    body
+      .querySelectorAll(".candidate-pledge-row")
+      .forEach((rowEl) => {
+        const buttons = Array.from(
+          rowEl.querySelectorAll(".pill-toggle[data-pledge-status]")
+        );
+        buttons.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            buttons.forEach((b) =>
+              b.classList.remove("pill-toggle--active")
+            );
+            btn.classList.add("pill-toggle--active");
+          });
+        });
+      });
+
     const footer = document.createElement("div");
     const saveBtn = document.createElement("button");
     saveBtn.className = "primary-button";
@@ -623,18 +690,64 @@ export function initPledgesModule(votersContext) {
     footer.appendChild(saveBtn);
 
     saveBtn.addEventListener("click", () => {
-      const [nameInput, islandInput, agentSelect, pledgeSelect, metSel, persSel, notesTextarea] =
-        body.querySelectorAll("input, select, textarea");
-      row.volunteer = agentSelect.value || "";
-      row.pledgeStatus = pledgeSelect.value;
-      row.metStatus = metSel.value;
-      row.persuadable = persSel.value;
-      row.notes = notesTextarea.value;
+      const agentSelect = body.querySelector("#pledgeEditAgent");
+      const pledgeSelect = body.querySelector("#pledgeEditStatus");
+      const metSel = body.querySelector("#pledgeEditMet");
+      const persSel = body.querySelector("#pledgeEditPersuadable");
+      const notesTextarea = body.querySelector("#pledgeEditNotes");
+      const passwordInput = body.querySelector("#pledgeEditPassword");
+
+      row.volunteer = (agentSelect && agentSelect.value) || "";
+      row.pledgeStatus = (pledgeSelect && pledgeSelect.value) || row.pledgeStatus;
+      row.metStatus = (metSel && metSel.value) || row.metStatus;
+      row.persuadable = (persSel && persSel.value) || row.persuadable;
+      row.notes = notesTextarea ? notesTextarea.value : row.notes;
       if (row.pledgeStatus === "yes") {
         row.pledgedAt = new Date().toISOString().slice(0, 10);
-      } else {
+      } else if (row.pledgeStatus !== "yes") {
         row.pledgedAt = "";
       }
+
+      const changedCandidates = [];
+      body
+        .querySelectorAll(".candidate-pledge-row")
+        .forEach((rowEl) => {
+          const cid = rowEl.getAttribute("data-candidate-id");
+          if (!cid) return;
+          const activeBtn = rowEl.querySelector(
+            ".pill-toggle--active[data-pledge-status]"
+          );
+          const nextStatus =
+            (activeBtn &&
+              activeBtn.getAttribute("data-pledge-status")) || "undecided";
+          const prevStatus =
+            (row.candidatePledges && row.candidatePledges[cid]) ||
+            "undecided";
+          if (nextStatus !== prevStatus) {
+            changedCandidates.push({ cid, nextStatus });
+          }
+        });
+
+      if (changedCandidates.length > 0) {
+        const pwd = (passwordInput && passwordInput.value) || "";
+        if (pwd !== "PNC@2026") {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Incorrect password",
+              meta: "Candidate pledges were not updated.",
+            });
+          }
+          return;
+        }
+        if (!row.candidatePledges || typeof row.candidatePledges !== "object") {
+          row.candidatePledges = {};
+        }
+        changedCandidates.forEach(({ cid, nextStatus }) => {
+          row.candidatePledges[cid] = nextStatus;
+          updateVoterCandidatePledge(row.voterId, cid, nextStatus);
+        });
+      }
+
       renderPledgesTable();
       document.dispatchEvent(
         new CustomEvent("pledges-updated", {
@@ -644,7 +757,7 @@ export function initPledgesModule(votersContext) {
     });
 
     openModal({
-      title: "Edit pledge",
+      title: "Edit voter pledges",
       body,
       footer,
     });

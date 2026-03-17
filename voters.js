@@ -1,6 +1,11 @@
 import { openModal, closeModal } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
-import { getVotedTimeMarked, mergeVotedAtFromVoters } from "./zeroDay.js";
+import {
+  getVotedTimeMarked,
+  mergeVotedAtFromVoters,
+  clearVotedForVoter,
+  getAvailableTransportRoutes,
+} from "./zeroDay.js";
 import {
   getLists,
   createList,
@@ -245,8 +250,15 @@ function renderVotersTable() {
     const votedCell = timeMarked
       ? (() => {
           const d = new Date(timeMarked);
-          const formatted = d.toLocaleString("en-MV", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-          return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(formatted)}">Voted</span>`;
+          const formatted = d.toLocaleString("en-MV", {
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(
+            formatted
+          )}">Voted</span>`;
         })()
       : '<span class="text-muted">—</span>';
     tr.innerHTML = `
@@ -260,8 +272,19 @@ function renderVotersTable() {
       )}">${voter.pledgeStatus || "No"}</span></td>
       <td class="voted-status-cell">${votedCell}</td>
       <td style="text-align:right;">
-        <button type="button" class="ghost-button ghost-button--small" data-voter-edit="${escapeHtml(voter.id)}" title="Edit">Edit</button>
-        <button type="button" class="ghost-button ghost-button--small" data-voter-delete="${escapeHtml(voter.id)}" title="Delete">Delete</button>
+        <button type="button" class="ghost-button ghost-button--small" data-voter-edit="${escapeHtml(
+          voter.id
+        )}" title="Edit">Edit</button>
+        <button type="button" class="ghost-button ghost-button--small" data-voter-delete="${escapeHtml(
+          voter.id
+        )}" title="Delete">Delete</button>
+        ${
+          timeMarked
+            ? `<button type="button" class="ghost-button ghost-button--small" data-voter-unmark="${escapeHtml(
+                voter.id
+              )}" title="Mark not voted">Not voted</button>`
+            : ""
+        }
       </td>
     `;
     tr.addEventListener("click", (e) => {
@@ -368,6 +391,9 @@ function renderVoterDetails(voter) {
   }
 
   const { dobDisplay, ageDisplay } = formatDobAndAge(voter);
+  const availableRoutes = getAvailableTransportRoutes();
+  const transportRoute = voter.transportRoute || "";
+  const transportType = voter.transportType || "oneway";
 
   voterDetailsSubtitle.textContent = voter.fullName;
   const detailsPhotoSrc = getVoterImageSrc(voter);
@@ -465,11 +491,85 @@ function renderVoterDetails(voter) {
               const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
               if (timeMarked) {
                 const d = new Date(timeMarked);
-                const formatted = d.toLocaleString("en-MV", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+                const formatted = d.toLocaleString("en-MV", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
                 return `<span class="pledge-pill pledge-pill--pledged">Yes</span> ${formatted}`;
               }
               return '<span class="pledge-pill pledge-pill--undecided">No</span>';
             })()}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="voter-details-section voter-details-section--full">
+        <h3 class="voter-details-section__title">Transportation</h3>
+        <div class="details-grid details-grid--two-column">
+          <div>
+            <div class="detail-item-label">Transportation needed</div>
+            <div class="detail-item-value">
+              <label style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="voterTransportNeeded" ${
+                  voter.transportNeeded ? "checked" : ""
+                }>
+                <span>${voter.transportNeeded ? "Yes" : "No"}</span>
+              </label>
+            </div>
+          </div>
+          <div>
+            <div class="detail-item-label">Route &amp; direction</div>
+            <div class="detail-item-value">
+              ${
+                availableRoutes.length
+                  ? `<div class="field-group">
+                       <label for="voterTransportRoute" class="sr-only">Route</label>
+                       <select id="voterTransportRoute" class="input"${
+                         voter.transportNeeded ? "" : " disabled"
+                       }>
+                         <option value="">Select route…</option>
+                         ${availableRoutes
+                           .map((route) => {
+                             const isSelected = route === transportRoute;
+                             return `<option value="${escapeHtml(route)}"${
+                               isSelected ? " selected" : ""
+                             }>${escapeHtml(route)}</option>`;
+                           })
+                           .join("")}
+                       </select>
+                     </div>
+                     <div class="pill-toggle-group" style="margin-top:8px;">
+                       <span class="detail-item-label" style="margin-right:4px;">Trip type</span>
+                       <button type="button" class="pill-toggle${
+                         transportType !== "return" ? " pill-toggle--active" : ""
+                       }" data-transport-type="oneway"${
+                         voter.transportNeeded ? "" : " disabled"
+                       }>One way</button>
+                       <button type="button" class="pill-toggle${
+                         transportType === "return" ? " pill-toggle--active" : ""
+                       }" data-transport-type="return"${
+                         voter.transportNeeded ? "" : " disabled"
+                       }>Return</button>
+                     </div>
+                     <p class="helper-text" style="margin-top:4px;">Choose the route this voter will use and whether transport is one way or return.</p>`
+                  : '<p class="helper-text">No transport routes yet. Add trips in Zero Day → Transport.</p>'
+              }
+              ${
+                voter.transportNeeded && transportRoute
+                  ? `<div class="badge badge--supporting" style="display:inline-flex;align-items:center;margin-top:8px;">
+                       <span>${escapeHtml(
+                         transportRoute
+                       )}</span>
+                       <span style="margin-left:6px;font-size:12px;opacity:0.9;">${
+                         transportType === "return" ? "Return trip" : "One way"
+                       }</span>
+                     </div>`
+                  : ""
+              }
+            </div>
           </div>
         </div>
       </section>
@@ -503,6 +603,70 @@ function renderVoterDetails(voter) {
         </div>
       `;
       voterInteractionTimeline.appendChild(li);
+    });
+  }
+
+  // Bind notes
+  voterNotesTextarea.disabled = false;
+  voterNotesTextarea.value = voter.notes || "";
+  saveVoterNotesButton.disabled = true;
+
+  // Bind transportation controls
+  const transportNeededEl = document.getElementById("voterTransportNeeded");
+  const transportRouteEl = document.getElementById("voterTransportRoute");
+  const transportTypeEls = Array.from(
+    document.querySelectorAll("[data-transport-type]")
+  );
+  if (transportNeededEl && transportRouteEl) {
+    const updateRoutesDisabled = () => {
+      const disabled = !transportNeededEl.checked;
+      transportRouteEl.disabled = disabled;
+      transportTypeEls.forEach((el) => {
+        el.disabled = disabled;
+      });
+    };
+
+    const persistTransport = () => {
+      const v = currentVoters.find((x) => x.id === voter.id);
+      if (!v) return;
+      v.transportNeeded = !!transportNeededEl.checked;
+      v.transportRoute = transportRouteEl.value || "";
+      const activeTypeEl =
+        transportTypeEls.find((el) =>
+          el.classList.contains("pill-toggle--active")
+        ) || null;
+      v.transportType = activeTypeEl
+        ? activeTypeEl.getAttribute("data-transport-type") || "oneway"
+        : "oneway";
+      (async () => {
+        try {
+          const api = await firebaseInitPromise;
+          if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+        } catch (_) {}
+        saveVotersToStorage();
+        renderVotersTable();
+        if (selectedVoterId === v.id) renderVoterDetails(v);
+        document.dispatchEvent(new CustomEvent("voters-updated"));
+      })();
+    };
+
+    updateRoutesDisabled();
+    transportNeededEl.addEventListener("change", () => {
+      updateRoutesDisabled();
+      persistTransport();
+    });
+    transportRouteEl.addEventListener("change", () => {
+      persistTransport();
+    });
+    transportTypeEls.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        transportTypeEls.forEach((el) =>
+          el.classList.remove("pill-toggle--active")
+        );
+        btn.classList.add("pill-toggle--active");
+        persistTransport();
+      });
     });
   }
 }
@@ -842,6 +1006,7 @@ export async function initVotersModule() {
     votersTable.addEventListener("click", (e) => {
       const editBtn = e.target.closest("[data-voter-edit]");
       const deleteBtn = e.target.closest("[data-voter-delete]");
+      const unmarkBtn = e.target.closest("[data-voter-unmark]");
       if (editBtn) {
         e.preventDefault();
         e.stopPropagation();
@@ -853,6 +1018,29 @@ export async function initVotersModule() {
         e.stopPropagation();
         const id = deleteBtn.getAttribute("data-voter-delete");
         if (id) deleteVoter(id);
+      } else if (unmarkBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = unmarkBtn.getAttribute("data-voter-unmark");
+        if (!id) return;
+        const voter = currentVoters.find((v) => v.id === id);
+        if (
+          !voter ||
+          !confirm(
+            `Mark "${voter.fullName || voter.nationalId || id}" as not voted? This will clear their voted status across the app.`
+          )
+        ) {
+          return;
+        }
+        // Clear local votedAt immediately for responsive UI
+        voter.votedAt = "";
+        (async () => {
+          await clearVotedForVoter(id);
+          saveVotersToStorage();
+          renderVotersTable();
+          if (selectedVoterId === id) renderVoterDetails(voter);
+          document.dispatchEvent(new CustomEvent("voters-updated"));
+        })();
       }
     });
   }
