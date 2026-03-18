@@ -218,6 +218,12 @@ function saveAgentsToStorage() {
   } catch (_) {}
 }
 
+function escapeHtml(str) {
+  if (str == null) return "";
+  const s = String(str);
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function getIslandsFromVotersStorage() {
   try {
     const raw = localStorage.getItem("voters-data");
@@ -248,16 +254,17 @@ function renderAgentsTable() {
     return;
   }
 
-  agents.forEach((a, index) => {
+  agents.forEach((a) => {
     const tr = document.createElement("tr");
-    tr.dataset.agentIndex = String(index);
+    const aid = a && a.id != null ? String(a.id) : "";
+    tr.dataset.agentId = aid;
     tr.innerHTML = `
-      <td>${a.name}</td>
-      <td>${a.nationalId}</td>
-      <td>${a.phone}</td>
-      <td>${a.island}</td>
+      <td>${escapeHtml(a.name || "")}</td>
+      <td>${escapeHtml(a.nationalId || "")}</td>
+      <td>${escapeHtml(a.phone || "")}</td>
+      <td>${escapeHtml(a.island || "")}</td>
       <td style="text-align:right;">
-        <button type="button" class="ghost-button ghost-button--small" data-remove-agent="${index}">Remove</button>
+        <button type="button" class="ghost-button ghost-button--small" data-remove-agent="${escapeHtml(aid)}">Remove</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -265,17 +272,24 @@ function renderAgentsTable() {
 
   tbody.querySelectorAll("[data-remove-agent]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const idx = Number(btn.getAttribute("data-remove-agent"));
-      if (Number.isNaN(idx)) return;
-      const agent = agents[idx];
+      const id = btn.getAttribute("data-remove-agent");
+      if (id == null || id === "") return;
+      const agent = agents.find((a) => String(a.id) === String(id));
       if (!agent) return;
       (async () => {
         try {
           const api = await firebaseInitPromise;
-          if (api.ready && api.deleteAgentFs && agent.id != null) {
+          if (api.ready && api.deleteAgentFs) {
             await api.deleteAgentFs(String(agent.id));
+            agents = agents.filter((a) => String(a.id) !== String(id));
+            saveAgentsToStorage();
+            renderAgentsTable();
+            try {
+              window.agentsCached = [...agents];
+            } catch (_) {}
+            document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
           } else {
-            agents.splice(idx, 1);
+            agents = agents.filter((a) => String(a.id) !== String(id));
             saveAgentsToStorage();
             renderAgentsTable();
           }
@@ -568,18 +582,18 @@ function initAgentsTab() {
           };
           if (api.ready && api.setAgentFs) {
             await api.setAgentFs(agent);
+            // Rely on onAgentsSnapshotFs to update agents; do not push locally to avoid duplicates
+          } else {
+            agents.push(agent);
+            saveAgentsToStorage();
+            renderAgentsTable();
+            try {
+              window.agentsCached = [...agents];
+            } catch (_) {}
+            document.dispatchEvent(
+              new CustomEvent("agents-updated", { detail: { agents: [...agents] } })
+            );
           }
-          agents.push(agent);
-          saveAgentsToStorage();
-          renderAgentsTable();
-          try {
-            window.agentsCached = [...agents];
-          } catch (_) {}
-          document.dispatchEvent(
-            new CustomEvent("agents-updated", {
-              detail: { agents: [...agents] },
-            })
-          );
         } catch (_) {}
       })();
       if (window.appNotifications) {
