@@ -279,6 +279,14 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   const candidateSummaryEl = document.getElementById("reportsCandidatePledgeSummary");
   const reportsModule = document.getElementById("module-reports");
 
+  // Candidate users only see the "Candidate pledge summary" card (their pledged voters list)
+  const currentUserForView = getCurrentUser ? getCurrentUser() : null;
+  if (reportsModule && currentUserForView?.role === "candidate" && currentUserForView?.candidateId) {
+    reportsModule.querySelectorAll(".card").forEach((card) => {
+      if (!card.querySelector("#reportsCandidatePledgeSummary")) card.style.display = "none";
+    });
+  }
+
   function openReportDetails(reportType) {
     const voters = votersContext.getAllVoters();
     const events = eventsContext.getEvents();

@@ -102,6 +102,18 @@ function applyUserToShell(user) {
     settingsNavItem.style.display = user?.isAdmin ? "flex" : "none";
   }
 
+  // Candidate users only see Reports (their pledged voters list)
+  const isCandidateOnly = user?.role === "candidate" && user?.candidateId;
+  navButtons.forEach((btn) => {
+    const moduleKey = btn.dataset.module;
+    if (moduleKey === "settings") return; // already handled above
+    if (isCandidateOnly) {
+      btn.style.display = moduleKey === "reports" ? "flex" : "none";
+    } else {
+      btn.style.display = "";
+    }
+  });
+
   // Show main app shell; hide login view (defensively set both hidden and display).
   if (appShell) {
     appShell.hidden = false;
@@ -128,6 +140,10 @@ function switchModule(key) {
   const currentUser = getCurrentUser();
   if (key === SETTINGS_MODULE_KEY && !currentUser?.isAdmin) {
     // Guard against programmatic attempts to open settings
+    return;
+  }
+  // Candidate users can only open Reports (their pledged voters list)
+  if (currentUser?.role === "candidate" && currentUser?.candidateId && key !== "reports") {
     return;
   }
   Object.entries(modulesMap).forEach(([moduleKey, el]) => {
@@ -662,7 +678,7 @@ async function handleAuthenticatedUser(firebaseApi, fbUser) {
     const user = { email, name, isAdmin, role, candidateId };
     setCurrentUser(user);
     applyUserToShell(user);
-    switchModule("dashboard");
+    switchModule(user?.role === "candidate" && user?.candidateId ? "reports" : "dashboard");
     const appLoader = document.getElementById("appLoaderOverlay");
     if (appLoader) {
       appLoader.hidden = false;
