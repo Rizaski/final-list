@@ -23,7 +23,6 @@ const TRIP_TYPES = [
   { value: "flight", label: "Flight" },
   { value: "speedboat", label: "Speed boat" },
 ];
-
 const TRIP_STATUSES = ["Scheduled", "In progress", "Completed"];
 const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
@@ -189,7 +188,6 @@ function subscribeVotedRealtime() {
     }
   }).catch(() => {});
 }
-
 /** Returns set of voter IDs that have been marked as voted (for reports). */
 export function getVotedVoterIds() {
   loadVotedEntries();
@@ -202,7 +200,6 @@ export function getVotedTimeMarked(voterId) {
   const entry = zeroDayVotedEntries.find((e) => String(e.voterId) === String(voterId));
   return (entry && entry.timeMarked) || null;
 }
-
 /** Clears voted status for a single voter across Zero Day local state, voter docs, and all monitor voted entries. */
 export async function clearVotedForVoter(voterId) {
   const key = String(voterId);
