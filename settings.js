@@ -651,10 +651,17 @@ function renderUsersTable() {
       <td>${escapeHtml(role)}</td>
       <td>${escapeHtml(u.role === "candidate" ? candName : "—")}</td>
       <td style="text-align:right;">
+        <button type="button" class="ghost-button ghost-button--small" data-edit-user="${escapeHtml(email)}">Edit</button>
         <button type="button" class="ghost-button ghost-button--small" data-remove-user="${escapeHtml(email)}">Remove</button>
       </td>
     `;
     tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll("[data-edit-user]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const email = (btn.getAttribute("data-edit-user") || "").trim();
+      if (email) openEditUserModal(email);
+    });
   });
   tbody.querySelectorAll("[data-remove-user]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -685,6 +692,114 @@ function renderUsersTable() {
       }
     });
   });
+}
+
+async function openEditUserModal(email) {
+  const normalizedEmail = (email || "").trim().toLowerCase();
+  if (!normalizedEmail) return;
+  const user = campaignUsers.find((u) => (u.email || "").toLowerCase() === normalizedEmail);
+  if (!user) {
+    if (window.appNotifications) window.appNotifications.push({ title: "User not found", meta: email });
+    return;
+  }
+  let candList = getCandidates();
+  if (!candList.length) {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.getAllCandidatesFs) {
+        const items = await api.getAllCandidatesFs();
+        if (Array.isArray(items) && items.length) {
+          candidates = items;
+          saveCandidatesToStorage();
+          candList = candidates.slice(0, MAX_CANDIDATES);
+        }
+      }
+    } catch (_) {}
+  }
+  const body = document.createElement("div");
+  body.className = "form-group";
+  const roleOptions =
+    '<option value="admin">Admin</option><option value="candidate">Candidate</option>';
+  const candidateOptions =
+    '<option value="">Select candidate…</option>' +
+    candList.map(
+      (c) =>
+        `<option value="${escapeHtml(String(c.id))}">${escapeHtml(c.name || `Candidate ${c.id}`)}</option>`
+    ).join("");
+  const currentRole = user.role === "candidate" ? "candidate" : "admin";
+  const currentCand = (user.candidateId || "").trim();
+  body.innerHTML = `
+    <div class="form-group">
+      <label for="editUserEmail">Email</label>
+      <input type="email" id="editUserEmail" class="input" value="${escapeHtml(user.email || normalizedEmail)}" readonly disabled>
+    </div>
+    <div class="form-group">
+      <label for="editUserDisplayName">Display name</label>
+      <input type="text" id="editUserDisplayName" class="input" placeholder="Full name" value="${escapeHtml(user.displayName || "")}">
+    </div>
+    <div class="form-group">
+      <label for="editUserRole">Role</label>
+      <select id="editUserRole" class="input">
+        ${roleOptions}
+      </select>
+    </div>
+    <div class="form-group" id="editUserCandidateGroup">
+      <label for="editUserCandidate">Candidate</label>
+      <select id="editUserCandidate" class="input">
+        ${candidateOptions}
+      </select>
+      <p class="helper-text">Only for Candidate role. This user will only see pledged voters for this candidate.</p>
+    </div>
+  `;
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Save changes";
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+
+  const roleSelect = body.querySelector("#editUserRole");
+  const candidateGroup = body.querySelector("#editUserCandidateGroup");
+  const candidateSelect = body.querySelector("#editUserCandidate");
+  roleSelect.value = currentRole;
+  candidateSelect.value = currentCand;
+  function toggleCandidateVisibility() {
+    candidateGroup.style.display = roleSelect?.value === "candidate" ? "" : "none";
+  }
+  roleSelect.addEventListener("change", toggleCandidateVisibility);
+  toggleCandidateVisibility();
+
+  saveBtn.addEventListener("click", async () => {
+    const displayName = (body.querySelector("#editUserDisplayName")?.value || "").trim();
+    const role = roleSelect?.value === "candidate" ? "candidate" : "admin";
+    const candidateId = role === "candidate" && candidateSelect?.value ? candidateSelect.value : "";
+    try {
+      const api = await firebaseInitPromise;
+      if (!api.ready || !api.setCampaignUserFs) {
+        if (window.appNotifications) window.appNotifications.push({ title: "Cannot save", meta: "Firebase is not ready." });
+        return;
+      }
+      await api.setCampaignUserFs({ email: normalizedEmail, displayName, role, candidateId });
+      await loadCampaignUsers();
+      closeModal();
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "User updated", meta: normalizedEmail });
+      }
+    } catch (err) {
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Could not update user", meta: err?.message || String(err) });
+      }
+    }
+  });
+
+  openModal({ title: "Edit user", body, footer });
 }
 
 async function openAddUserModal() {
