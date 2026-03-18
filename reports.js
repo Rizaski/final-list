@@ -184,14 +184,19 @@ function buildVoterDetailTable(voters) {
   return wrap;
 }
 
-function renderCandidatePledgeSummary(container, voters) {
+function renderCandidatePledgeSummary(container, voters, options = {}) {
   if (!container) return;
-  const allCandidates = getCandidates();
+  let allCandidates = getCandidates();
+  const restrictToCandidateId = options.restrictToCandidateId != null ? String(options.restrictToCandidateId) : null;
+  if (restrictToCandidateId) {
+    allCandidates = allCandidates.filter((c) => String(c.id) === restrictToCandidateId);
+  }
   const totalVoters = voters.length;
 
   if (!allCandidates.length) {
-    container.innerHTML =
-      '<div class="helper-text">No candidates configured yet. Add candidates in Settings → Candidates to see pledge breakdown.</div>';
+    container.innerHTML = restrictToCandidateId
+      ? '<div class="helper-text">No candidate configured for your account, or no pledge data yet.</div>'
+      : '<div class="helper-text">No candidates configured yet. Add candidates in Settings → Candidates to see pledge breakdown.</div>';
     return;
   }
 
@@ -265,7 +270,7 @@ function renderCandidatePledgeSummary(container, voters) {
   container.appendChild(table);
 }
 
-export function initReportsModule({ votersContext, pledgesContext, eventsContext }) {
+export function initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser }) {
   const pledgeChart = document.getElementById("reportsPledgeChart");
   const supportChart = document.getElementById("reportsSupportChart");
   const registrationChart = document.getElementById("reportsRegistrationChart");
@@ -355,6 +360,8 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
 
   function openCandidatePledgedVoters(candidateId) {
     if (!candidateId) return;
+    const cu = getCurrentUser ? getCurrentUser() : null;
+    if (cu?.role === "candidate" && cu?.candidateId && String(cu.candidateId) !== String(candidateId)) return;
     const allVoters = votersContext.getAllVoters();
     const baseList = allVoters.filter((v) => {
       const cp = v.candidatePledges || {};
@@ -787,8 +794,13 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
           ];
     renderBarSet(eventChart, participationItems);
 
-    // Candidate pledge summary
-    renderCandidatePledgeSummary(candidateSummaryEl, voters);
+    // Candidate pledge summary (restrict to one candidate when current user is a candidate)
+    const currentUser = getCurrentUser ? getCurrentUser() : null;
+    const pledgeSummaryOpts =
+      currentUser?.role === "candidate" && currentUser?.candidateId
+        ? { restrictToCandidateId: currentUser.candidateId }
+        : {};
+    renderCandidatePledgeSummary(candidateSummaryEl, voters, pledgeSummaryOpts);
 
   }
 

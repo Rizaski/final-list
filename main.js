@@ -36,6 +36,8 @@ function getCurrentUser() {
       email: String(parsed.email || ""),
       name: String(parsed.name || "Campaign User"),
       isAdmin: Boolean(parsed.isAdmin),
+      role: parsed.role === "candidate" ? "candidate" : parsed.role === "admin" ? "admin" : "staff",
+      candidateId: parsed.candidateId != null ? String(parsed.candidateId) : null,
     };
   } catch (_) {
     return null;
@@ -56,6 +58,8 @@ function setCurrentUser(user) {
         email: user.email,
         name: user.name,
         isAdmin: user.isAdmin,
+        role: user.role || "staff",
+        candidateId: user.candidateId != null ? user.candidateId : null,
       })
     );
   } catch (_) {}
@@ -80,12 +84,16 @@ function applyUserToShell(user) {
 
   if (headerAvatar) headerAvatar.textContent = initial;
   if (headerName) headerName.textContent = name;
-  if (headerRole)
-    headerRole.textContent = user?.isAdmin ? "Admin" : "Campaign Staff";
+  if (headerRole) {
+    if (user?.role === "candidate" && user?.candidateId) headerRole.textContent = "Candidate";
+    else headerRole.textContent = user?.isAdmin ? "Admin" : "Campaign Staff";
+  }
   if (menuAvatar) menuAvatar.textContent = initial;
   if (menuName) menuName.textContent = name;
-  if (menuRole)
-    menuRole.textContent = user?.isAdmin ? "Administrator" : "Staff";
+  if (menuRole) {
+    if (user?.role === "candidate" && user?.candidateId) menuRole.textContent = "Candidate";
+    else menuRole.textContent = user?.isAdmin ? "Administrator" : "Staff";
+  }
 
   const settingsNavItem = document.querySelector(
     '.nav-item[data-module="settings"]'
@@ -592,7 +600,7 @@ async function startAppModules(firebaseApi) {
   initDoorToDoorModule(votersContext);
   const eventsContext = initEventsModule();
   const callsContext = initCallsModule(votersContext);
-  initReportsModule({ votersContext, pledgesContext, eventsContext });
+  initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser });
   initZeroDayModule(votersContext, { pledgesContext });
   initSettingsModule();
   syncCampaignConfigFromFirestore();
@@ -634,14 +642,24 @@ async function handleAuthenticatedUser(firebaseApi, fbUser) {
   try {
     console.log("[Auth] Authenticated user detected", fbUser.email);
     const email = (fbUser.email || "").toLowerCase();
-    const name =
+    let name =
       fbUser.displayName ||
       (email ? email.split("@")[0].replace(/\./g, " ") : "Campaign User");
-    const user = {
-      email,
-      name,
-      isAdmin: email === ADMIN_EMAIL.toLowerCase(),
-    };
+    let role = "staff";
+    let candidateId = null;
+    let isAdmin = email === ADMIN_EMAIL.toLowerCase();
+    if (firebaseApi.ready && firebaseApi.getCampaignUserByEmailFs) {
+      try {
+        const cu = await firebaseApi.getCampaignUserByEmailFs(email);
+        if (cu) {
+          if (cu.displayName && String(cu.displayName).trim()) name = String(cu.displayName).trim();
+          role = cu.role === "candidate" ? "candidate" : cu.role === "admin" ? "admin" : "staff";
+          candidateId = cu.candidateId != null && String(cu.candidateId).trim() ? String(cu.candidateId).trim() : null;
+          isAdmin = role === "admin" || isAdmin;
+        }
+      } catch (_) {}
+    }
+    const user = { email, name, isAdmin, role, candidateId };
     setCurrentUser(user);
     applyUserToShell(user);
     switchModule("dashboard");

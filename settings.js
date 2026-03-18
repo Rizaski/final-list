@@ -138,6 +138,7 @@ export function getCandidates() {
 }
 
 let agents = [];
+let campaignUsers = [];
 let unsubscribeAgentsFs = null;
 
 function renderCandidatesTable() {
@@ -612,6 +613,168 @@ function initAgentsTab() {
   renderAgentsTable();
 }
 
+async function loadCampaignUsers() {
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.getAllCampaignUsersFs) {
+      campaignUsers = await api.getAllCampaignUsersFs();
+      if (!Array.isArray(campaignUsers)) campaignUsers = [];
+    } else campaignUsers = [];
+  } catch (_) {
+    campaignUsers = [];
+  }
+  renderUsersTable();
+}
+
+function renderUsersTable() {
+  const tbody = document.querySelector("#settingsUsersTable tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  if (!campaignUsers.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td colspan="5" class="text-muted" style="text-align: center; padding: 24px;">No users yet. Add a user to get started.</td>';
+    tbody.appendChild(tr);
+    return;
+  }
+  const candList = getCandidates();
+  const candById = new Map(candList.map((c) => [String(c.id), c]));
+  campaignUsers.forEach((u) => {
+    const email = u.email || "";
+    const role = u.role === "candidate" ? "Candidate" : u.role === "admin" ? "Admin" : "Staff";
+    const cand = u.candidateId ? candById.get(String(u.candidateId)) : null;
+    const candName = cand ? (cand.name || cand.id || u.candidateId) : "—";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(u.displayName || "")}</td>
+      <td>${escapeHtml(email)}</td>
+      <td>${escapeHtml(role)}</td>
+      <td>${escapeHtml(u.role === "candidate" ? candName : "—")}</td>
+      <td style="text-align:right;">
+        <button type="button" class="ghost-button ghost-button--small" data-remove-user="${escapeHtml(email)}">Remove</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll("[data-remove-user]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const email = btn.getAttribute("data-remove-user");
+      if (!email) return;
+      const ok = await confirmDialog({
+        title: "Remove user",
+        message: `Remove ${escapeHtml(email)} from campaign users? They will no longer have candidate-specific access.`,
+        confirmText: "Remove",
+        cancelText: "Cancel",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.deleteCampaignUserFs) {
+          await api.deleteCampaignUserFs(email);
+          campaignUsers = campaignUsers.filter((u) => (u.email || "").toLowerCase() !== email.toLowerCase());
+          renderUsersTable();
+          if (window.appNotifications) {
+            window.appNotifications.push({ title: "User removed", meta: email });
+          }
+        }
+      } catch (_) {}
+    });
+  });
+}
+
+function openAddUserModal() {
+  const body = document.createElement("div");
+  body.className = "form-group";
+  const candList = getCandidates();
+  const roleOptions =
+    '<option value="admin">Admin</option><option value="candidate">Candidate</option>';
+  const candidateOptions =
+    '<option value="">Select candidate…</option>' +
+    candList.map(
+      (c) =>
+        `<option value="${escapeHtml(String(c.id))}">${escapeHtml(c.name || `Candidate ${c.id}`)}</option>`
+    ).join("");
+  body.innerHTML = `
+    <div class="form-group">
+      <label for="userEmail">Email</label>
+      <input type="email" id="userEmail" class="input" placeholder="user@example.com" required>
+    </div>
+    <div class="form-group">
+      <label for="userDisplayName">Display name</label>
+      <input type="text" id="userDisplayName" class="input" placeholder="Full name">
+    </div>
+    <div class="form-group">
+      <label for="userRole">Role</label>
+      <select id="userRole" class="input">
+        ${roleOptions}
+      </select>
+    </div>
+    <div class="form-group" id="userCandidateGroup">
+      <label for="userCandidate">Candidate</label>
+      <select id="userCandidate" class="input">
+        ${candidateOptions}
+      </select>
+      <p class="helper-text">Only for Candidate role. This user will only see pledged voters for this candidate.</p>
+    </div>
+  `;
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Add user";
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+
+  const roleSelect = body.querySelector("#userRole");
+  const candidateGroup = body.querySelector("#userCandidateGroup");
+  const candidateSelect = body.querySelector("#userCandidate");
+  function toggleCandidateVisibility() {
+    candidateGroup.style.display = roleSelect?.value === "candidate" ? "" : "none";
+  }
+  roleSelect.addEventListener("change", toggleCandidateVisibility);
+  toggleCandidateVisibility();
+
+  saveBtn.addEventListener("click", async () => {
+    const email = (body.querySelector("#userEmail")?.value || "").trim().toLowerCase();
+    const displayName = (body.querySelector("#userDisplayName")?.value || "").trim();
+    const role = roleSelect?.value === "candidate" ? "candidate" : "admin";
+    const candidateId = role === "candidate" && candidateSelect?.value ? candidateSelect.value : "";
+    if (!email) return;
+    try {
+      const api = await firebaseInitPromise;
+      if (!api.ready || !api.setCampaignUserFs) return;
+      await api.setCampaignUserFs({ email, displayName, role, candidateId });
+      await loadCampaignUsers();
+      closeModal();
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "User added",
+          meta: role === "candidate" ? `${email} (Candidate)` : `${email} (Admin)`,
+        });
+      }
+    } catch (err) {
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Could not add user", meta: err?.message || String(err) });
+      }
+    }
+  });
+
+  openModal({ title: "Add user", body, footer });
+}
+
+function initUsersTab() {
+  loadCampaignUsers();
+  const addBtn = document.getElementById("settingsAddUserButton");
+  if (addBtn) addBtn.addEventListener("click", () => openAddUserModal());
+}
+
 export function initSettingsModule() {
   initSettingsTabs();
   initCampaignTab();
@@ -639,6 +802,7 @@ export function initSettingsModule() {
   })();
 
   initAgentsTab();
+  initUsersTab();
 
   // Firestore-backed agents: load and subscribe in real time
   (async () => {

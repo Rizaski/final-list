@@ -27,6 +27,7 @@ const MONITORS_COLLECTION = "monitors";
 const VOTER_LISTS_COLLECTION = "voterLists";
 const VOTER_LIST_SHARES_COLLECTION = "voterListShares";
 const PLEDGED_REPORT_SHARES_COLLECTION = "pledgedReportShares";
+const CAMPAIGN_USERS_COLLECTION = "campaignUsers";
 const EVENTS_COLLECTION = "events";
 const TRANSPORT_TRIPS_COLLECTION = "transportTrips";
 
@@ -93,6 +94,10 @@ export const firebaseInitPromise = (async () => {
     let setListShareFs = async () => {};
     let getPledgedReportShareByTokenFs = async () => null;
     let setPledgedReportShareFs = async () => {};
+    let getCampaignUserByEmailFs = async () => null;
+    let getAllCampaignUsersFs = async () => [];
+    let setCampaignUserFs = async () => {};
+    let deleteCampaignUserFs = async () => {};
     let setListShareStatusFs = async () => {};
     let getListShareStatusFs = async () => [];
     let onListShareStatusSnapshotFs = () => noopUnsubscribe;
@@ -343,6 +348,40 @@ export const firebaseInitPromise = (async () => {
         const ref = firestoreMod.doc(db, PLEDGED_REPORT_SHARES_COLLECTION, String(token));
         await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
       };
+      const campaignUsersColRef = firestoreMod.collection(db, CAMPAIGN_USERS_COLLECTION);
+      getCampaignUserByEmailFs = async (email) => {
+        if (!email) return null;
+        const id = String(email).toLowerCase().trim();
+        if (!id) return null;
+        const ref = firestoreMod.doc(db, CAMPAIGN_USERS_COLLECTION, id);
+        const snap = await firestoreMod.getDoc(ref);
+        if (snap && snap.exists()) return { email: id, ...snap.data() };
+        return null;
+      };
+      getAllCampaignUsersFs = async () => {
+        const snap = await firestoreMod.getDocs(campaignUsersColRef);
+        return snap.docs.map((d) => ({ email: d.id, ...d.data() }));
+      };
+      setCampaignUserFs = async (user) => {
+        if (!user || !user.email) return;
+        const id = String(user.email).toLowerCase().trim();
+        if (!id) return;
+        const ref = firestoreMod.doc(db, CAMPAIGN_USERS_COLLECTION, id);
+        await firestoreMod.setDoc(ref, {
+          email: id,
+          displayName: user.displayName || "",
+          role: user.role === "candidate" ? "candidate" : "admin",
+          candidateId: user.candidateId != null ? String(user.candidateId) : "",
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      };
+      deleteCampaignUserFs = async (email) => {
+        if (!email) return;
+        const id = String(email).toLowerCase().trim();
+        if (!id) return;
+        const ref = firestoreMod.doc(db, CAMPAIGN_USERS_COLLECTION, id);
+        await firestoreMod.deleteDoc(ref);
+      };
       setListShareStatusFs = async (token, voterId, status) => {
         if (!token || !voterId) return;
         const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status", String(voterId));
@@ -486,6 +525,10 @@ export const firebaseInitPromise = (async () => {
       setListShareFs,
       getPledgedReportShareByTokenFs,
       setPledgedReportShareFs,
+      getCampaignUserByEmailFs,
+      getAllCampaignUsersFs,
+      setCampaignUserFs,
+      deleteCampaignUserFs,
       setListShareStatusFs,
       getListShareStatusFs,
       onListShareStatusSnapshotFs,

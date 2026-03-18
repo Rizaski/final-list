@@ -25,6 +25,12 @@ service cloud.firestore {
       allow write: if signedIn() && sizeOk();
     }
 
+    // Campaign users (Settings → User management; role: admin | candidate, candidateId for candidates)
+    match /campaignUsers/{email} {
+      allow read: if signedIn();
+      allow create, update, delete: if signedIn() && sizeOk();
+    }
+
     // Voters list — read allowed for any signed-in user so list renders when deployed
     match /voters/{voterId} {
       allow read: if signedIn();
