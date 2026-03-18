@@ -738,7 +738,16 @@ function buildVoterFormFields(voter = null) {
   const transportRoute = (v.transportRoute || "").trim();
   const transportNeeded = v.transportNeeded === true;
   return `
-    <div>
+    <div class="content-tabs">
+      <div class="content-tabs__list" role="tablist" aria-label="Edit voter sections">
+        <button type="button" class="content-tabs__tab is-active" data-voter-edit-tab="identity" role="tab" aria-selected="true">Identity</button>
+        <button type="button" class="content-tabs__tab" data-voter-edit-tab="contact" role="tab" aria-selected="false">Contact</button>
+        <button type="button" class="content-tabs__tab" data-voter-edit-tab="campaign" role="tab" aria-selected="false">Campaign</button>
+        <button type="button" class="content-tabs__tab" data-voter-edit-tab="transport" role="tab" aria-selected="false">Transport</button>
+        <button type="button" class="content-tabs__tab" data-voter-edit-tab="notes" role="tab" aria-selected="false">Notes</button>
+      </div>
+
+      <div class="content-tabs__panel" id="voterEditTab-identity" data-voter-edit-panel="identity" role="tabpanel">
       <div class="form-section">
         <h3 class="form-section__title">Identity &amp; registration</h3>
         <div class="form-grid">
@@ -801,7 +810,9 @@ function buildVoterFormFields(voter = null) {
           </div>
         </div>
       </div>
+      </div>
 
+      <div class="content-tabs__panel" id="voterEditTab-contact" data-voter-edit-panel="contact" role="tabpanel" hidden>
       <div class="form-section">
         <h3 class="form-section__title">Address &amp; contact</h3>
         <div class="form-grid">
@@ -837,7 +848,9 @@ function buildVoterFormFields(voter = null) {
           </div>
         </div>
       </div>
+      </div>
 
+      <div class="content-tabs__panel" id="voterEditTab-campaign" data-voter-edit-panel="campaign" role="tabpanel" hidden>
       <div class="form-section">
         <h3 class="form-section__title">Campaign status</h3>
         <div class="form-grid">
@@ -923,7 +936,9 @@ function buildVoterFormFields(voter = null) {
           </div>
         </div>
       </div>
+      </div>
 
+      <div class="content-tabs__panel" id="voterEditTab-transport" data-voter-edit-panel="transport" role="tabpanel" hidden>
       <div class="form-section">
         <h3 class="form-section__title">Transportation</h3>
         <div class="form-grid">
@@ -954,7 +969,9 @@ function buildVoterFormFields(voter = null) {
           </div>
         </div>
       </div>
+      </div>
 
+      <div class="content-tabs__panel" id="voterEditTab-notes" data-voter-edit-panel="notes" role="tabpanel" hidden>
       <div class="form-section">
         <h3 class="form-section__title">Notes</h3>
         <div class="form-grid">
@@ -966,6 +983,7 @@ function buildVoterFormFields(voter = null) {
           </div>
         </div>
       </div>
+      </div>
     </div>
   `;
 }
@@ -974,6 +992,27 @@ function openVoterForm(existingVoter) {
   const isEdit = !!existingVoter;
   const body = document.createElement("div");
   body.innerHTML = buildVoterFormFields(existingVoter);
+
+  // Tabs for edit modal sections
+  const tabButtons = Array.from(body.querySelectorAll("[data-voter-edit-tab]"));
+  const tabPanels = Array.from(body.querySelectorAll("[data-voter-edit-panel]"));
+  const setActiveTab = (key) => {
+    tabButtons.forEach((btn) => {
+      const isActive = btn.getAttribute("data-voter-edit-tab") === key;
+      btn.classList.toggle("is-active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+    tabPanels.forEach((panel) => {
+      panel.hidden = panel.getAttribute("data-voter-edit-panel") !== key;
+    });
+  };
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-voter-edit-tab");
+      if (key) setActiveTab(key);
+    });
+  });
+  setActiveTab("identity");
 
   const footer = document.createElement("div");
   footer.className = "form-actions";
