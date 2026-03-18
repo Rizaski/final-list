@@ -379,7 +379,7 @@ function renderZeroDayTripsTable() {
       <td style="text-align:right; white-space:nowrap;">
         <button class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
         <button class="ghost-button ghost-button--small" data-assign-trip="${trip.id}" title="Assign voters">Assign</button>
-        <button class="ghost-button ghost-button--small" data-duplicate-trip="${trip.id}" title="Duplicate trip">Duplicate</button>
+        <button class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">View voters</button>
         <button class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
         <button class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
       </td>
@@ -543,26 +543,121 @@ function openTripStatusModal(tripId) {
   openModal({ title: `Set status: ${escapeHtml(trip.route)}`, body });
 }
 
-function duplicateTrip(sourceTrip) {
-  const nextId = zeroDayTrips.reduce((max, t) => Math.max(max, t.id), 0) + 1;
-  const copy = normalizeTrip({
-    id: nextId,
-    tripType: sourceTrip.tripType,
-    route: sourceTrip.route,
-    driver: sourceTrip.driver,
-    vehicle: sourceTrip.vehicle,
-    pickupTime: new Date(Date.now() + 3600000).toISOString(),
-    status: "Scheduled",
-    voterCount: 0,
-    voterIds: [],
+function openTripVotersModal(trip) {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const ids = new Set((trip.voterIds || []).map(String));
+  const assigned = voters.filter((v) => ids.has(String(v.id)));
+
+  const title = `Assigned voters – ${trip.route || "Route"}`;
+  const body = document.createElement("div");
+  body.className = "modal-body-inner modal-body-inner--with-maximize";
+
+  const listToolbar = document.createElement("div");
+  listToolbar.className = "modal-list-toolbar list-toolbar";
+  listToolbar.innerHTML = `
+    <div class="list-toolbar__search">
+      <label for="zdTripVotersSearch" class="sr-only">Search</label>
+      <input type="search" id="zdTripVotersSearch" placeholder="Search by name, ID, address…">
+    </div>
+    <div class="list-toolbar__controls">
+      <div class="field-group field-group--inline">
+        <label for="zdTripVotersFilter">Filter</label>
+        <select id="zdTripVotersFilter">
+          <option value="all">All pledge statuses</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+          <option value="undecided">Undecided</option>
+        </select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="zdTripVotersSort">Sort</label>
+        <select id="zdTripVotersSort">
+          <option value="sequence">Seq</option>
+          <option value="name-asc">Name A–Z</option>
+          <option value="name-desc">Name Z–A</option>
+          <option value="id">ID Number</option>
+          <option value="address">Permanent address</option>
+          <option value="pledge">Pledge status</option>
+          <option value="agent">Agent</option>
+        </select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="zdTripVotersGroupBy">Group by</label>
+        <select id="zdTripVotersGroupBy">
+          <option value="none">None</option>
+          <option value="pledge">Pledge status</option>
+          <option value="agent">Agent</option>
+        </select>
+      </div>
+    </div>
+  `;
+
+  const topBar = document.createElement("div");
+  topBar.className = "modal-body-toolbar";
+  const maxBtn = document.createElement("button");
+  maxBtn.type = "button";
+  maxBtn.className = "ghost-button ghost-button--small";
+  maxBtn.setAttribute("aria-label", "Maximize");
+  maxBtn.textContent = "Maximize";
+  maxBtn.addEventListener("click", () => {
+    const modal = document.getElementById("modalBackdrop");
+    const dialog = modal ? modal.querySelector(".modal") : null;
+    if (!dialog) return;
+    const isMax = dialog.classList.toggle("modal--maximized");
+    maxBtn.setAttribute("aria-label", isMax ? "Restore" : "Maximize");
+    maxBtn.textContent = isMax ? "Restore" : "Maximize";
   });
-  zeroDayTrips.push(copy);
-  saveTrips();
-  firebaseInitPromise.then((api) => {
-    if (api.ready && api.setTransportTripFs) return api.setTransportTripFs(copy);
-  }).catch(() => {});
-  renderZeroDayTripsTable();
-  openTripForm(copy);
+  topBar.appendChild(maxBtn);
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-wrapper";
+
+  function applySearchFilter(list, query) {
+    const q = (query || "").toLowerCase().trim();
+    if (!q) return list;
+    return list.filter((v) => {
+      const name = (v.fullName || "").toLowerCase();
+      const id = (v.id || "").toLowerCase();
+      const nationalId = (v.nationalId || "").toLowerCase();
+      const address = (v.permanentAddress || "").toLowerCase();
+      const phone = (v.phone || "").toLowerCase();
+      return (
+        name.includes(q) ||
+        id.includes(q) ||
+        nationalId.includes(q) ||
+        address.includes(q) ||
+        phone.includes(q)
+      );
+    });
+  }
+
+  function render() {
+    const filterPledge = (body.querySelector("#zdTripVotersFilter") || {}).value || "all";
+    const sortBy = (body.querySelector("#zdTripVotersSort") || {}).value || "sequence";
+    const groupBy = (body.querySelector("#zdTripVotersGroupBy") || {}).value || "none";
+    const searchQuery = (body.querySelector("#zdTripVotersSearch") || {}).value || "";
+    let list = applySearchFilter(assigned, searchQuery);
+    const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
+    const newTable = buildTableFromDisplayList(displayList, {
+      includeTimeVoted: false,
+      showUnmarkAction: false,
+    });
+    tableWrap.innerHTML = "";
+    tableWrap.appendChild(newTable.firstElementChild);
+  }
+
+  body.appendChild(topBar);
+  body.appendChild(listToolbar);
+  body.appendChild(tableWrap);
+
+  listToolbar.querySelector("#zdTripVotersFilter").addEventListener("change", render);
+  listToolbar.querySelector("#zdTripVotersSort").addEventListener("change", render);
+  listToolbar.querySelector("#zdTripVotersGroupBy").addEventListener("change", render);
+  const searchEl = listToolbar.querySelector("#zdTripVotersSearch");
+  if (searchEl) searchEl.addEventListener("input", render);
+
+  render();
+  openModal({ title, body });
 }
 
 function openAssignVotersModal(trip) {
@@ -1687,7 +1782,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
     transportPanel.addEventListener("click", (e) => {
       const statusBtn = e.target.closest("[data-trip-status]");
       const assignBtn = e.target.closest("[data-assign-trip]");
-      const duplicateBtn = e.target.closest("[data-duplicate-trip]");
+      const viewBtn = e.target.closest("[data-view-trip-voters]");
       const editBtn = e.target.closest("[data-edit-trip]");
       const deleteBtn = e.target.closest("[data-delete-trip]");
       if (statusBtn) {
@@ -1697,10 +1792,10 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         const id = Number(assignBtn.getAttribute("data-assign-trip"));
         const trip = zeroDayTrips.find((t) => t.id === id);
         if (trip) openAssignVotersModal(trip);
-      } else if (duplicateBtn) {
-        const id = Number(duplicateBtn.getAttribute("data-duplicate-trip"));
+      } else if (viewBtn) {
+        const id = Number(viewBtn.getAttribute("data-view-trip-voters"));
         const trip = zeroDayTrips.find((t) => t.id === id);
-        if (trip) duplicateTrip(trip);
+        if (trip) openTripVotersModal(trip);
       } else if (editBtn) {
         const id = Number(editBtn.getAttribute("data-edit-trip"));
         const trip = zeroDayTrips.find((t) => t.id === id);
