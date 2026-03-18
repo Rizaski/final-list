@@ -363,7 +363,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     const candidates = getCandidates();
     const agents = getAgents();
     // Candidate-specific "assigned agent" should not affect global voter volunteer assignments.
-    const assignedAgentStorageKey = `candidatePledgedAgentAssignments:${String(candidateId)}`;
+    const assignedAgentStorageKey = `candidatePledgedAgentAssignments:v2:${String(candidateId)}`;
     let assignedByVoterId = {};
     try {
       const raw = localStorage.getItem(assignedAgentStorageKey);
@@ -372,17 +372,9 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
         if (parsed && typeof parsed === "object") assignedByVoterId = parsed;
       }
     } catch (_) {}
-    // Soft migration: if we have no saved candidate assignments yet, prefill from existing
-    // voter.volunteer so prior user work isn't lost when this feature was previously global.
-    if (!assignedByVoterId || Object.keys(assignedByVoterId).length === 0) {
-      baseList.forEach((v) => {
-        const name = (v?.volunteer ?? "").toString().trim();
-        if (name) assignedByVoterId[String(v.id)] = name;
-      });
-      try {
-        localStorage.setItem(assignedAgentStorageKey, JSON.stringify(assignedByVoterId));
-      } catch (_) {}
-    }
+    // Important: do NOT prefill from global `voter.volunteer`.
+    // Candidate pledges are supposed to be independent per candidate list,
+    // even when the same voter appears in multiple candidates' pledged lists.
     const candidate = candidates.find((c) => String(c.id) === String(candidateId));
     const title = candidate
       ? `Pledged voters – ${candidate.name || candidateId}`
