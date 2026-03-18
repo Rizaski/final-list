@@ -546,11 +546,30 @@ function openTripStatusModal(tripId) {
 function openTripVotersModal(trip) {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const ids = new Set((trip.voterIds || []).map(String));
-  const assigned = voters.filter((v) => {
+  const assignedByIds = voters.filter((v) => {
     const id = v && v.id != null ? String(v.id) : "";
     const nationalId = v && v.nationalId != null ? String(v.nationalId) : "";
     return ids.has(id) || ids.has(nationalId);
   });
+  // Also include voters who requested transport for this route via Voters List detail view
+  const routeKey = String(trip.route || "").trim().toLowerCase();
+  const assignedByRoute = routeKey
+    ? voters.filter((v) => {
+        if (!v || v.transportNeeded !== true) return false;
+        const r = String(v.transportRoute || "").trim().toLowerCase();
+        return r !== "" && r === routeKey;
+      })
+    : [];
+  const assigned = (() => {
+    const byId = new Map();
+    [...assignedByIds, ...assignedByRoute].forEach((v) => {
+      if (!v) return;
+      const k = String(v.id || v.nationalId || "");
+      if (!k) return;
+      byId.set(k, v);
+    });
+    return Array.from(byId.values());
+  })();
 
   const title = `Assigned voters – ${trip.route || "Route"}`;
   const body = document.createElement("div");
