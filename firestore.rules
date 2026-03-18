@@ -13,6 +13,12 @@ service cloud.firestore {
       return request.resource.data.size() <= 400;
     }
 
+    // Pledged report shares can include a full voter list payload (potentially large).
+    // We allow a higher limit than generic writes so the share document can be created.
+    function pledgedShareSizeOk() {
+      return request.resource.data.size() <= 5000;
+    }
+
     // Campaign config (Settings → Campaign)
     match /campaign/config {
       allow read: if signedIn();
@@ -78,7 +84,7 @@ service cloud.firestore {
     // Pledged voters report share (Reports → View pledged voters → Share link; doc id = token)
     match /pledgedReportShares/{token} {
       allow read: if true;
-      allow create, update: if signedIn() && sizeOk();
+      allow create, update: if signedIn() && pledgedShareSizeOk();
     }
 
     // Deny any other path by default
