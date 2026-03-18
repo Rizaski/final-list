@@ -115,6 +115,7 @@ function buildVoterDetailTable(voters) {
         <th>Permanent Address</th>
         <th>Pledge</th>
         <th>Ballot box</th>
+        <th>Assigned agent</th>
         <th>Phone</th>
         <th>Island</th>
         <th>Voted</th>
@@ -172,6 +173,7 @@ function buildVoterDetailTable(voters) {
       <td>${escapeHtml(v.permanentAddress ?? "")}</td>
       <td><span class="${pledgeClass}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
       <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
+      <td>${escapeHtml(v.volunteer ?? "")}</td>
       <td>${escapeHtml(v.phone ?? "")}</td>
       <td>${escapeHtml(v.island ?? "")}</td>
       <td class="voted-status-cell">${votedCell}</td>
@@ -431,6 +433,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
           <th>Permanent Address</th>
           <th>Pledge</th>
           <th>Ballot box</th>
+          <th>Assigned agent</th>
           <th>Phone</th>
           <th>Island</th>
           <th>Voted</th>
@@ -442,7 +445,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     body.appendChild(tableWrap);
 
     const tbody = table.querySelector("#reportPledgedTableBody");
-    const COL_COUNT = 10;
+    const COL_COUNT = 11;
     let currentPage = 1;
 
     function getFilteredSortedGrouped() {
@@ -542,6 +545,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
             <td>${escapeHtml(v.permanentAddress ?? "")}</td>
             <td><span class="${pledgePillClass(pledgeStatus)}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
             <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
+            <td>${escapeHtml(v.volunteer ?? "")}</td>
             <td>${escapeHtml(v.phone ?? "")}</td>
             <td>${escapeHtml(v.island ?? "")}</td>
             <td class="voted-status-cell">${votedCell}</td>
