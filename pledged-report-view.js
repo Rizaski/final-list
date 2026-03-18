@@ -40,6 +40,7 @@ function renderTable() {
       <td>${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
       <td>${escapeHtml(v.permanentAddress ?? "")}</td>
       <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
+      <td>${escapeHtml(v.assignedAgent ?? "")}</td>
       <td>${escapeHtml(v.phone ?? "")}</td>
       <td>${escapeHtml(v.island ?? "")}</td>
     `;

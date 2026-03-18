@@ -1,4 +1,4 @@
-import { getPledgeByBallotBox, getVoterImageSrc, updateVoterDoorToDoorFields } from "./voters.js";
+import { getPledgeByBallotBox, getVoterImageSrc } from "./voters.js";
 import { getVotedVoterIds, getVotedTimeMarked } from "./zeroDay.js";
 import { openModal, closeModal } from "./ui.js";
 import { getCandidates, getAgents } from "./settings.js";
@@ -362,6 +362,27 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     });
     const candidates = getCandidates();
     const agents = getAgents();
+    // Candidate-specific "assigned agent" should not affect global voter volunteer assignments.
+    const assignedAgentStorageKey = `candidatePledgedAgentAssignments:${String(candidateId)}`;
+    let assignedByVoterId = {};
+    try {
+      const raw = localStorage.getItem(assignedAgentStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") assignedByVoterId = parsed;
+      }
+    } catch (_) {}
+    // Soft migration: if we have no saved candidate assignments yet, prefill from existing
+    // voter.volunteer so prior user work isn't lost when this feature was previously global.
+    if (!assignedByVoterId || Object.keys(assignedByVoterId).length === 0) {
+      baseList.forEach((v) => {
+        const name = (v?.volunteer ?? "").toString().trim();
+        if (name) assignedByVoterId[String(v.id)] = name;
+      });
+      try {
+        localStorage.setItem(assignedAgentStorageKey, JSON.stringify(assignedByVoterId));
+      } catch (_) {}
+    }
     const candidate = candidates.find((c) => String(c.id) === String(candidateId));
     const title = candidate
       ? `Pledged voters – ${candidate.name || candidateId}`
@@ -537,10 +558,10 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
                 return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(formatted)}">Voted</span>`;
               })()
             : '<span class="text-muted">—</span>';
-          const volunteer = v.volunteer ?? "";
+          const assignedAgentName = assignedByVoterId[String(v.id)] || "";
           const agentOptions =
             '<option value="">Unassigned</option>' +
-            agents.map((a) => `<option value="${escapeHtml(a.name)}"${a.name === volunteer ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("");
+            agents.map((a) => `<option value="${escapeHtml(a.name)}"${a.name === assignedAgentName ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("");
           const tr = document.createElement("tr");
           tr.innerHTML = `
             <td>${v.sequence ?? ""}</td>
@@ -598,7 +619,12 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     body.addEventListener("change", (e) => {
       if (e.target.matches(".report-pledged-agent")) {
         const voterId = e.target.getAttribute("data-voter-id");
-        if (voterId) updateVoterDoorToDoorFields(voterId, { volunteer: e.target.value || "" });
+        if (voterId) {
+          assignedByVoterId[String(voterId)] = e.target.value || "";
+          try {
+            localStorage.setItem(assignedAgentStorageKey, JSON.stringify(assignedByVoterId));
+          } catch (_) {}
+        }
       }
     });
 
@@ -629,6 +655,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
         nationalId: v.nationalId,
         permanentAddress: v.permanentAddress,
         ballotBox: (v.ballotBox || "").trim(),
+          assignedAgent: assignedByVoterId[String(v.id)] || "",
         phone: v.phone,
         island: v.island,
       }));
