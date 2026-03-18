@@ -1,4 +1,4 @@
-# Maldives Campaign Management
+# Dhuvaafaru Campaign Portal
 
 Campaign console for managing voters, pledges, events, and zero-day operations. Uses **Firebase Auth** for sign-in and **Firestore** for campaign config sync.
 
