@@ -45,6 +45,58 @@ export function closeModal() {
   modalBackdrop.hidden = true;
 }
 
+/**
+ * Branded confirmation dialog (replaces window.confirm).
+ * Returns a Promise<boolean>.
+ */
+export function confirmDialog(options = {}) {
+  const title = options.title || "Confirm";
+  const message = options.message || "Are you sure?";
+  const confirmText = options.confirmText || "Confirm";
+  const cancelText = options.cancelText || "Cancel";
+  const danger = options.danger === true;
+
+  return new Promise((resolve) => {
+    const body = document.createElement("div");
+    body.className = "confirm-dialog";
+    body.innerHTML = `
+      <p class="confirm-dialog__message">${message}</p>
+    `;
+
+    const footer = document.createElement("div");
+    footer.className = "form-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ghost-button";
+    cancelBtn.textContent = cancelText;
+
+    const okBtn = document.createElement("button");
+    okBtn.type = "button";
+    okBtn.className = danger ? "primary-button primary-button--danger" : "primary-button";
+    okBtn.textContent = confirmText;
+
+    const cleanupAndResolve = (val) => {
+      try {
+        closeModal();
+      } finally {
+        resolve(val);
+      }
+    };
+
+    cancelBtn.addEventListener("click", () => cleanupAndResolve(false));
+    okBtn.addEventListener("click", () => cleanupAndResolve(true));
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(okBtn);
+
+    openModal({ title, body, footer });
+
+    // Default focus to safe action
+    setTimeout(() => cancelBtn.focus(), 0);
+  });
+}
+
 if (modalCloseButton) {
   modalCloseButton.addEventListener("click", (e) => {
     e.preventDefault();

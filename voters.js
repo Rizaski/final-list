@@ -1,4 +1,4 @@
-import { openModal, closeModal } from "./ui.js";
+import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import {
   getVotedTimeMarked,
@@ -876,8 +876,17 @@ function openVoterForm(existingVoter) {
 function deleteVoter(voterId) {
   const voter = currentVoters.find((v) => v.id === voterId);
   if (!voter) return;
-  if (!confirm(`Delete voter "${voter.fullName || voter.nationalId || voterId}"? This cannot be undone.`)) return;
   (async () => {
+    const ok = await confirmDialog({
+      title: "Delete voter",
+      message: `Delete voter "${escapeHtml(
+        voter.fullName || voter.nationalId || voterId
+      )}"? This cannot be undone.`,
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const api = await firebaseInitPromise;
       if (api.ready && api.deleteVoterFs) await api.deleteVoterFs(voterId);
@@ -1024,17 +1033,20 @@ export async function initVotersModule() {
         const id = unmarkBtn.getAttribute("data-voter-unmark");
         if (!id) return;
         const voter = currentVoters.find((v) => v.id === id);
-        if (
-          !voter ||
-          !confirm(
-            `Mark "${voter.fullName || voter.nationalId || id}" as not voted? This will clear their voted status across the app.`
-          )
-        ) {
-          return;
-        }
+        if (!voter) return;
+        (async () => {
+          const ok = await confirmDialog({
+            title: "Mark not voted",
+            message: `Mark "${escapeHtml(
+              voter.fullName || voter.nationalId || id
+            )}" as not voted? This will clear their voted status across the app.`,
+            confirmText: "Mark not voted",
+            cancelText: "Cancel",
+            danger: true,
+          });
+          if (!ok) return;
         // Clear local votedAt immediately for responsive UI
         voter.votedAt = "";
-        (async () => {
           await clearVotedForVoter(id);
           saveVotersToStorage();
           renderVotersTable();

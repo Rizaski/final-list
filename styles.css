@@ -2806,6 +2806,14 @@ body.list-workspace-page {
   color: var(--color-text);
 }
 
+/* Branded confirm dialog */
+.confirm-dialog__message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
 .pledge-pill {
   display: inline-flex;
   align-items: center;

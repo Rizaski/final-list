@@ -3,7 +3,7 @@
  * Election day transport trips and voter vote-marking.
  */
 
-import { openModal, closeModal } from "./ui.js";
+import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import { getAgents } from "./settings.js";
 
@@ -831,17 +831,33 @@ function deleteMonitorLink(monitorId) {
   const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
   if (!monitor) return;
   const label = monitor.ballotBox || monitor.name || "this monitor";
-  if (!confirm(`Delete the access link for "${label}"? The monitor will be removed and the link will stop working.`)) return;
-  const token = monitor.shareToken;
-  const idx = zeroDayMonitors.findIndex((m) => m.id === monitorId);
-  if (idx !== -1) zeroDayMonitors.splice(idx, 1);
-  saveMonitors();
-  firebaseInitPromise.then((api) => api.deleteMonitorDoc && api.deleteMonitorDoc(token)).catch(() => {});
-  renderMonitorsTable();
-  subscribeVotedRealtime();
-  if (window.appNotifications) {
-    window.appNotifications.push({ title: "Monitor access link deleted", meta: String(label) });
-  }
+  (async () => {
+    const ok = await confirmDialog({
+      title: "Delete monitor link",
+      message: `Delete the access link for "${escapeHtml(
+        label
+      )}"? The monitor will be removed and the link will stop working.`,
+      confirmText: "Delete link",
+      cancelText: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    const token = monitor.shareToken;
+    const idx = zeroDayMonitors.findIndex((m) => m.id === monitorId);
+    if (idx !== -1) zeroDayMonitors.splice(idx, 1);
+    saveMonitors();
+    firebaseInitPromise
+      .then((api) => api.deleteMonitorDoc && api.deleteMonitorDoc(token))
+      .catch(() => {});
+    renderMonitorsTable();
+    subscribeVotedRealtime();
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Monitor access link deleted",
+        meta: String(label),
+      });
+    }
+  })();
 }
 
 function getVoteBoxSummaries() {
@@ -1328,13 +1344,16 @@ function openBoxVoterListModal(boxKey, kind) {
       if (!btn) return;
       const voterId = btn.getAttribute("data-unmark-voted");
       if (!voterId) return;
-      if (
-        !confirm(
-          `Mark this voter as not voted for ballot box ${boxKey}? This will remove their voted status from Zero Day and the voter database.`
-        )
-      ) {
-        return;
-      }
+      const ok = await confirmDialog({
+        title: "Mark not voted",
+        message: `Mark this voter as not voted for ballot box ${escapeHtml(
+          boxKey
+        )}? This will remove their voted status from Zero Day and the voter database.`,
+        confirmText: "Mark not voted",
+        cancelText: "Cancel",
+        danger: true,
+      });
+      if (!ok) return;
       await clearVotedForVoter(voterId);
       renderZeroDayVoteTable();
       render();
