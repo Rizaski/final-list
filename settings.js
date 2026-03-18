@@ -658,7 +658,7 @@ function renderUsersTable() {
   });
   tbody.querySelectorAll("[data-remove-user]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const email = btn.getAttribute("data-remove-user");
+      const email = (btn.getAttribute("data-remove-user") || "").trim();
       if (!email) return;
       const ok = await confirmDialog({
         title: "Remove user",
@@ -668,25 +668,42 @@ function renderUsersTable() {
         danger: true,
       });
       if (!ok) return;
+      const normalizedEmail = email.toLowerCase();
       try {
         const api = await firebaseInitPromise;
-        if (api.ready && api.deleteCampaignUserFs) {
-          await api.deleteCampaignUserFs(email);
-          campaignUsers = campaignUsers.filter((u) => (u.email || "").toLowerCase() !== email.toLowerCase());
-          renderUsersTable();
-          if (window.appNotifications) {
-            window.appNotifications.push({ title: "User removed", meta: email });
-          }
+        if (!api.ready || !api.deleteCampaignUserFs) {
+          if (window.appNotifications) window.appNotifications.push({ title: "Cannot remove user", meta: "Firebase is not ready." });
+          return;
         }
-      } catch (_) {}
+        await api.deleteCampaignUserFs(normalizedEmail);
+        await loadCampaignUsers();
+        if (window.appNotifications) window.appNotifications.push({ title: "User removed", meta: email });
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Could not remove user", meta: err?.message || String(err) });
+        }
+      }
     });
   });
 }
 
-function openAddUserModal() {
+async function openAddUserModal() {
+  let candList = getCandidates();
+  if (!candList.length) {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.getAllCandidatesFs) {
+        const items = await api.getAllCandidatesFs();
+        if (Array.isArray(items) && items.length) {
+          candidates = items;
+          saveCandidatesToStorage();
+          candList = candidates.slice(0, MAX_CANDIDATES);
+        }
+      }
+    } catch (_) {}
+  }
   const body = document.createElement("div");
   body.className = "form-group";
-  const candList = getCandidates();
   const roleOptions =
     '<option value="admin">Admin</option><option value="candidate">Candidate</option>';
   const candidateOptions =
