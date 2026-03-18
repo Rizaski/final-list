@@ -546,18 +546,25 @@ function openTripStatusModal(tripId) {
 function openTripVotersModal(trip) {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const ids = new Set((trip.voterIds || []).map(String));
+  const normalizeRoute = (s) =>
+    String(s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
   const assignedByIds = voters.filter((v) => {
     const id = v && v.id != null ? String(v.id) : "";
     const nationalId = v && v.nationalId != null ? String(v.nationalId) : "";
     return ids.has(id) || ids.has(nationalId);
   });
   // Also include voters who requested transport for this route via Voters List detail view
-  const routeKey = String(trip.route || "").trim().toLowerCase();
+  const routeKey = normalizeRoute(trip.route);
   const assignedByRoute = routeKey
     ? voters.filter((v) => {
         if (!v || v.transportNeeded !== true) return false;
-        const r = String(v.transportRoute || "").trim().toLowerCase();
-        return r !== "" && r === routeKey;
+        const r = normalizeRoute(v.transportRoute);
+        if (!r) return false;
+        // Prefer exact match, but allow small variations (e.g. extra words, spacing)
+        return r === routeKey || r.includes(routeKey) || routeKey.includes(r);
       })
     : [];
   const assigned = (() => {
@@ -574,6 +581,11 @@ function openTripVotersModal(trip) {
   const title = `Assigned voters – ${trip.route || "Route"}`;
   const body = document.createElement("div");
   body.className = "modal-body-inner modal-body-inner--with-maximize";
+
+  const summary = document.createElement("div");
+  summary.className = "helper-text";
+  summary.style.margin = "6px 0 10px";
+  summary.textContent = `Matched ${assigned.length} voters (Trip assignment: ${assignedByIds.length}, By route: ${assignedByRoute.length})`;
 
   const listToolbar = document.createElement("div");
   listToolbar.className = "modal-list-toolbar list-toolbar";
@@ -670,6 +682,7 @@ function openTripVotersModal(trip) {
   }
 
   body.appendChild(topBar);
+  body.appendChild(summary);
   body.appendChild(listToolbar);
   body.appendChild(tableWrap);
 
