@@ -2997,6 +2997,26 @@ body.list-workspace-page {
   gap: 8px;
 }
 
+/* Form sections inside modals */
+.form-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.form-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.form-section__title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
 /* Bulk voter upload zone */
 .upload-zone-wrap {
   margin-bottom: 16px;

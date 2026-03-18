@@ -729,47 +729,242 @@ document.addEventListener("global-search", (e) => {
 
 function buildVoterFormFields(voter = null) {
   const v = voter || {};
+  const support = (v.supportStatus || "unknown").toLowerCase();
+  const met = (v.metStatus || "not-met").toLowerCase();
+  const persuadable = (v.persuadable || "unknown").toLowerCase();
+  const transportType = (v.transportType || "oneway").toLowerCase();
+  const pledgedAt = (v.pledgedAt || "").trim();
+  const votedAt = (v.votedAt || "").trim();
+  const transportRoute = (v.transportRoute || "").trim();
+  const transportNeeded = v.transportNeeded === true;
   return `
-    <div class="form-grid">
-      <div class="form-group">
-        <label for="voterFormName">Name</label>
-        <input id="voterFormName" type="text" value="${escapeHtml(v.fullName || "")}" placeholder="Full name" required>
+    <div>
+      <div class="form-section">
+        <h3 class="form-section__title">Identity &amp; registration</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="voterFormId">Internal ID</label>
+            <input id="voterFormId" type="text" value="${escapeHtml(
+              v.id || ""
+            )}" disabled>
+          </div>
+          <div class="form-group">
+            <label for="voterFormNationalId">ID number</label>
+            <input id="voterFormNationalId" type="text" value="${escapeHtml(
+              v.nationalId || v.id || ""
+            )}" placeholder="National ID">
+          </div>
+          <div class="form-group">
+            <label for="voterFormName">Full name</label>
+            <input id="voterFormName" type="text" value="${escapeHtml(
+              v.fullName || ""
+            )}" placeholder="Full name" required>
+          </div>
+          <div class="form-group">
+            <label for="voterFormSequence">Sequence</label>
+            <input id="voterFormSequence" type="number" value="${escapeHtml(
+              v.sequence ?? ""
+            )}" placeholder="Seq" min="1">
+          </div>
+          <div class="form-group">
+            <label for="voterFormDob">Date of birth</label>
+            <input id="voterFormDob" type="date" value="${escapeHtml(
+              (v.dateOfBirth || "").slice(0, 10)
+            )}">
+          </div>
+          <div class="form-group">
+            <label for="voterFormAge">Age</label>
+            <input id="voterFormAge" type="number" min="0" value="${escapeHtml(
+              v.age ?? ""
+            )}" placeholder="Age">
+          </div>
+          <div class="form-group">
+            <label for="voterFormGender">Gender</label>
+            <select id="voterFormGender">
+              <option value=""${!v.gender ? " selected" : ""}>—</option>
+              <option value="male"${
+                String(v.gender || "").toLowerCase() === "male" ? " selected" : ""
+              }>Male</option>
+              <option value="female"${
+                String(v.gender || "").toLowerCase() === "female" ? " selected" : ""
+              }>Female</option>
+              <option value="other"${
+                String(v.gender || "").toLowerCase() === "other" ? " selected" : ""
+              }>Other</option>
+            </select>
+          </div>
+          <div class="form-group form-group--full">
+            <label for="voterFormPhotoUrl">Photo URL (optional)</label>
+            <input id="voterFormPhotoUrl" type="text" value="${escapeHtml(
+              v.photoUrl || ""
+            )}" placeholder="https://...">
+          </div>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="voterFormNationalId">ID number</label>
-        <input id="voterFormNationalId" type="text" value="${escapeHtml(v.nationalId || v.id || "")}" placeholder="National ID">
+
+      <div class="form-section">
+        <h3 class="form-section__title">Address &amp; contact</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="voterFormBallotBox">Ballot box</label>
+            <input id="voterFormBallotBox" type="text" value="${escapeHtml(
+              v.ballotBox || ""
+            )}" placeholder="Ballot box">
+          </div>
+          <div class="form-group">
+            <label for="voterFormIsland">Island</label>
+            <input id="voterFormIsland" type="text" value="${escapeHtml(
+              v.island || ""
+            )}" placeholder="Island">
+          </div>
+          <div class="form-group form-group--full">
+            <label for="voterFormAddress">Permanent address</label>
+            <input id="voterFormAddress" type="text" value="${escapeHtml(
+              v.permanentAddress || ""
+            )}" placeholder="Address">
+          </div>
+          <div class="form-group">
+            <label for="voterFormCurrentLocation">Current location</label>
+            <input id="voterFormCurrentLocation" type="text" value="${escapeHtml(
+              v.currentLocation || ""
+            )}" placeholder="Current location">
+          </div>
+          <div class="form-group">
+            <label for="voterFormPhone">Phone</label>
+            <input id="voterFormPhone" type="text" value="${escapeHtml(
+              v.phone || ""
+            )}" placeholder="Phone">
+          </div>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="voterFormSequence">Sequence</label>
-        <input id="voterFormSequence" type="number" value="${v.sequence ?? ""}" placeholder="Seq" min="1">
+
+      <div class="form-section">
+        <h3 class="form-section__title">Campaign status</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="voterFormSupport">Support status</label>
+            <select id="voterFormSupport">
+              <option value="supporting"${
+                support === "supporting" ? " selected" : ""
+              }>Supporting</option>
+              <option value="leaning"${
+                support === "leaning" ? " selected" : ""
+              }>Leaning</option>
+              <option value="opposed"${
+                support === "opposed" ? " selected" : ""
+              }>Opposed</option>
+              <option value="unknown"${
+                support === "unknown" ? " selected" : ""
+              }>Unknown</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="voterFormPledge">Overall pledge</label>
+            <select id="voterFormPledge">
+              <option value="yes"${
+                (v.pledgeStatus || "") === "yes" ? " selected" : ""
+              }>Yes</option>
+              <option value="no"${
+                (v.pledgeStatus || "") === "no" ? " selected" : ""
+              }>No</option>
+              <option value="undecided"${
+                (v.pledgeStatus || "") === "undecided" || !v.pledgeStatus
+                  ? " selected"
+                  : ""
+              }>Undecided</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="voterFormPledgedAt">Date pledged</label>
+            <input id="voterFormPledgedAt" type="date" value="${escapeHtml(
+              pledgedAt.slice(0, 10)
+            )}">
+          </div>
+          <div class="form-group">
+            <label for="voterFormVolunteer">Assigned agent</label>
+            <input id="voterFormVolunteer" type="text" value="${escapeHtml(
+              v.volunteer || ""
+            )}" placeholder="Agent name">
+          </div>
+          <div class="form-group">
+            <label for="voterFormMet">Met?</label>
+            <select id="voterFormMet">
+              <option value="not-met"${
+                met !== "met" ? " selected" : ""
+              }>No</option>
+              <option value="met"${met === "met" ? " selected" : ""}>Yes</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="voterFormPersuadable">Persuadable?</label>
+            <select id="voterFormPersuadable">
+              <option value="unknown"${
+                persuadable === "unknown" ? " selected" : ""
+              }>Unknown</option>
+              <option value="yes"${
+                persuadable === "yes" ? " selected" : ""
+              }>Yes</option>
+              <option value="no"${
+                persuadable === "no" ? " selected" : ""
+              }>No</option>
+            </select>
+          </div>
+          <div class="form-group form-group--full">
+            <label for="voterFormCallComments">Call comments</label>
+            <textarea id="voterFormCallComments" rows="2" placeholder="Call comments">${escapeHtml(
+              v.callComments || ""
+            )}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="voterFormVotedAt">Voted at (ISO)</label>
+            <input id="voterFormVotedAt" type="text" value="${escapeHtml(
+              votedAt
+            )}" placeholder="Leave empty if not voted">
+          </div>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="voterFormBallotBox">Ballot box</label>
-        <input id="voterFormBallotBox" type="text" value="${escapeHtml(v.ballotBox || "")}" placeholder="Ballot box">
+
+      <div class="form-section">
+        <h3 class="form-section__title">Transportation</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="voterFormTransportNeeded">Transportation needed</label>
+            <select id="voterFormTransportNeeded">
+              <option value="no"${!transportNeeded ? " selected" : ""}>No</option>
+              <option value="yes"${transportNeeded ? " selected" : ""}>Yes</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="voterFormTransportType">Trip type</label>
+            <select id="voterFormTransportType">
+              <option value="oneway"${
+                transportType !== "return" ? " selected" : ""
+              }>One way</option>
+              <option value="return"${
+                transportType === "return" ? " selected" : ""
+              }>Return</option>
+            </select>
+          </div>
+          <div class="form-group form-group--full">
+            <label for="voterFormTransportRoute">Route</label>
+            <input id="voterFormTransportRoute" type="text" value="${escapeHtml(
+              transportRoute
+            )}" placeholder="Route name (e.g. North pickup run 1)">
+            <p class="helper-text">Use a route name that matches your Zero Day transport trips.</p>
+          </div>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="voterFormIsland">Island</label>
-        <input id="voterFormIsland" type="text" value="${escapeHtml(v.island || "")}" placeholder="Island">
-      </div>
-      <div class="form-group">
-        <label for="voterFormAddress">Permanent address</label>
-        <input id="voterFormAddress" type="text" value="${escapeHtml(v.permanentAddress || "")}" placeholder="Address">
-      </div>
-      <div class="form-group">
-        <label for="voterFormPhone">Phone</label>
-        <input id="voterFormPhone" type="text" value="${escapeHtml(v.phone || "")}" placeholder="Phone">
-      </div>
-      <div class="form-group">
-        <label for="voterFormPledge">Pledge</label>
-        <select id="voterFormPledge">
-          <option value="yes"${(v.pledgeStatus || "") === "yes" ? " selected" : ""}>Yes</option>
-          <option value="no"${(v.pledgeStatus || "") === "no" ? " selected" : ""}>No</option>
-          <option value="undecided"${(v.pledgeStatus || "") === "undecided" || !v.pledgeStatus ? " selected" : ""}>Undecided</option>
-        </select>
-      </div>
-      <div class="form-group form-group--full">
-        <label for="voterFormNotes">Notes</label>
-        <textarea id="voterFormNotes" rows="2" placeholder="Notes">${escapeHtml(v.notes || "")}</textarea>
+
+      <div class="form-section">
+        <h3 class="form-section__title">Notes</h3>
+        <div class="form-grid">
+          <div class="form-group form-group--full">
+            <label for="voterFormNotes">Notes</label>
+            <textarea id="voterFormNotes" rows="3" placeholder="Notes">${escapeHtml(
+              v.notes || ""
+            )}</textarea>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -802,8 +997,24 @@ function openVoterForm(existingVoter) {
     const ballotBox = (body.querySelector("#voterFormBallotBox").value || "").trim();
     const island = (body.querySelector("#voterFormIsland").value || "").trim();
     const permanentAddress = (body.querySelector("#voterFormAddress").value || "").trim();
+    const currentLocation = (body.querySelector("#voterFormCurrentLocation")?.value || "").trim();
     const phone = (body.querySelector("#voterFormPhone").value || "").trim();
     const pledgeStatus = body.querySelector("#voterFormPledge").value || "undecided";
+    const supportStatus = (body.querySelector("#voterFormSupport")?.value || "unknown").trim();
+    const pledgedAt = (body.querySelector("#voterFormPledgedAt")?.value || "").trim();
+    const volunteer = (body.querySelector("#voterFormVolunteer")?.value || "").trim();
+    const metStatus = (body.querySelector("#voterFormMet")?.value || "not-met").trim();
+    const persuadable = (body.querySelector("#voterFormPersuadable")?.value || "unknown").trim();
+    const callComments = (body.querySelector("#voterFormCallComments")?.value || "").trim();
+    const photoUrl = (body.querySelector("#voterFormPhotoUrl")?.value || "").trim();
+    const dateOfBirth = (body.querySelector("#voterFormDob")?.value || "").trim();
+    const ageRaw = (body.querySelector("#voterFormAge")?.value || "").trim();
+    const age = ageRaw === "" ? "" : Number(ageRaw);
+    const gender = (body.querySelector("#voterFormGender")?.value || "").trim();
+    const votedAt = (body.querySelector("#voterFormVotedAt")?.value || "").trim();
+    const transportNeeded = (body.querySelector("#voterFormTransportNeeded")?.value || "no") === "yes";
+    const transportType = (body.querySelector("#voterFormTransportType")?.value || "oneway").trim();
+    const transportRoute = (body.querySelector("#voterFormTransportRoute")?.value || "").trim();
     const notes = (body.querySelector("#voterFormNotes").value || "").trim();
 
     if (isEdit) {
@@ -813,8 +1024,23 @@ function openVoterForm(existingVoter) {
       existingVoter.ballotBox = ballotBox;
       existingVoter.island = island;
       existingVoter.permanentAddress = permanentAddress;
+      existingVoter.currentLocation = currentLocation;
       existingVoter.phone = phone;
       existingVoter.pledgeStatus = pledgeStatus;
+      existingVoter.supportStatus = supportStatus || existingVoter.supportStatus || "unknown";
+      existingVoter.pledgedAt = pledgedAt;
+      existingVoter.volunteer = volunteer;
+      existingVoter.metStatus = metStatus;
+      existingVoter.persuadable = persuadable;
+      existingVoter.callComments = callComments;
+      existingVoter.photoUrl = photoUrl;
+      existingVoter.dateOfBirth = dateOfBirth;
+      existingVoter.age = age;
+      existingVoter.gender = gender;
+      existingVoter.votedAt = votedAt;
+      existingVoter.transportNeeded = transportNeeded;
+      existingVoter.transportType = transportType;
+      existingVoter.transportRoute = transportRoute;
       existingVoter.notes = notes;
       if (selectedVoterId === existingVoter.id) renderVoterDetails(existingVoter);
     } else {
@@ -825,24 +1051,28 @@ function openVoterForm(existingVoter) {
         ballotBox,
         fullName: name,
         permanentAddress,
-        dateOfBirth: "",
-        age: "",
+        dateOfBirth,
+        age,
         pledgeStatus,
-        gender: "",
+        gender,
         island,
-        currentLocation: "",
+        currentLocation,
         nationalId: nationalId || id,
         phone,
         notes,
-        callComments: "",
-        supportStatus: "unknown",
+        callComments,
+        supportStatus: supportStatus || "unknown",
         interactions: [],
         candidatePledges: {},
-        volunteer: "",
-        metStatus: "not-met",
-        persuadable: "unknown",
-        pledgedAt: "",
-        photoUrl: "",
+        volunteer,
+        metStatus,
+        persuadable,
+        pledgedAt,
+        photoUrl,
+        votedAt,
+        transportNeeded,
+        transportType,
+        transportRoute,
       };
       currentVoters.push(newVoter);
     }
