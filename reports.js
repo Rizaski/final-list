@@ -279,12 +279,25 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   const candidateSummaryEl = document.getElementById("reportsCandidatePledgeSummary");
   const reportsModule = document.getElementById("module-reports");
 
-  // Candidate users only see the "Candidate pledge summary" card (their pledged voters list)
-  const currentUserForView = getCurrentUser ? getCurrentUser() : null;
-  if (reportsModule && currentUserForView?.role === "candidate" && currentUserForView?.candidateId) {
+  function applyCandidateOnlyView() {
+    const user = getCurrentUser ? getCurrentUser() : null;
+    const isCandidate = user?.role === "candidate" && user?.candidateId;
+    if (!reportsModule || !candidateSummaryEl || !isCandidate) return;
+    const candidateCard = candidateSummaryEl.closest(".card");
+    if (!candidateCard) return;
     reportsModule.querySelectorAll(".card").forEach((card) => {
-      if (!card.querySelector("#reportsCandidatePledgeSummary")) card.style.display = "none";
+      card.style.display = card === candidateCard ? "" : "none";
     });
+    const moduleHeader = reportsModule.querySelector(".module-header");
+    if (moduleHeader) moduleHeader.style.display = "none";
+  }
+
+  applyCandidateOnlyView();
+  if (reportsModule) {
+    const obs = new MutationObserver(() => {
+      if (reportsModule.classList.contains("module--active")) applyCandidateOnlyView();
+    });
+    obs.observe(reportsModule, { attributes: true, attributeFilter: ["class"] });
   }
 
   function openReportDetails(reportType) {
