@@ -667,9 +667,10 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
         alert(`Could not create pledge voters share link: ${err?.message || String(err)}`);
         return;
       }
-      const pathBase = window.location.pathname.replace(/index\.html$/i, "").replace(/\/$/, "");
-      const baseUrl = window.location.origin + pathBase + (pathBase ? "/" : "");
-      const url = `${baseUrl}pledged-report-view.html?token=${encodeURIComponent(token)}`;
+      // Build URL robustly regardless of whether index.html is at the web root or a subfolder.
+      const urlObj = new URL("pledged-report-view.html", window.location.href);
+      urlObj.searchParams.set("token", token);
+      const url = urlObj.toString();
       const shareBody = document.createElement("div");
       shareBody.innerHTML = `
         <p class="helper-text">Anyone with this link can view the pledged voters list (read-only).</p>
