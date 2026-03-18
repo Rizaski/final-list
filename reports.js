@@ -1,7 +1,7 @@
-import { getPledgeByBallotBox, getVoterImageSrc } from "./voters.js";
+import { getPledgeByBallotBox, getVoterImageSrc, updateVoterDoorToDoorFields } from "./voters.js";
 import { getVotedVoterIds, getVotedTimeMarked } from "./zeroDay.js";
 import { openModal, closeModal } from "./ui.js";
-import { getCandidates } from "./settings.js";
+import { getCandidates, getAgents } from "./settings.js";
 import { firebaseInitPromise } from "./firebase.js";
 
 const REPORT_PLEDGED_PAGE_SIZE = 20;
@@ -361,6 +361,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       return cp[String(candidateId)] === "yes";
     });
     const candidates = getCandidates();
+    const agents = getAgents();
     const candidate = candidates.find((c) => String(c.id) === String(candidateId));
     const title = candidate
       ? `Pledged voters – ${candidate.name || candidateId}`
@@ -536,6 +537,10 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
                 return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(formatted)}">Voted</span>`;
               })()
             : '<span class="text-muted">—</span>';
+          const volunteer = v.volunteer ?? "";
+          const agentOptions =
+            '<option value="">Unassigned</option>' +
+            agents.map((a) => `<option value="${escapeHtml(a.name)}"${a.name === volunteer ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("");
           const tr = document.createElement("tr");
           tr.innerHTML = `
             <td>${v.sequence ?? ""}</td>
@@ -545,7 +550,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
             <td>${escapeHtml(v.permanentAddress ?? "")}</td>
             <td><span class="${pledgePillClass(pledgeStatus)}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
             <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
-            <td>${escapeHtml(v.volunteer ?? "")}</td>
+            <td><select class="inline-select report-pledged-agent" data-voter-id="${escapeHtml(v.id)}">${agentOptions}</select></td>
             <td>${escapeHtml(v.phone ?? "")}</td>
             <td>${escapeHtml(v.island ?? "")}</td>
             <td class="voted-status-cell">${votedCell}</td>
@@ -588,6 +593,13 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     const groupByEl = body.querySelector("#reportPledgedGroupBy");
     [searchEl, filterPledgeEl, filterBoxEl, sortEl, groupByEl].forEach((el) => {
       if (el) el.addEventListener(el.id === "reportPledgedSearch" ? "input" : "change", () => { currentPage = 1; renderReportTable(); });
+    });
+
+    body.addEventListener("change", (e) => {
+      if (e.target.matches(".report-pledged-agent")) {
+        const voterId = e.target.getAttribute("data-voter-id");
+        if (voterId) updateVoterDoorToDoorFields(voterId, { volunteer: e.target.value || "" });
+      }
     });
 
     renderReportTable();
