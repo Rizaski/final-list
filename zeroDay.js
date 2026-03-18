@@ -546,7 +546,11 @@ function openTripStatusModal(tripId) {
 function openTripVotersModal(trip) {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const ids = new Set((trip.voterIds || []).map(String));
-  const assigned = voters.filter((v) => ids.has(String(v.id)));
+  const assigned = voters.filter((v) => {
+    const id = v && v.id != null ? String(v.id) : "";
+    const nationalId = v && v.nationalId != null ? String(v.nationalId) : "";
+    return ids.has(id) || ids.has(nationalId);
+  });
 
   const title = `Assigned voters – ${trip.route || "Route"}`;
   const body = document.createElement("div");
