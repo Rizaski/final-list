@@ -2296,6 +2296,14 @@ body.list-workspace-page {
   position: relative;
 }
 
+/* Reports: Candidate pledge summary – horizontal scroll on mobile so all columns are viewable */
+#reportsCandidatePledgeSummary .table-wrapper {
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+}
+
 /* Pagination (15 rows per page) */
 .pagination-bar {
   display: flex;

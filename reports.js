@@ -266,8 +266,11 @@ function renderCandidatePledgeSummary(container, voters, options = {}) {
     });
 
   table.appendChild(tbody);
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrapper";
+  wrap.appendChild(table);
   container.innerHTML = "";
-  container.appendChild(table);
+  container.appendChild(wrap);
 }
 
 export function initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser }) {
