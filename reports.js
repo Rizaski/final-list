@@ -640,23 +640,33 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
         return;
       }
       const token = "pr-" + Math.random().toString(36).slice(2, 12) + "-" + Date.now().toString(36);
-      const voters = baseList.map((v) => ({
-        id: v.id,
-        sequence: v.sequence,
-        fullName: v.fullName,
-        nationalId: v.nationalId,
-        permanentAddress: v.permanentAddress,
-        ballotBox: (v.ballotBox || "").trim(),
-          assignedAgent: assignedByVoterId[String(v.id)] || "",
-        phone: v.phone,
-        island: v.island,
-      }));
-      await api.setPledgedReportShareFs(token, {
-        candidateId,
-        candidateName: candidate ? (candidate.name || candidateId) : String(candidateId),
-        voters,
-        updatedAt: new Date().toISOString(),
+      const voters = baseList.map((v) => {
+        const assignedAgent = assignedByVoterId[String(v.id)] || "";
+        // Keep this payload as small as possible because Firestore rules enforce a size limit.
+        const out = {
+          sequence: v.sequence,
+          fullName: v.fullName,
+          nationalId: v.nationalId,
+          permanentAddress: v.permanentAddress,
+          ballotBox: (v.ballotBox || "").trim(),
+          phone: v.phone,
+          island: v.island,
+        };
+        if (assignedAgent) out.assignedAgent = assignedAgent;
+        return out;
       });
+      try {
+        await api.setPledgedReportShareFs(token, {
+          candidateId,
+          candidateName: candidate ? (candidate.name || candidateId) : String(candidateId),
+          voters,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error("[Reports] Failed creating pledged voters share doc", err);
+        alert(`Could not create pledge voters share link: ${err?.message || String(err)}`);
+        return;
+      }
       const pathBase = window.location.pathname.replace(/index\.html$/i, "").replace(/\/$/, "");
       const baseUrl = window.location.origin + pathBase + (pathBase ? "/" : "");
       const url = `${baseUrl}pledged-report-view.html?token=${encodeURIComponent(token)}`;
