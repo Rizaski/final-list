@@ -346,6 +346,36 @@ function getEmptyTransportMessage() {
   return "No trips yet. Add a trip and choose Flight or Speed boat.";
 }
 
+function getTripAssignedVoterCount(trip) {
+  const byIds = Array.isArray(trip?.voterIds) ? trip.voterIds : [];
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  if (!voters.length) {
+    return trip?.voterCount != null ? trip.voterCount : byIds.length;
+  }
+  const normalizeRoute = (s) =>
+    String(s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+  const routeKey = normalizeRoute(trip?.route || "");
+  const dedup = new Set();
+  byIds.forEach((id) => {
+    if (id != null && String(id).trim()) dedup.add(String(id));
+  });
+  if (routeKey) {
+    voters.forEach((v) => {
+      if (!v || v.transportNeeded !== true) return;
+      const r = normalizeRoute(v.transportRoute);
+      if (!r) return;
+      if (r === routeKey || r.includes(routeKey) || routeKey.includes(r)) {
+        const key = v.id != null ? String(v.id) : v.nationalId != null ? String(v.nationalId) : "";
+        if (key) dedup.add(key);
+      }
+    });
+  }
+  return dedup.size;
+}
+
 function renderZeroDayTripsTable() {
   if (!zeroDayTripsTableBody) return;
   const trips = getFilteredTransportTrips();
@@ -361,7 +391,7 @@ function renderZeroDayTripsTable() {
   trips.forEach((trip) => {
     const tripTypeEntry = TRIP_TYPES.find((t) => t.value === trip.tripType);
     const typeLabel = (tripTypeEntry && tripTypeEntry.label) != null ? tripTypeEntry.label : (trip.tripType != null ? trip.tripType : "–");
-    const count = trip.voterCount != null ? trip.voterCount : (Array.isArray(trip.voterIds) ? trip.voterIds.length : 0);
+    const count = getTripAssignedVoterCount(trip);
     const statusClass = tripStatusBadgeClass(trip.status);
     const tr = document.createElement("tr");
     tr.dataset.tripId = String(trip.id);
