@@ -701,8 +701,10 @@ function openTripVotersModal(trip) {
     let list = applySearchFilter(assigned, searchQuery);
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
     const newTable = buildTableFromDisplayList(displayList, {
+      includeVotedStatus: true,
       includeTimeVoted: false,
       showUnmarkAction: false,
+      usePledgePills: true,
     });
     tableWrap.innerHTML = "";
     tableWrap.appendChild(newTable.firstElementChild);
@@ -1159,6 +1161,8 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
 function buildTableFromDisplayList(displayList, options = {}) {
   const includeTimeVoted = !!options.includeTimeVoted;
   const showUnmarkAction = !!options.showUnmarkAction;
+  const includeVotedStatus = !!options.includeVotedStatus;
+  const usePledgePills = !!options.usePledgePills;
   const columns = [
     "Image",
     "Seq",
@@ -1170,6 +1174,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
     "Pledge",
     "Agent",
   ];
+  if (includeVotedStatus) columns.push("Voted status");
   if (includeTimeVoted) columns.push("Time voted");
   if (showUnmarkAction) columns.push("Actions");
   const colCount = columns.length;
@@ -1200,7 +1205,17 @@ function buildTableFromDisplayList(displayList, options = {}) {
       }
       const v = item.voter;
       const pledgeLabel = getPledgeLabel(v.pledgeStatus);
+      const pledgeClass =
+        v.pledgeStatus === "yes"
+          ? "pledge-pill pledge-pill--pledged"
+          : v.pledgeStatus === "no"
+            ? "pledge-pill pledge-pill--not-pledged"
+            : "pledge-pill pledge-pill--undecided";
       const agent = getAgentForVoter(v.id);
+      const votedTime = getVotedTimeMarked(v.id);
+      const votedCell = votedTime
+        ? '<span class="pledge-pill pledge-pill--pledged">Voted</span>'
+        : '<span class="pledge-pill pledge-pill--undecided">Not voted</span>';
       const rawId = (v.nationalId || v.id || "").toString().trim().replace(/\s+/g, "");
       const photoSrc = rawId ? "photos/" + rawId + ".jpg" : "";
       const imageCell = photoSrc
@@ -1229,9 +1244,12 @@ function buildTableFromDisplayList(displayList, options = {}) {
         v.permanentAddress != null ? v.permanentAddress : "",
         v.phone != null ? v.phone : "",
         v.ballotBox || (v.island != null ? v.island : ""),
-        pledgeLabel,
+        usePledgePills
+          ? { html: `<span class="${escapeHtml(pledgeClass)}">${escapeHtml(pledgeLabel)}</span>` }
+          : pledgeLabel,
         agent,
       ];
+      if (includeVotedStatus) row.push({ html: votedCell });
       if (includeTimeVoted) row.push(formatDateTime(v._timeMarked));
       if (showUnmarkAction) {
         row.push(
@@ -1248,7 +1266,9 @@ function buildTableFromDisplayList(displayList, options = {}) {
           .map((cell) =>
             typeof cell === "string" && cell.startsWith("<button")
               ? `<td>${cell}</td>`
-              : `<td>${escapeHtml(String(cell))}</td>`
+              : cell && typeof cell === "object" && typeof cell.html === "string"
+                ? `<td>${cell.html}</td>`
+                : `<td>${escapeHtml(String(cell))}</td>`
           )
           .join("");
       tbody.appendChild(tr);
