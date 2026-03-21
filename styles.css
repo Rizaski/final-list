@@ -3180,19 +3180,23 @@ body.list-workspace-page {
   width: 1%;
   white-space: nowrap;
   vertical-align: middle;
+  text-align: right;
 }
 
 .settings-agents-crud {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   justify-content: flex-end;
+  white-space: nowrap;
 }
 
 .settings-agents-crud .ghost-button--small {
+  flex-shrink: 0;
   font-size: 11px;
   padding: 4px 10px;
+  white-space: nowrap;
 }
 
 .settings-agents-crud__delete {
