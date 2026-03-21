@@ -102,13 +102,14 @@ function applyUserToShell(user) {
     settingsNavItem.style.display = user?.isAdmin ? "flex" : "none";
   }
 
-  // Candidate users only see Reports (their pledged voters list)
+  // Candidate users: Voters (full list + their pledge) and Reports; no other modules
   const isCandidateOnly = user?.role === "candidate" && user?.candidateId;
   navButtons.forEach((btn) => {
     const moduleKey = btn.dataset.module;
     if (moduleKey === "settings") return; // already handled above
     if (isCandidateOnly) {
-      btn.style.display = moduleKey === "reports" ? "flex" : "none";
+      const allowed = moduleKey === "voters" || moduleKey === "reports";
+      btn.style.display = allowed ? "flex" : "none";
     } else {
       btn.style.display = "";
     }
@@ -142,8 +143,13 @@ function switchModule(key) {
     // Guard against programmatic attempts to open settings
     return;
   }
-  // Candidate users can only open Reports (their pledged voters list)
-  if (currentUser?.role === "candidate" && currentUser?.candidateId && key !== "reports") {
+  // Candidate users can only open Voters or Reports
+  if (
+    currentUser?.role === "candidate" &&
+    currentUser?.candidateId &&
+    key !== "reports" &&
+    key !== "voters"
+  ) {
     return;
   }
   Object.entries(modulesMap).forEach(([moduleKey, el]) => {
@@ -600,7 +606,7 @@ async function startAppModules(firebaseApi) {
   startAppModules._started = true;
   console.log("[App] Starting application modules…");
 
-  const votersContext = await initVotersModule();
+  const votersContext = await initVotersModule(getCurrentUser);
   const monitorToken = new URLSearchParams(window.location.search).get("monitor");
 
   if (monitorToken) {
@@ -678,7 +684,7 @@ async function handleAuthenticatedUser(firebaseApi, fbUser) {
     const user = { email, name, isAdmin, role, candidateId };
     setCurrentUser(user);
     applyUserToShell(user);
-    switchModule(user?.role === "candidate" && user?.candidateId ? "reports" : "dashboard");
+    switchModule(user?.role === "candidate" && user?.candidateId ? "voters" : "dashboard");
     const appLoader = document.getElementById("appLoaderOverlay");
     if (appLoader) {
       appLoader.hidden = false;
@@ -726,7 +732,7 @@ async function boot() {
   const monitorToken = new URLSearchParams(window.location.search).get("monitor");
   if (monitorToken) {
     // Standalone ballot-box page uses token-based access; no auth shell.
-    const votersContext = initVotersModule();
+    const votersContext = await initVotersModule(() => null);
     const appShell = document.querySelector(".app-shell");
     const monitorView = document.getElementById("monitor-view");
     const loginView = document.getElementById("login-view");

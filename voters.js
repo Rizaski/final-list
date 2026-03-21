@@ -11,8 +11,8 @@ import {
   createList,
   openListWorkspace,
 } from "./lists.js";
-
 const PAGE_SIZE = 15;
+const CANDIDATES_STORAGE_KEY = "candidates-data";
 const VOTERS_STORAGE_KEY = "voters-data";
 
 // Dynamic data: starts empty and is populated via bulk upload and in-app actions.
@@ -36,6 +36,71 @@ function saveVotersToStorage() {
 let selectedVoterId = null;
 let votersCurrentPage = 1;
 let unsubscribeVotersFs = null;
+
+/** Set by initVotersModule — used for candidate-only UI and pledge column logic. */
+let getCurrentUserFn = () => null;
+
+function getCandidateContext() {
+  try {
+    const u = typeof getCurrentUserFn === "function" ? getCurrentUserFn() : null;
+    if (!u || u.role !== "candidate" || !u.candidateId) return null;
+    return { candidateId: String(u.candidateId).trim() };
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Pledge shown in list / filters: per-candidate for candidate users, overall pledge otherwise. */
+function getEffectivePledgeStatus(voter) {
+  const ctx = getCandidateContext();
+  if (ctx && voter) {
+    const cp = voter.candidatePledges || {};
+    const s = cp[String(ctx.candidateId)];
+    if (s === "yes" || s === "no" || s === "undecided") return s;
+    return "undecided";
+  }
+  return (voter && voter.pledgeStatus) || "undecided";
+}
+
+function pledgeStatusLabel(s) {
+  if (s === "yes") return "Yes";
+  if (s === "no") return "No";
+  return "Undecided";
+}
+
+/** Local read only — avoids circular import with settings.js */
+function getCandidateRecordById(candidateId) {
+  try {
+    const raw = localStorage.getItem(CANDIDATES_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.find((c) => String(c.id) === String(candidateId)) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function applyCandidateVotersUi() {
+  const ctx = getCandidateContext();
+  const isCand = !!ctx;
+  const addBtn = document.getElementById("addVoterButton");
+  const createListBtn = document.getElementById("createListButton");
+  const myListsWrap = document.getElementById("myListsSelect")?.closest(".field-group");
+  if (addBtn) addBtn.style.display = isCand ? "none" : "";
+  if (createListBtn) createListBtn.style.display = isCand ? "none" : "";
+  if (myListsWrap) myListsWrap.style.display = isCand ? "none" : "";
+  const pledgeTh = document.querySelector("#votersTable thead th[data-sort-key='pledge']");
+  if (pledgeTh) {
+    pledgeTh.innerHTML = isCand
+      ? `Your pledge<span class="sort-indicator"></span>`
+      : `Pledge<span class="sort-indicator"></span>`;
+  }
+  const filterSel = document.getElementById("voterFilterPledge");
+  if (filterSel && filterSel.options[0]) {
+    filterSel.options[0].textContent = isCand ? "All (your pledge)" : "All pledge statuses";
+  }
+}
 
 const VOTER_TABLE_COLUMN_COUNT = 8;
 
@@ -113,7 +178,7 @@ function getFilteredSortedGroupedVoters() {
   const groupBy = voterGroupByEl?.value || "none";
 
   let list = currentVoters.filter((voter) => {
-    if (pledgeFilter !== "all" && voter.pledgeStatus !== pledgeFilter)
+    if (pledgeFilter !== "all" && getEffectivePledgeStatus(voter) !== pledgeFilter)
       return false;
     if (query) {
       const name = (voter.fullName || "").toLowerCase();
@@ -146,7 +211,7 @@ function getFilteredSortedGroupedVoters() {
       case "island":
         return (a.island || "").localeCompare(b.island || "", "en");
       case "pledge":
-        return (a.pledgeStatus || "").localeCompare(b.pledgeStatus || "", "en");
+        return getEffectivePledgeStatus(a).localeCompare(getEffectivePledgeStatus(b), "en");
       case "address":
         return (a.permanentAddress || "").localeCompare(
           b.permanentAddress || "",
@@ -166,7 +231,7 @@ function getFilteredSortedGroupedVoters() {
 
   const getGroupKey = (v) => {
     if (groupBy === "island") return v.ballotBox || "Unassigned";
-    if (groupBy === "pledge") return v.pledgeStatus || "undecided";
+    if (groupBy === "pledge") return getEffectivePledgeStatus(v) || "undecided";
     return "";
   };
   const displayList = [];
@@ -246,6 +311,8 @@ function renderVotersTable() {
     const photoCell = photoSrc
       ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
+    const effPledge = getEffectivePledgeStatus(voter);
+    const pledgeDisplay = pledgeStatusLabel(effPledge);
     const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
     const votedCell = timeMarked
       ? (() => {
@@ -268,13 +335,16 @@ function renderVotersTable() {
       <td>${voter.fullName}</td>
       <td>${voter.permanentAddress ?? ""}</td>
       <td><span class="${pledgePillClass(
-        voter.pledgeStatus
-      )}">${voter.pledgeStatus || "No"}</span></td>
+        effPledge
+      )}">${pledgeDisplay}</span></td>
       <td class="voted-status-cell">${votedCell}</td>
       <td style="text-align:right;">
-        <button type="button" class="ghost-button ghost-button--small" data-voter-edit="${escapeHtml(
-          voter.id
-        )}" title="Edit">Edit</button>
+        ${
+          getCandidateContext()
+            ? '<span class="text-muted">—</span>'
+            : `<button type="button" class="ghost-button ghost-button--small" data-voter-edit="${escapeHtml(
+                voter.id
+              )}" title="Edit">Edit</button>
         <button type="button" class="ghost-button ghost-button--small" data-voter-delete="${escapeHtml(
           voter.id
         )}" title="Delete">Delete</button>
@@ -284,11 +354,12 @@ function renderVotersTable() {
                 voter.id
               )}" title="Mark not voted">Not voted</button>`
             : ""
+        }`
         }
       </td>
     `;
     tr.addEventListener("click", (e) => {
-      if (e.target.closest("[data-voter-edit], [data-voter-delete]")) return;
+      if (e.target.closest("[data-voter-edit], [data-voter-delete], [data-voter-unmark]")) return;
       selectVoter(voter.id);
     });
     votersTableBody.appendChild(tr);
@@ -315,6 +386,7 @@ function renderVotersTable() {
   }
 
   updateVoterSortIndicators();
+  applyCandidateVotersUi();
 }
 
 function updateVoterSortIndicators() {
@@ -394,6 +466,25 @@ function renderVoterDetails(voter) {
   const availableRoutes = getAvailableTransportRoutes();
   const transportRoute = voter.transportRoute || "";
   const transportType = voter.transportType || "oneway";
+  const candCtx = getCandidateContext();
+  const candRecord = candCtx ? getCandidateRecordById(candCtx.candidateId) : null;
+  const candLabel = candRecord?.name ? escapeHtml(candRecord.name) : "";
+  const myPledge = candCtx ? getEffectivePledgeStatus(voter) : "";
+  const votedStatusHtml = (() => {
+    const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
+    if (timeMarked) {
+      const d = new Date(timeMarked);
+      const formatted = d.toLocaleString("en-MV", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      return `<span class="pledge-pill pledge-pill--pledged">Yes</span> ${escapeHtml(formatted)}`;
+    }
+    return '<span class="pledge-pill pledge-pill--undecided">No</span>';
+  })();
 
   voterDetailsSubtitle.textContent = voter.fullName;
   const detailsPhotoSrc = getVoterImageSrc(voter);
@@ -409,63 +500,47 @@ function renderVoterDetails(voter) {
         detailsPhotoSrc
       )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${detailsInitials}</div></div>`
     : `<div class="avatar-cell avatar-cell--large"><div class="avatar-circle">${detailsInitials}</div></div>`;
-  voterDetailsContent.innerHTML = `
-    <div class="voter-details-layout">
-      <section class="voter-details-section">
-        <h3 class="voter-details-section__title">Identity &amp; registration</h3>
+
+  const statusSectionHtml = candCtx
+    ? `
+      <section class="voter-details-section voter-details-section--full">
+        <h3 class="voter-details-section__title">Status</h3>
         <div class="details-grid details-grid--two-column">
           <div>
-            ${detailsPhoto}
+            <div class="detail-item-label">Support status</div>
+            <div class="detail-item-value">
+              <span class="${supportBadgeClass(
+                voter.supportStatus
+              )}">${voter.supportStatus || "Unknown"}</span>
+            </div>
           </div>
           <div>
-            <div class="detail-item-label">Full name</div>
-            <div class="detail-item-value">${voter.fullName}</div>
+            <div class="detail-item-label">Your pledge${candLabel ? ` — ${candLabel}` : ""}</div>
+            <div class="detail-item-value">
+              <label for="candidateDetailPledgeSelect" class="sr-only">Your pledge</label>
+              <select id="candidateDetailPledgeSelect" class="input">
+                <option value="yes"${myPledge === "yes" ? " selected" : ""}>Yes</option>
+                <option value="no"${myPledge === "no" ? " selected" : ""}>No</option>
+                <option value="undecided"${myPledge === "undecided" ? " selected" : ""}>Undecided</option>
+              </select>
+              <p class="helper-text" style="margin-top:6px;">Updates your campaign pledge for this voter (yes / no / undecided).</p>
+            </div>
           </div>
           <div>
-            <div class="detail-item-label">National ID</div>
-            <div class="detail-item-value">${voter.nationalId}</div>
+            <div class="detail-item-label">Overall campaign pledge</div>
+            <div class="detail-item-value">
+              <span class="${pledgePillClass(
+                voter.pledgeStatus
+              )}">${pledgeStatusLabel(voter.pledgeStatus || "undecided")}</span>
+            </div>
           </div>
           <div>
-            <div class="detail-item-label">Sequence</div>
-            <div class="detail-item-value">${voter.sequence ?? ""}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Ballot box</div>
-            <div class="detail-item-value">${voter.ballotBox ?? ""}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Date of birth</div>
-            <div class="detail-item-value">${dobDisplay}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Age</div>
-            <div class="detail-item-value">${ageDisplay}</div>
+            <div class="detail-item-label">Marked voted</div>
+            <div class="detail-item-value">${votedStatusHtml}</div>
           </div>
         </div>
-      </section>
-
-      <section class="voter-details-section">
-        <h3 class="voter-details-section__title">Address &amp; contact</h3>
-        <div class="details-grid details-grid--two-column">
-          <div>
-            <div class="detail-item-label">Permanent address</div>
-            <div class="detail-item-value">${voter.permanentAddress ?? ""}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Island</div>
-            <div class="detail-item-value">${voter.island}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Current location</div>
-            <div class="detail-item-value">${voter.currentLocation ?? ""}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Phone number</div>
-            <div class="detail-item-value">${voter.phone}</div>
-          </div>
-        </div>
-      </section>
-
+      </section>`
+    : `
       <section class="voter-details-section voter-details-section--full">
         <h3 class="voter-details-section__title">Status</h3>
         <div class="details-grid details-grid--two-column">
@@ -487,25 +562,29 @@ function renderVoterDetails(voter) {
           </div>
           <div>
             <div class="detail-item-label">Marked voted</div>
-            <div class="detail-item-value">${(function () {
-              const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
-              if (timeMarked) {
-                const d = new Date(timeMarked);
-                const formatted = d.toLocaleString("en-MV", {
-                  day: "2-digit",
-                  month: "short",
-                  year: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
-                return `<span class="pledge-pill pledge-pill--pledged">Yes</span> ${formatted}`;
-              }
-              return '<span class="pledge-pill pledge-pill--undecided">No</span>';
-            })()}</div>
+            <div class="detail-item-value">${votedStatusHtml}</div>
           </div>
         </div>
-      </section>
+      </section>`;
 
+  const transportSectionHtml = candCtx
+    ? `
+      <section class="voter-details-section voter-details-section--full">
+        <h3 class="voter-details-section__title">Transportation</h3>
+        <div class="details-grid details-grid--two-column">
+          <div>
+            <div class="detail-item-label">Transportation needed</div>
+            <div class="detail-item-value">${voter.transportNeeded ? "Yes" : "No"}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Route &amp; trip type</div>
+            <div class="detail-item-value">${escapeHtml(transportRoute || "—")} · ${
+        transportType === "return" ? "Return trip" : "One way"
+      }</div>
+          </div>
+        </div>
+      </section>`
+    : `
       <section class="voter-details-section voter-details-section--full">
         <h3 class="voter-details-section__title">Transportation</h3>
         <div class="details-grid details-grid--two-column">
@@ -572,13 +651,88 @@ function renderVoterDetails(voter) {
             </div>
           </div>
         </div>
+      </section>`;
+
+  voterDetailsContent.innerHTML = `
+    <div class="voter-details-layout">
+      <section class="voter-details-section">
+        <h3 class="voter-details-section__title">Identity &amp; registration</h3>
+        <div class="details-grid details-grid--two-column">
+          <div>
+            ${detailsPhoto}
+          </div>
+          <div>
+            <div class="detail-item-label">Full name</div>
+            <div class="detail-item-value">${voter.fullName}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">National ID</div>
+            <div class="detail-item-value">${voter.nationalId}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Sequence</div>
+            <div class="detail-item-value">${voter.sequence ?? ""}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Ballot box</div>
+            <div class="detail-item-value">${voter.ballotBox ?? ""}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Date of birth</div>
+            <div class="detail-item-value">${dobDisplay}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Age</div>
+            <div class="detail-item-value">${ageDisplay}</div>
+          </div>
+        </div>
       </section>
+
+      <section class="voter-details-section">
+        <h3 class="voter-details-section__title">Address &amp; contact</h3>
+        <div class="details-grid details-grid--two-column">
+          <div>
+            <div class="detail-item-label">Permanent address</div>
+            <div class="detail-item-value">${voter.permanentAddress ?? ""}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Island</div>
+            <div class="detail-item-value">${voter.island}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Current location</div>
+            <div class="detail-item-value">${voter.currentLocation ?? ""}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Phone number</div>
+            <div class="detail-item-value">${voter.phone}</div>
+          </div>
+        </div>
+      </section>
+
+      ${statusSectionHtml}
+      ${transportSectionHtml}
     </div>
   `;
 
-  voterNotesTextarea.disabled = false;
+  if (candCtx) {
+    voterNotesTextarea.disabled = true;
+    if (saveVoterNotesButton) saveVoterNotesButton.style.display = "none";
+  } else {
+    voterNotesTextarea.disabled = false;
+    if (saveVoterNotesButton) saveVoterNotesButton.style.display = "";
+  }
   voterNotesTextarea.value = voter.notes || "";
   saveVoterNotesButton.disabled = true;
+
+  const pledgeSel = document.getElementById("candidateDetailPledgeSelect");
+  if (pledgeSel && candCtx) {
+    pledgeSel.addEventListener("change", () => {
+      const val = pledgeSel.value;
+      if (val !== "yes" && val !== "no" && val !== "undecided") return;
+      updateVoterCandidatePledge(voter.id, candCtx.candidateId, val);
+    });
+  }
 
   voterInteractionTimeline.innerHTML = "";
   if (!voter.interactions || voter.interactions.length === 0) {
@@ -607,17 +761,19 @@ function renderVoterDetails(voter) {
   }
 
   // Bind notes
-  voterNotesTextarea.disabled = false;
-  voterNotesTextarea.value = voter.notes || "";
-  saveVoterNotesButton.disabled = true;
+  if (!candCtx) {
+    voterNotesTextarea.disabled = false;
+    voterNotesTextarea.value = voter.notes || "";
+    saveVoterNotesButton.disabled = true;
+  }
 
-  // Bind transportation controls
+  // Bind transportation controls (staff only)
   const transportNeededEl = document.getElementById("voterTransportNeeded");
   const transportRouteEl = document.getElementById("voterTransportRoute");
   const transportTypeEls = Array.from(
     document.querySelectorAll("[data-transport-type]")
   );
-  if (transportNeededEl && transportRouteEl) {
+  if (!candCtx && transportNeededEl && transportRouteEl) {
     const updateRoutesDisabled = () => {
       const disabled = !transportNeededEl.checked;
       transportRouteEl.disabled = disabled;
@@ -989,6 +1145,8 @@ function buildVoterFormFields(voter = null) {
 }
 
 function openVoterForm(existingVoter) {
+  const u = typeof getCurrentUserFn === "function" ? getCurrentUserFn() : null;
+  if (u?.role === "candidate" && u?.candidateId) return;
   const isEdit = !!existingVoter;
   const body = document.createElement("div");
   body.innerHTML = buildVoterFormFields(existingVoter);
@@ -1143,6 +1301,8 @@ function openVoterForm(existingVoter) {
 }
 
 function deleteVoter(voterId) {
+  const u = typeof getCurrentUserFn === "function" ? getCurrentUserFn() : null;
+  if (u?.role === "candidate" && u?.candidateId) return;
   const voter = currentVoters.find((v) => v.id === voterId);
   if (!voter) return;
   (async () => {
@@ -1175,7 +1335,8 @@ function deleteVoter(voterId) {
   })();
 }
 
-export async function initVotersModule() {
+export async function initVotersModule(getCurrentUser) {
+  getCurrentUserFn = typeof getCurrentUser === "function" ? getCurrentUser : () => null;
   const votersTableLoader = document.getElementById("votersTableLoader");
   if (votersTableLoader) votersTableLoader.hidden = false;
 
@@ -1446,6 +1607,8 @@ export function updateVoterPledgeStatus(voterId, pledgeStatus) {
 
 /** Update pledge for a single candidate; candidateId is the candidate's id (number or string). */
 export function updateVoterCandidatePledge(voterId, candidateId, status) {
+  const ctx = getCandidateContext();
+  if (ctx && String(candidateId) !== String(ctx.candidateId)) return;
   const v = currentVoters.find((x) => x.id === voterId);
   if (!v) return;
   if (!v.candidatePledges) v.candidatePledges = {};
