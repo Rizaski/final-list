@@ -1111,6 +1111,89 @@ body.sidebar-collapsed .nav-item {
   color: var(--color-text-muted);
 }
 
+/* Settings → Security (navigation + session) */
+.settings-panel--security .card--settings-accent {
+  border: 1px solid rgba(0, 156, 156, 0.22);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.07);
+  background: linear-gradient(
+    165deg,
+    rgba(0, 156, 156, 0.05) 0%,
+    var(--color-surface) 38%,
+    var(--color-surface) 100%
+  );
+}
+
+.card-body--settings-security {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-section {
+  padding: 14px 0 18px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.settings-section:last-of-type {
+  border-bottom: none;
+  padding-bottom: 8px;
+}
+
+.settings-section__head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.settings-section__icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: linear-gradient(145deg, var(--color-primary-soft), #ffffff);
+  border: 1px solid rgba(0, 156, 156, 0.25);
+  font-size: 14px;
+  color: var(--color-primary);
+  line-height: 1;
+}
+
+.settings-section__icon--muted {
+  opacity: 0.75;
+  background: rgba(15, 23, 42, 0.04);
+  border-color: var(--color-border-subtle);
+  color: var(--color-text-muted);
+}
+
+.settings-section__title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.settings-section__lead {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.settings-field--highlight {
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(0, 156, 156, 0.06);
+  border: 1px solid rgba(0, 156, 156, 0.18);
+}
+
+.form-actions--settings-security {
+  margin-top: 8px;
+  padding-top: 4px;
+}
+
 .module-header {
   display: flex;
   align-items: flex-start;
@@ -2966,6 +3049,185 @@ body.list-workspace-page {
   border-radius: 999px;
   border: 1px solid var(--color-border-subtle);
   background-color: #ffffff;
+}
+
+/* --- Agent dropdown (candidate voter panel, door-to-door, pledges, modals) --- */
+.agent-dropdown-field {
+  margin-top: 4px;
+  padding: 12px 14px 14px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(
+    145deg,
+    rgba(0, 156, 156, 0.06) 0%,
+    rgba(255, 255, 255, 0.95) 40%,
+    #ffffff 100%
+  );
+  border: 1px solid rgba(0, 156, 156, 0.22);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+.voter-details-section--agent {
+  border-left: 3px solid var(--color-primary);
+}
+
+.agent-dropdown-field__footer {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-dropdown-field__add-btn {
+  align-self: flex-start;
+}
+
+.agent-dropdown-field__hint {
+  margin: 0;
+  max-width: 42rem;
+}
+
+/* Custom chevron (replaces native arrow where appearance is removed) */
+.agent-dropdown-select {
+  --agent-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 8l5 5 5-5' stroke='%236b7280' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  display: block;
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 42px 11px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--color-text);
+  background-color: #ffffff;
+  background-image: var(--agent-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 18px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.agent-dropdown-select:hover {
+  border-color: rgba(0, 156, 156, 0.45);
+  background-color: #fafefe;
+}
+
+.agent-dropdown-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow:
+    0 0 0 3px rgba(0, 156, 156, 0.2),
+    0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.agent-dropdown-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Compact row (Door to Door table) */
+.agent-dropdown-select--inline {
+  min-height: 36px;
+  padding: 6px 32px 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  background-color: #ffffff;
+  background-position: right 10px center;
+  background-size: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.agent-dropdown-select--inline:hover {
+  background-color: #f6fffe;
+}
+
+/* Modals & forms (slightly denser) */
+.agent-dropdown-select--modal {
+  min-height: 42px;
+  padding: 9px 38px 9px 12px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.modal-body .form-group .agent-dropdown-select,
+.form-group .agent-dropdown-select {
+  width: 100%;
+}
+
+/* Override generic .form-group select padding for styled agent dropdowns */
+.form-group select.agent-dropdown-select.agent-dropdown-select--modal {
+  padding: 9px 38px 9px 12px;
+  min-height: 42px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+#doorToDoorTable .door-to-door-agent.agent-dropdown-select {
+  max-width: 100%;
+}
+
+/* Settings → Agents table (CRUD actions) */
+.settings-agents-actions-col {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.settings-agents-crud {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.settings-agents-crud .ghost-button--small {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+.settings-agents-crud__delete {
+  color: var(--color-danger);
+  border-color: rgba(197, 48, 48, 0.35);
+}
+
+.settings-agents-crud__delete:hover {
+  background-color: rgba(197, 48, 48, 0.08);
+}
+
+.settings-agents-id {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-text-muted);
+}
+
+.agent-view-readonly .detail-item-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+/* Voter detail — add transport route (admin) */
+.voter-transport-route-value .voter-transport-add-route {
+  margin-top: 8px;
+}
+
+.voter-transport-add-route {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .textarea {

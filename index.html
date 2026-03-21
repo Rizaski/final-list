@@ -1294,28 +1294,58 @@
               </div>
             </div>
 
-            <div id="settings-tab-security" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-security" hidden>
+            <div id="settings-tab-security" class="settings-tabs__panel settings-panel--security" role="tabpanel" aria-labelledby="settings-tab-btn-security" hidden>
               <div class="grid grid--two-column">
-                <section class="card">
-                  <header class="card-header">
-                    <h2>Security</h2>
-                    <p class="card-subtitle">Authentication and security options.</p>
+                <section class="card card--settings-accent">
+                  <header class="card-header card-header--split">
+                    <div>
+                      <h2>Security</h2>
+                      <p class="card-subtitle">Session policy, authentication, and what appears in the sidebar for your team.</p>
+                    </div>
                   </header>
-                  <div class="card-body">
-                    <div class="details-grid details-grid--two-column">
-                      <div class="form-group">
-                        <label for="settingsSessionTimeout">Session timeout (minutes)</label>
-                        <input type="number" id="settingsSessionTimeout" min="5" max="480" value="60" class="input">
+                  <div class="card-body card-body--settings-security">
+                    <div class="settings-section settings-section--nav">
+                      <div class="settings-section__head">
+                        <span class="settings-section__icon" aria-hidden="true">◇</span>
+                        <div>
+                          <h3 class="settings-section__title">Navigation</h3>
+                          <p class="settings-section__lead">Choose whether the <strong>Pledges</strong> workspace appears in the main sidebar for staff and administrators.</p>
+                        </div>
                       </div>
-                      <div class="form-group">
-                        <label for="settingsRequireMfa">Require two-factor authentication</label>
-                        <select id="settingsRequireMfa" class="input">
-                          <option value="no">No</option>
-                          <option value="yes">Yes (for all users)</option>
+                      <div class="form-group settings-field--highlight">
+                        <label for="settingsShowPledgesNav">Pledges page in sidebar</label>
+                        <select id="settingsShowPledgesNav" class="input agent-dropdown-select agent-dropdown-select--modal">
+                          <option value="yes">Show</option>
+                          <option value="no">Hide</option>
                         </select>
+                        <span class="helper-text">When hidden, Pledges is not listed in the menu. Candidates always use Voters and Reports only.</span>
                       </div>
                     </div>
-                    <div class="form-actions" style="margin-top: 12px;">
+
+                    <div class="settings-section settings-section--session">
+                      <div class="settings-section__head">
+                        <span class="settings-section__icon settings-section__icon--muted" aria-hidden="true">◆</span>
+                        <div>
+                          <h3 class="settings-section__title">Session &amp; authentication</h3>
+                          <p class="settings-section__lead">Planned controls — save stores navigation above; these fields are reserved for future enforcement.</p>
+                        </div>
+                      </div>
+                      <div class="details-grid details-grid--two-column">
+                        <div class="form-group">
+                          <label for="settingsSessionTimeout">Session timeout (minutes)</label>
+                          <input type="number" id="settingsSessionTimeout" min="5" max="480" value="60" class="input">
+                        </div>
+                        <div class="form-group">
+                          <label for="settingsRequireMfa">Require two-factor authentication</label>
+                          <select id="settingsRequireMfa" class="input agent-dropdown-select agent-dropdown-select--modal">
+                            <option value="no">No</option>
+                            <option value="yes">Yes (for all users)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="form-actions form-actions--settings-security">
                       <button type="button" class="primary-button" id="settingsSecuritySave">Save security settings</button>
                     </div>
                   </div>
@@ -1329,30 +1359,31 @@
                   <header class="card-header card-header--split">
                     <div>
                       <h2>Agents</h2>
-                      <p class="card-subtitle">Add and manage campaign agents. Island options are derived from the imported voters list.</p>
+                      <p class="card-subtitle">Create, view, update, and delete campaign agents. Islands come from the imported voters list.</p>
                     </div>
                   </header>
                   <div class="card-body">
-                    <p class="helper-text" style="margin-bottom: 12px;">Add agents with voter lookup, optional candidate scope, and title-case full names. Staff can add campaign-wide agents; administrators can restrict an agent to a candidate.</p>
+                    <p class="helper-text" style="margin-bottom: 12px;"><strong>CRUD:</strong> <strong>C</strong>reate (button below), <strong>R</strong>ead (View on each row), <strong>U</strong>pdate (Edit), <strong>D</strong>elete (Delete). Use voter lookup and title-case full names; admins may scope an agent to one candidate.</p>
                     <div class="form-actions" style="margin-top: 0;">
-                      <button type="button" class="primary-button" id="settingsAgentAddButton">Add agent</button>
+                      <button type="button" class="primary-button" id="settingsAgentAddButton">Create agent</button>
                     </div>
 
                     <div class="table-wrapper table-wrapper--sticky-header" style="margin-top: 24px;">
                       <table class="data-table" id="settingsAgentsTable">
                         <thead>
                           <tr>
-                            <th>Name</th>
-                            <th>National ID</th>
-                            <th>Phone</th>
-                            <th>Island</th>
-                            <th>Candidate</th>
-                            <th></th>
+                            <th scope="col">ID</th>
+                            <th scope="col">Name</th>
+                            <th scope="col">National ID</th>
+                            <th scope="col">Phone</th>
+                            <th scope="col">Island</th>
+                            <th scope="col">Candidate</th>
+                            <th scope="col" class="settings-agents-actions-col">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           <tr>
-                            <td colspan="6" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Add an agent to get started.</td>
+                            <td colspan="7" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Use Create agent to add one.</td>
                           </tr>
                         </tbody>
                       </table>

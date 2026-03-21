@@ -54,6 +54,54 @@ export function getAvailableTransportRoutes() {
   return Array.from(routes).sort((a, b) => a.localeCompare(b, "en"));
 }
 
+function normalizeRouteKey(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Create a minimal Zero Day transport trip so the route appears in voter route dropdowns.
+ * Syncs to Firestore when available. Dispatches `transport-trips-updated`.
+ * @returns {{ ok: true, route: string, trip: object } | { ok: false, error: 'empty' | 'duplicate' }}
+ */
+export async function addTransportRouteFromName(routeName, options = {}) {
+  const route = String(routeName || "").trim();
+  if (!route) return { ok: false, error: "empty" };
+  loadTrips();
+  const key = normalizeRouteKey(route);
+  const dup = zeroDayTrips.some((t) => normalizeRouteKey(t.route) === key);
+  if (dup) return { ok: false, error: "duplicate" };
+  const nextId =
+    zeroDayTrips.length === 0
+      ? 1
+      : zeroDayTrips.reduce((max, t) => Math.max(max, Number(t.id) || 0), 0) + 1;
+  const tripType = options.tripType === "speedboat" ? "speedboat" : "flight";
+  const trip = normalizeTrip({
+    id: nextId,
+    tripType,
+    route,
+    driver: "",
+    vehicle: "",
+    pickupTime: "",
+    status: "Scheduled",
+    voterCount: 0,
+    voterIds: [],
+  });
+  zeroDayTrips.push(trip);
+  saveTrips();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(trip);
+  } catch (_) {}
+  renderZeroDayTripsTable();
+  document.dispatchEvent(
+    new CustomEvent("transport-trips-updated", { detail: { route, trip } })
+  );
+  return { ok: true, route, trip };
+}
+
 function loadTrips() {
   try {
     const raw = localStorage.getItem(TRIPS_STORAGE_KEY);

@@ -24,6 +24,8 @@ let campaignConfig = {
   campaignType: "Local Council Election",
   constituency: "",
   island: "",
+  /** When false, Pledges is hidden from the sidebar (staff/admin). */
+  showPledgesNav: true,
 };
 
 function loadCampaignConfig() {
@@ -52,8 +54,10 @@ async function syncCampaignConfigFromFirestore() {
       if (remote.campaignType != null) campaignConfig.campaignType = String(remote.campaignType);
       if (remote.constituency != null) campaignConfig.constituency = String(remote.constituency);
       if (remote.island != null) campaignConfig.island = String(remote.island);
+      if (remote.showPledgesNav !== undefined) campaignConfig.showPledgesNav = Boolean(remote.showPledgesNav);
       saveCampaignConfig();
       applyCampaignToSidebar();
+      document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: { ...campaignConfig } }));
     }
   } catch (_) {}
 }
@@ -67,6 +71,7 @@ async function syncCampaignConfigToFirestore() {
       campaignType: campaignConfig.campaignType,
       constituency: campaignConfig.constituency,
       island: campaignConfig.island,
+      showPledgesNav: campaignConfig.showPledgesNav !== false,
     });
   } catch (_) {}
 }
@@ -303,7 +308,7 @@ export function openAgentModal(existing = null, options = {}) {
       ? `
       <div class="form-group" style="grid-column: 1 / -1;">
         <label for="agentModalCandidateId">Candidate scope (optional)</label>
-        <select id="agentModalCandidateId" class="input">
+        <select id="agentModalCandidateId" class="input agent-dropdown-select agent-dropdown-select--modal">
           <option value="">All campaigns (visible to staff &amp; all candidates)</option>
           ${candList
             .map(
@@ -339,7 +344,7 @@ export function openAgentModal(existing = null, options = {}) {
     </div>
     <div class="form-group">
       <label for="agentModalIsland">Island</label>
-      <select id="agentModalIsland" class="input"></select>
+      <select id="agentModalIsland" class="input agent-dropdown-select agent-dropdown-select--modal"></select>
     </div>
     ${candidateFieldHtml}
     <p class="helper-text" style="grid-column: 1 / -1;">${escapeHtml(formatAgentNameHint())}</p>
@@ -427,7 +432,7 @@ export function openAgentModal(existing = null, options = {}) {
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "primary-button";
-  saveBtn.textContent = isEdit ? "Save agent" : "Add agent";
+  saveBtn.textContent = isEdit ? "Update agent" : "Create agent";
   footer.appendChild(cancelBtn);
   footer.appendChild(saveBtn);
 
@@ -500,7 +505,7 @@ export function openAgentModal(existing = null, options = {}) {
         closeModal();
         if (window.appNotifications) {
           window.appNotifications.push({
-            title: isEdit ? "Agent updated" : "Agent added",
+            title: isEdit ? "Agent updated" : "Agent created",
             meta: name,
           });
         }
@@ -516,10 +521,106 @@ export function openAgentModal(existing = null, options = {}) {
   });
 
   openModal({
-    title: isEdit ? "Edit agent" : "Add agent",
+    title: isEdit ? "Update agent" : "Create agent",
     body,
     footer,
   });
+}
+
+/** Read-only details (R in CRUD). */
+function openAgentViewModal(agent) {
+  if (!agent || agent.id == null) return;
+  const cid =
+    agent.candidateId != null && String(agent.candidateId).trim() !== ""
+      ? String(agent.candidateId).trim()
+      : "";
+  const scopeLabel = cid ? candidateLabelById(cid) : "All campaigns (visible to staff & all candidates)";
+
+  const body = document.createElement("div");
+  body.className = "form-grid agent-view-readonly";
+  body.innerHTML = `
+    <div class="form-group">
+      <div class="detail-item-label">Agent ID</div>
+      <div class="detail-item-value">${escapeHtml(String(agent.id))}</div>
+    </div>
+    <div class="form-group">
+      <div class="detail-item-label">Full name</div>
+      <div class="detail-item-value">${escapeHtml(agent.name || "—")}</div>
+    </div>
+    <div class="form-group">
+      <div class="detail-item-label">National ID</div>
+      <div class="detail-item-value">${escapeHtml(agent.nationalId || "—")}</div>
+    </div>
+    <div class="form-group">
+      <div class="detail-item-label">Phone</div>
+      <div class="detail-item-value">${escapeHtml(agent.phone || "—")}</div>
+    </div>
+    <div class="form-group">
+      <div class="detail-item-label">Island</div>
+      <div class="detail-item-value">${escapeHtml(agent.island || "—")}</div>
+    </div>
+    <div class="form-group" style="grid-column: 1 / -1;">
+      <div class="detail-item-label">Candidate scope</div>
+      <div class="detail-item-value">${escapeHtml(scopeLabel)}</div>
+    </div>
+  `;
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.flexWrap = "wrap";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "ghost-button";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeModal());
+
+  const viewer = parseViewerFromStorage();
+  footer.appendChild(closeBtn);
+  if (viewer.isAdmin) {
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "primary-button";
+    editBtn.textContent = "Update agent";
+    editBtn.addEventListener("click", () => {
+      closeModal();
+      openAgentModal(agent, {});
+    });
+    footer.appendChild(editBtn);
+  }
+
+  openModal({ title: "View agent", body, footer });
+}
+
+/** Delete agent (D in CRUD) — Firestore + local cache. */
+async function deleteAgentRecord(agent) {
+  if (!agent || agent.id == null) return;
+  const id = String(agent.id);
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.deleteAgentFs) {
+      await api.deleteAgentFs(id);
+    }
+    agents = agents.filter((a) => String(a.id) !== id);
+    saveAgentsToStorage();
+    renderAgentsTable();
+    try {
+      window.agentsCached = [...agents];
+    } catch (_) {}
+    document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "Agent deleted", meta: agent.name || id });
+    }
+  } catch (err) {
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Could not delete agent",
+        meta: err?.message || String(err),
+      });
+    }
+  }
 }
 
 /** Alias for modules that only add new agents (e.g. Door to door, candidate voter view). */
@@ -538,7 +639,7 @@ function renderAgentsTable() {
   if (!agents.length) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      '<td colspan="6" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Add an agent to get started.</td>';
+      '<td colspan="7" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Use <strong>Create agent</strong> to add one.</td>';
     tbody.appendChild(tr);
     return;
   }
@@ -548,21 +649,35 @@ function renderAgentsTable() {
     const aid = a && a.id != null ? String(a.id) : "";
     const cid = a.candidateId != null && String(a.candidateId).trim() !== "" ? String(a.candidateId).trim() : "";
     const candCell = cid ? escapeHtml(candidateLabelById(cid)) : '<span class="text-muted">All campaigns</span>';
-    const editBtn = showEdit
-      ? `<button type="button" class="ghost-button ghost-button--small" data-edit-agent="${escapeHtml(aid)}">Edit</button> `
-      : "";
+    const mutateActions =
+      showEdit
+        ? `<button type="button" class="ghost-button ghost-button--small" data-edit-agent="${escapeHtml(aid)}" title="Update">Edit</button>
+        <button type="button" class="ghost-button ghost-button--small settings-agents-crud__delete" data-delete-agent="${escapeHtml(aid)}" title="Delete">Delete</button>`
+        : "";
     tr.dataset.agentId = aid;
     tr.innerHTML = `
+      <td><code class="settings-agents-id">${escapeHtml(aid)}</code></td>
       <td>${escapeHtml(a.name || "")}</td>
       <td>${escapeHtml(a.nationalId || "")}</td>
       <td>${escapeHtml(a.phone || "")}</td>
       <td>${escapeHtml(a.island || "")}</td>
       <td>${candCell}</td>
-      <td style="text-align:right;white-space:nowrap;">
-        ${editBtn}<button type="button" class="ghost-button ghost-button--small" data-remove-agent="${escapeHtml(aid)}">Remove</button>
+      <td class="settings-agents-actions-col">
+        <div class="settings-agents-crud" role="group" aria-label="Agent actions">
+          <button type="button" class="ghost-button ghost-button--small" data-view-agent="${escapeHtml(aid)}" title="View details">View</button>
+          ${mutateActions}
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("[data-view-agent]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-view-agent");
+      const agent = agents.find((x) => String(x.id) === String(id));
+      if (agent) openAgentViewModal(agent);
+    });
   });
 
   tbody.querySelectorAll("[data-edit-agent]").forEach((btn) => {
@@ -573,31 +688,22 @@ function renderAgentsTable() {
     });
   });
 
-  tbody.querySelectorAll("[data-remove-agent]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.getAttribute("data-remove-agent");
+  tbody.querySelectorAll("[data-delete-agent]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-delete-agent");
       if (id == null || id === "") return;
       const agent = agents.find((a) => String(a.id) === String(id));
       if (!agent) return;
-      (async () => {
-        try {
-          const api = await firebaseInitPromise;
-          if (api.ready && api.deleteAgentFs) {
-            await api.deleteAgentFs(String(agent.id));
-            agents = agents.filter((a) => String(a.id) !== String(id));
-            saveAgentsToStorage();
-            renderAgentsTable();
-            try {
-              window.agentsCached = [...agents];
-            } catch (_) {}
-            document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
-          } else {
-            agents = agents.filter((a) => String(a.id) !== String(id));
-            saveAgentsToStorage();
-            renderAgentsTable();
-          }
-        } catch (_) {}
-      })();
+      const safeName = escapeHtml(agent.name || id);
+      const ok = await confirmDialog({
+        title: "Delete agent",
+        message: `Delete agent ${safeName} (ID ${escapeHtml(String(agent.id))})? This cannot be undone.`,
+        confirmText: "Delete",
+        cancelText: "Cancel",
+        danger: true,
+      });
+      if (!ok) return;
+      await deleteAgentRecord(agent);
     });
   });
 }
@@ -783,6 +889,38 @@ function initSettingsTabs() {
   });
 
   switchToTab("campaign");
+}
+
+function initSecurityTab() {
+  loadCampaignConfig();
+  const pledgesNavEl = document.getElementById("settingsShowPledgesNav");
+  const saveBtn = document.getElementById("settingsSecuritySave");
+
+  function refreshSecurityForm() {
+    loadCampaignConfig();
+    if (pledgesNavEl) pledgesNavEl.value = campaignConfig.showPledgesNav !== false ? "yes" : "no";
+  }
+
+  refreshSecurityForm();
+
+  document.addEventListener("campaign-config-changed", refreshSecurityForm);
+
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      if (pledgesNavEl) {
+        campaignConfig.showPledgesNav = pledgesNavEl.value === "yes";
+      }
+      saveCampaignConfig();
+      await syncCampaignConfigToFirestore();
+      document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: campaignConfig }));
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Security settings saved",
+          meta: "Sidebar navigation and preferences updated.",
+        });
+      }
+    });
+  }
 }
 
 function initCampaignTab() {
@@ -1144,6 +1282,7 @@ function initUsersTab() {
 export function initSettingsModule() {
   initSettingsTabs();
   initCampaignTab();
+  initSecurityTab();
 
   // Load candidates from Firebase first (source of truth), fall back to cache on error or when Firebase not ready
   (async () => {
@@ -1572,3 +1711,4 @@ export function initSettingsModule() {
   })();
 }
 
+loadCampaignConfig();

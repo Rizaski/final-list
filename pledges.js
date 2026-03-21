@@ -567,7 +567,7 @@ export function initPledgesModule(votersContext) {
         </div>
         <div class="form-group">
           <label for="pledgeEditAgent">Assigned agent</label>
-          <select id="pledgeEditAgent">
+          <select id="pledgeEditAgent" class="agent-dropdown-select agent-dropdown-select--modal">
             <option value="">Unassigned</option>
             ${agents
               .map(

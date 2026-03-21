@@ -44,6 +44,26 @@ function getCurrentUser() {
   }
 }
 
+function applyPledgesNavVisibility() {
+  const user = getCurrentUser();
+  const isCandidateOnly = user?.role === "candidate" && user?.candidateId;
+  const pledgesBtn = document.querySelector('.nav-item[data-module="pledges"]');
+  if (!pledgesBtn) return;
+  const cfg = getCampaignConfig();
+  const show = cfg.showPledgesNav !== false;
+  if (isCandidateOnly) {
+    pledgesBtn.style.display = "none";
+    return;
+  }
+  pledgesBtn.style.display = show ? "flex" : "none";
+  const activePledges = document.querySelector(
+    '.nav-item.nav-item--active[data-module="pledges"]'
+  );
+  if (!show && activePledges) {
+    switchModule("dashboard");
+  }
+}
+
 function setCurrentUser(user) {
   if (!user) {
     try {
@@ -115,6 +135,8 @@ function applyUserToShell(user) {
     }
   });
 
+  applyPledgesNavVisibility();
+
   // Show main app shell; hide login view (defensively set both hidden and display).
   if (appShell) {
     appShell.hidden = false;
@@ -150,6 +172,9 @@ function switchModule(key) {
     key !== "reports" &&
     key !== "voters"
   ) {
+    return;
+  }
+  if (key === "pledges" && getCampaignConfig().showPledgesNav === false) {
     return;
   }
   Object.entries(modulesMap).forEach(([moduleKey, el]) => {
@@ -432,6 +457,7 @@ constituencySelect.addEventListener("change", handleScopeChange);
 document.addEventListener("campaign-config-changed", () => {
   applyElectionTypeFromCampaign();
   handleScopeChange();
+  applyPledgesNavVisibility();
 });
 
 // Keep dashboard stats and charts up to date when data changes in other modules.
@@ -628,6 +654,7 @@ async function startAppModules(firebaseApi) {
   syncCampaignConfigFromFirestore();
   applyElectionTypeFromCampaign();
   handleScopeChange();
+  applyPledgesNavVisibility();
 
   const refreshBtn = document.getElementById("refreshButton");
   const refreshStatusEl = document.getElementById("refreshStatus");

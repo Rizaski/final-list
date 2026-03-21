@@ -243,7 +243,7 @@ function renderDoorToDoorTable() {
         </td>
         <td>${escapeHtml(v.ballotBox || "")}</td>
         <td>
-          <select class="inline-select door-to-door-agent" data-voter-id="${escapeHtml(v.id)}" data-field="volunteer">
+          <select class="door-to-door-agent agent-dropdown-select agent-dropdown-select--inline" data-voter-id="${escapeHtml(v.id)}" data-field="volunteer" aria-label="Assigned agent">
             ${agentOptions}
           </select>
         </td>

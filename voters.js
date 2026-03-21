@@ -5,6 +5,7 @@ import {
   mergeVotedAtFromVoters,
   clearVotedForVoter,
   getAvailableTransportRoutes,
+  addTransportRouteFromName,
 } from "./zeroDay.js";
 import {
   getLists,
@@ -466,6 +467,80 @@ function bindVoterTableHeaderSort() {
   });
 }
 
+/** Admin: create a Zero Day trip from voter detail so the route appears in the dropdown. */
+function openVoterDetailAddTransportRouteModal(voter) {
+  if (!voter) return;
+  const body = document.createElement("div");
+  body.className = "form-grid";
+  body.innerHTML = `
+    <div class="form-group">
+      <label for="voterQuickRouteName">Route name</label>
+      <input id="voterQuickRouteName" class="input" type="text" placeholder="e.g. Dhuvaafaru → Male" />
+    </div>
+    <div class="form-group">
+      <label for="voterQuickRouteType">Trip type</label>
+      <select id="voterQuickRouteType" class="input">
+        <option value="flight">Flight</option>
+        <option value="speedboat">Speed boat</option>
+      </select>
+    </div>
+    <p class="helper-text">Creates a scheduled trip in Zero Day → Transport and adds this route to the dropdown.</p>
+  `;
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => closeModal());
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Add route";
+  saveBtn.addEventListener("click", async () => {
+    const name = (body.querySelector("#voterQuickRouteName")?.value || "").trim();
+    const tripType = (body.querySelector("#voterQuickRouteType")?.value || "flight").trim();
+    if (!name) {
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Enter a route name", meta: "" });
+      }
+      return;
+    }
+    const result = await addTransportRouteFromName(name, { tripType });
+    if (!result.ok) {
+      if (result.error === "duplicate" && window.appNotifications) {
+        window.appNotifications.push({
+          title: "Route already exists",
+          meta: "Pick it from the list or use a different name.",
+        });
+      }
+      return;
+    }
+    closeModal();
+    const v = currentVoters.find((x) => x.id === voter.id);
+    if (v) {
+      v.transportNeeded = true;
+      v.transportRoute = result.route;
+      if (!v.transportType) v.transportType = "oneway";
+      try {
+        const api = await firebaseInitPromise;
+        if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+      } catch (_) {}
+      saveVotersToStorage();
+      renderVotersTable();
+      if (selectedVoterId === v.id) renderVoterDetails(v);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+    }
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "Route added", meta: result.route });
+    }
+  });
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+  openModal({ title: "Add transport route", body, footer });
+  setTimeout(() => body.querySelector("#voterQuickRouteName")?.focus(), 100);
+}
+
 function formatDobAndAge(voter) {
   const dobRaw = voter?.dateOfBirth || "";
   if (!dobRaw) {
@@ -613,6 +688,21 @@ function renderVoterDetails(voter) {
         </div>
       </section>`;
 
+  const showAdminTransportAddRoute = (() => {
+    try {
+      const u = typeof getCurrentUserFn === "function" ? getCurrentUserFn() : null;
+      return Boolean(u?.isAdmin);
+    } catch (_) {
+      return false;
+    }
+  })();
+
+  const voterTransportAddRouteBtnHtml = showAdminTransportAddRoute
+    ? `<div class="voter-transport-add-route">
+        <button type="button" class="ghost-button ghost-button--small" id="voterTransportAddRouteBtn">Add new route…</button>
+      </div>`
+    : "";
+
   const candidateAgentSectionHtml = candCtx
     ? (() => {
         const key = candidatePledgedAgentStorageKey(candCtx.candidateId);
@@ -637,23 +727,25 @@ function renderVoterDetails(voter) {
             )
             .join("");
         return `
-      <section class="voter-details-section voter-details-section--full">
+      <section class="voter-details-section voter-details-section--full voter-details-section--agent">
         <h3 class="voter-details-section__title">Assigned agent (this candidate)</h3>
-        <div class="details-grid details-grid--two-column">
-          <div>
-            <div class="detail-item-label">Agent</div>
-            <div class="detail-item-value">
-              <select id="candidateVoterAgentSelect" class="input" style="max-width:100%;">
+        <div class="agent-dropdown-field">
+          <label for="candidateVoterAgentSelect" class="sr-only">Assign agent for this candidate</label>
+          <select id="candidateVoterAgentSelect" class="agent-dropdown-select" aria-label="Assign agent for this candidate">
                 ${agentOptions}
-              </select>
-            </div>
-            <button type="button" class="ghost-button ghost-button--small" id="candidateVoterAddAgentBtn" style="margin-top:8px;">Add new agent…</button>
-            <p class="helper-text" style="margin-top:4px;">Assign follow-up for your campaign. Names must be added with a proper full name (first and last).</p>
+          </select>
+          <div class="agent-dropdown-field__footer">
+            <button type="button" class="ghost-button ghost-button--small agent-dropdown-field__add-btn" id="candidateVoterAddAgentBtn">Add new agent…</button>
+            <p class="helper-text agent-dropdown-field__hint">Assign follow-up for your campaign. New agents must use a proper full name (first and last).</p>
           </div>
         </div>
       </section>`;
       })()
     : "";
+
+  const transportNoRoutesMsg = showAdminTransportAddRoute
+    ? "No transport routes yet. Use “Add new route…” below or add trips in Zero Day → Transport."
+    : "No transport routes yet. Add trips in Zero Day → Transport.";
 
   const transportSectionHtml = `
       <section class="voter-details-section voter-details-section--full">
@@ -672,7 +764,7 @@ function renderVoterDetails(voter) {
           </div>
           <div>
             <div class="detail-item-label">Route &amp; direction</div>
-            <div class="detail-item-value">
+            <div class="detail-item-value voter-transport-route-value">
               ${
                 availableRoutes.length
                   ? `<div class="field-group">
@@ -691,6 +783,7 @@ function renderVoterDetails(voter) {
                            .join("")}
                        </select>
                      </div>
+                     ${voterTransportAddRouteBtnHtml}
                      <div class="pill-toggle-group" style="margin-top:8px;">
                        <span class="detail-item-label" style="margin-right:4px;">Trip type</span>
                        <button type="button" class="pill-toggle${
@@ -704,8 +797,13 @@ function renderVoterDetails(voter) {
                          voter.transportNeeded ? "" : " disabled"
                        }>Return</button>
                      </div>
-                     <p class="helper-text" style="margin-top:4px;">Choose the route this voter will use and whether transport is one way or return.</p>`
-                  : '<p class="helper-text">No transport routes yet. Add trips in Zero Day → Transport.</p>'
+                     <p class="helper-text" style="margin-top:4px;">Choose the route this voter will use and whether transport is one way or return.${
+                       showAdminTransportAddRoute
+                         ? " Admins can add routes without leaving this panel."
+                         : ""
+                     }</p>`
+                  : `<p class="helper-text">${transportNoRoutesMsg}</p>
+                     ${voterTransportAddRouteBtnHtml}`
               }
               ${
                 voter.transportNeeded && transportRoute
@@ -933,6 +1031,30 @@ function renderVoterDetails(voter) {
         persistTransport();
       });
     });
+  } else if (transportNeededEl && !transportRouteEl) {
+    // No routes in list yet — still persist “transport needed” toggles
+    transportNeededEl.addEventListener("change", () => {
+      const v = currentVoters.find((x) => x.id === voter.id);
+      if (!v) return;
+      v.transportNeeded = !!transportNeededEl.checked;
+      (async () => {
+        try {
+          const api = await firebaseInitPromise;
+          if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+        } catch (_) {}
+        saveVotersToStorage();
+        renderVotersTable();
+        if (selectedVoterId === v.id) renderVoterDetails(v);
+        document.dispatchEvent(new CustomEvent("voters-updated"));
+      })();
+    });
+  }
+
+  const addTransportRouteBtn = document.getElementById("voterTransportAddRouteBtn");
+  if (addTransportRouteBtn) {
+    addTransportRouteBtn.addEventListener("click", () =>
+      openVoterDetailAddTransportRouteModal(voter)
+    );
   }
 }
 
@@ -1455,6 +1577,13 @@ export async function initVotersModule(getCurrentUser) {
   document.addEventListener("voted-entries-updated", () => renderVotersTable());
 
   document.addEventListener("agents-updated", () => {
+    if (selectedVoterId) {
+      const v = currentVoters.find((x) => x.id === selectedVoterId);
+      if (v) renderVoterDetails(v);
+    }
+  });
+
+  document.addEventListener("transport-trips-updated", () => {
     if (selectedVoterId) {
       const v = currentVoters.find((x) => x.id === selectedVoterId);
       if (v) renderVoterDetails(v);
