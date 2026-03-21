@@ -517,13 +517,18 @@ function renderVoterDetails(voter) {
           <div>
             <div class="detail-item-label">Your pledge${candLabel ? ` — ${candLabel}` : ""}</div>
             <div class="detail-item-value">
-              <label for="candidateDetailPledgeSelect" class="sr-only">Your pledge</label>
-              <select id="candidateDetailPledgeSelect" class="input">
-                <option value="yes"${myPledge === "yes" ? " selected" : ""}>Yes</option>
-                <option value="no"${myPledge === "no" ? " selected" : ""}>No</option>
-                <option value="undecided"${myPledge === "undecided" ? " selected" : ""}>Undecided</option>
-              </select>
-              <p class="helper-text" style="margin-top:6px;">Updates your campaign pledge for this voter (yes / no / undecided).</p>
+              <div class="candidate-pledge-picker" role="group" aria-label="Your pledge for this voter">
+                <button type="button" class="candidate-pledge-option candidate-pledge-option--yes${
+                  myPledge === "yes" ? " is-active" : ""
+                }" data-candidate-pledge="yes">Yes</button>
+                <button type="button" class="candidate-pledge-option candidate-pledge-option--no${
+                  myPledge === "no" ? " is-active" : ""
+                }" data-candidate-pledge="no">No</button>
+                <button type="button" class="candidate-pledge-option candidate-pledge-option--undecided${
+                  myPledge === "undecided" ? " is-active" : ""
+                }" data-candidate-pledge="undecided">Undecided</button>
+              </div>
+              <p class="helper-text candidate-pledge-picker__hint">Tap to set your pledge for this voter.</p>
             </div>
           </div>
           <div>
@@ -725,12 +730,17 @@ function renderVoterDetails(voter) {
   voterNotesTextarea.value = voter.notes || "";
   saveVoterNotesButton.disabled = true;
 
-  const pledgeSel = document.getElementById("candidateDetailPledgeSelect");
-  if (pledgeSel && candCtx) {
-    pledgeSel.addEventListener("change", () => {
-      const val = pledgeSel.value;
-      if (val !== "yes" && val !== "no" && val !== "undecided") return;
-      updateVoterCandidatePledge(voter.id, candCtx.candidateId, val);
+  const pledgePicker = document.querySelector(".candidate-pledge-picker");
+  if (pledgePicker && candCtx) {
+    pledgePicker.querySelectorAll("[data-candidate-pledge]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const val = btn.getAttribute("data-candidate-pledge");
+        if (val !== "yes" && val !== "no" && val !== "undecided") return;
+        pledgePicker.querySelectorAll("[data-candidate-pledge]").forEach((b) => {
+          b.classList.toggle("is-active", b === btn);
+        });
+        updateVoterCandidatePledge(voter.id, candCtx.candidateId, val);
+      });
     });
   }
 
