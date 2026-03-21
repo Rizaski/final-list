@@ -1,11 +1,17 @@
 import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { importVotersFromTemplateRows } from "./voters.js";
 import { firebaseInitPromise } from "./firebase.js";
+import {
+  AGENTS_STORAGE_KEY,
+  filterAgentsForViewer,
+  isProperAgentFullName,
+  formatAgentNameHint,
+  parseViewerFromStorage,
+} from "./agents-context.js";
 
 const PAGE_SIZE = 15;
 const MAX_VOTER_ROWS = 20000;
 const MAX_VOTERS_FILE_BYTES = 15 * 1024 * 1024; // ~15MB safety cap
-const AGENTS_STORAGE_KEY = "agents-data";
 const CAMPAIGN_STORAGE_KEY = "campaign-config";
 const CANDIDATES_STORAGE_KEY = "candidates-data";
 const MAX_CANDIDATES = 10;
@@ -210,6 +216,11 @@ export function getAgents() {
   return [...agents];
 }
 
+/** Agents visible in dropdowns for the current viewer (respects optional candidate scope). */
+export function getAgentsForDropdown() {
+  return filterAgentsForViewer(agents);
+}
+
 function saveAgentsToStorage() {
   try {
     localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(agents));
@@ -242,15 +253,292 @@ function getIslandsFromVotersStorage() {
   }
 }
 
+function getVotersForAgentModalSearch() {
+  try {
+    const raw = localStorage.getItem("voters-data");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function candidateLabelById(id) {
+  if (!id) return "All campaigns";
+  const c = getCandidates().find((x) => String(x.id) === String(id));
+  return c ? c.name : `Candidate #${id}`;
+}
+
+/**
+ * @param {object | null} existing
+ * @param {{ lockCandidateId?: string | null }} [options]
+ */
+export function openAgentModal(existing = null, options = {}) {
+  const opts = options || {};
+  const lockCandidateId =
+    opts.lockCandidateId != null && String(opts.lockCandidateId).trim() !== ""
+      ? String(opts.lockCandidateId).trim()
+      : null;
+  const viewer = parseViewerFromStorage();
+  const effectiveLockCandidate =
+    lockCandidateId || (viewer.role === "candidate" && viewer.candidateId ? viewer.candidateId : null);
+  const isEdit = !!(existing && existing.id != null);
+  const votersList = getVotersForAgentModalSearch();
+  const islands = getIslandsFromVotersStorage();
+  const candList = getCandidates();
+  const datalistId = "agentModalVoterDatalist";
+
+  const body = document.createElement("div");
+  body.className = "form-grid";
+
+  const candidateFieldHtml = effectiveLockCandidate
+    ? `
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label>Candidate scope</label>
+        <div class="detail-item-value">${escapeHtml(candidateLabelById(effectiveLockCandidate))}</div>
+        <input type="hidden" id="agentModalCandidateId" value="${escapeHtml(effectiveLockCandidate)}">
+      </div>`
+    : viewer.isAdmin
+      ? `
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="agentModalCandidateId">Candidate scope (optional)</label>
+        <select id="agentModalCandidateId" class="input">
+          <option value="">All campaigns (visible to staff &amp; all candidates)</option>
+          ${candList
+            .map(
+              (c) =>
+                `<option value="${escapeHtml(String(c.id))}"${
+                  String(existing?.candidateId || "") === String(c.id) ? " selected" : ""
+                }>${escapeHtml(c.name || String(c.id))}</option>`
+            )
+            .join("")}
+        </select>
+        <span class="helper-text">When set, this agent appears only for that candidate and for administrators.</span>
+      </div>`
+      : `<input type="hidden" id="agentModalCandidateId" value="">`;
+
+  body.innerHTML = `
+    <div class="form-group" style="grid-column: 1 / -1;">
+      <label for="agentModalVoterSearch">Search voter (name lookup)</label>
+      <input type="text" id="agentModalVoterSearch" class="input" list="${datalistId}" placeholder="Type name or pick from list…" autocomplete="off">
+      <datalist id="${datalistId}"></datalist>
+      <span class="helper-text">Matching a voter fills ID number, full name, phone and island when available.</span>
+    </div>
+    <div class="form-group">
+      <label for="agentModalName">Full name <span class="text-muted">(required)</span></label>
+      <input type="text" id="agentModalName" class="input" placeholder="First Last" value="${escapeHtml(existing?.name || "")}">
+    </div>
+    <div class="form-group">
+      <label for="agentModalNationalId">National ID</label>
+      <input type="text" id="agentModalNationalId" class="input" value="${escapeHtml(existing?.nationalId || "")}">
+    </div>
+    <div class="form-group">
+      <label for="agentModalPhone">Phone</label>
+      <input type="tel" id="agentModalPhone" class="input" value="${escapeHtml(existing?.phone || "")}">
+    </div>
+    <div class="form-group">
+      <label for="agentModalIsland">Island</label>
+      <select id="agentModalIsland" class="input"></select>
+    </div>
+    ${candidateFieldHtml}
+    <p class="helper-text" style="grid-column: 1 / -1;">${escapeHtml(formatAgentNameHint())}</p>
+  `;
+
+  const datalistEl = body.querySelector(`#${datalistId}`);
+  if (datalistEl) {
+    datalistEl.innerHTML = votersList
+      .map((v) => {
+        const name = (v.fullName || "").trim();
+        const nid = (v.nationalId || v.id || "").trim();
+        const val = `${name} | ${nid}`;
+        return `<option value="${escapeHtml(val)}"></option>`;
+      })
+      .join("");
+  }
+
+  const islandSelect = body.querySelector("#agentModalIsland");
+  const curIsland = (existing?.island || "").trim();
+  if (islandSelect) {
+    islandSelect.innerHTML =
+      '<option value="">Select island…</option>' +
+      islands
+        .map(
+          (name) =>
+            `<option value="${escapeHtml(name)}"${name === curIsland ? " selected" : ""}>${escapeHtml(name)}</option>`
+        )
+        .join("");
+    if (curIsland && !islands.includes(curIsland)) {
+      const opt = document.createElement("option");
+      opt.value = curIsland;
+      opt.textContent = `${curIsland} (from record)`;
+      opt.selected = true;
+      islandSelect.appendChild(opt);
+    }
+  }
+
+  const searchInput = body.querySelector("#agentModalVoterSearch");
+
+  function applyVoterMatch(voter) {
+    if (!voter) return;
+    const nameEl = body.querySelector("#agentModalName");
+    const nidEl = body.querySelector("#agentModalNationalId");
+    const phoneEl = body.querySelector("#agentModalPhone");
+    if (nameEl) nameEl.value = (voter.fullName || "").trim();
+    if (nidEl) nidEl.value = (voter.nationalId || "").trim();
+    if (phoneEl) phoneEl.value = (voter.phone || "").trim();
+    const isl = (voter.island || "").trim();
+    if (islandSelect && isl) {
+      if (![...islandSelect.options].some((o) => o.value === isl)) {
+        const opt = document.createElement("option");
+        opt.value = isl;
+        opt.textContent = isl;
+        islandSelect.appendChild(opt);
+      }
+      islandSelect.value = isl;
+    }
+  }
+
+  function tryMatchVoterSearch() {
+    const val = (searchInput?.value || "").trim();
+    if (!val) return;
+    const parts = val.split("|").map((s) => s.trim()).filter(Boolean);
+    if (parts.length < 2) return;
+    const nid = parts[parts.length - 1];
+    const voter = votersList.find(
+      (x) =>
+        String(x.nationalId || "").trim() === nid ||
+        String(x.id || "").trim() === nid
+    );
+    if (voter) applyVoterMatch(voter);
+  }
+
+  searchInput?.addEventListener("change", tryMatchVoterSearch);
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => closeModal());
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = isEdit ? "Save agent" : "Add agent";
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+
+  saveBtn.addEventListener("click", () => {
+    const name = (body.querySelector("#agentModalName")?.value || "").trim();
+    const nationalId = (body.querySelector("#agentModalNationalId")?.value || "").trim();
+    const phone = (body.querySelector("#agentModalPhone")?.value || "").trim();
+    const island = (body.querySelector("#agentModalIsland")?.value || "").trim();
+    const candEl = body.querySelector("#agentModalCandidateId");
+    let candidateId = "";
+    if (candEl) {
+      if (candEl.tagName === "SELECT") candidateId = (candEl.value || "").trim();
+      else candidateId = (candEl.value || "").trim();
+    }
+
+    if (!isProperAgentFullName(name)) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Invalid name",
+          meta: formatAgentNameHint(),
+        });
+      }
+      return;
+    }
+    if (!nationalId || !phone || !island) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Missing fields",
+          meta: "National ID, phone and island are required.",
+        });
+      }
+      return;
+    }
+
+    (async () => {
+      try {
+        const api = await firebaseInitPromise;
+        const nextId =
+          agents.length && agents.every((a) => a.id != null)
+            ? agents.reduce((max, a) => Math.max(max, Number(a.id) || 0), 0) + 1
+            : 1;
+        const idStr = isEdit ? String(existing.id) : String(nextId);
+        const agent = {
+          id: idStr,
+          name,
+          nationalId,
+          phone,
+          island,
+        };
+        if (candidateId) agent.candidateId = candidateId;
+        else agent.candidateId = null;
+
+        if (api.ready && api.setAgentFs) {
+          await api.setAgentFs(agent);
+        } else {
+          if (isEdit) {
+            const ix = agents.findIndex((a) => String(a.id) === idStr);
+            if (ix >= 0) agents[ix] = agent;
+            else agents.push(agent);
+          } else {
+            agents.push(agent);
+          }
+          saveAgentsToStorage();
+          renderAgentsTable();
+          try {
+            window.agentsCached = [...agents];
+          } catch (_) {}
+          document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
+        }
+        closeModal();
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: isEdit ? "Agent updated" : "Agent added",
+            meta: name,
+          });
+        }
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Could not save agent",
+            meta: err?.message || String(err),
+          });
+        }
+      }
+    })();
+  });
+
+  openModal({
+    title: isEdit ? "Edit agent" : "Add agent",
+    body,
+    footer,
+  });
+}
+
+/** Alias for modules that only add new agents (e.g. Door to door, candidate voter view). */
+export function openAddAgentModal(options) {
+  openAgentModal(null, options || {});
+}
+
 function renderAgentsTable() {
   const tbody = document.querySelector("#settingsAgentsTable tbody");
   if (!tbody) return;
+
+  const viewer = parseViewerFromStorage();
+  const showEdit = viewer.isAdmin;
 
   tbody.innerHTML = "";
   if (!agents.length) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      '<td colspan="5" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Add an agent to get started.</td>';
+      '<td colspan="6" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Add an agent to get started.</td>';
     tbody.appendChild(tr);
     return;
   }
@@ -258,17 +546,31 @@ function renderAgentsTable() {
   agents.forEach((a) => {
     const tr = document.createElement("tr");
     const aid = a && a.id != null ? String(a.id) : "";
+    const cid = a.candidateId != null && String(a.candidateId).trim() !== "" ? String(a.candidateId).trim() : "";
+    const candCell = cid ? escapeHtml(candidateLabelById(cid)) : '<span class="text-muted">All campaigns</span>';
+    const editBtn = showEdit
+      ? `<button type="button" class="ghost-button ghost-button--small" data-edit-agent="${escapeHtml(aid)}">Edit</button> `
+      : "";
     tr.dataset.agentId = aid;
     tr.innerHTML = `
       <td>${escapeHtml(a.name || "")}</td>
       <td>${escapeHtml(a.nationalId || "")}</td>
       <td>${escapeHtml(a.phone || "")}</td>
       <td>${escapeHtml(a.island || "")}</td>
-      <td style="text-align:right;">
-        <button type="button" class="ghost-button ghost-button--small" data-remove-agent="${escapeHtml(aid)}">Remove</button>
+      <td>${candCell}</td>
+      <td style="text-align:right;white-space:nowrap;">
+        ${editBtn}<button type="button" class="ghost-button ghost-button--small" data-remove-agent="${escapeHtml(aid)}">Remove</button>
       </td>
     `;
     tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll("[data-edit-agent]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-edit-agent");
+      const agent = agents.find((x) => String(x.id) === String(id));
+      if (agent) openAgentModal(agent, {});
+    });
   });
 
   tbody.querySelectorAll("[data-remove-agent]").forEach((btn) => {
@@ -537,77 +839,9 @@ function initCampaignTab() {
 function initAgentsTab() {
   loadAgentsFromStorage();
 
-  const nameEl = document.getElementById("settingsAgentName");
-  const nationalIdEl = document.getElementById("settingsAgentNationalId");
-  const phoneEl = document.getElementById("settingsAgentPhone");
-  const islandSelect = document.getElementById("settingsAgentIsland");
   const addBtn = document.getElementById("settingsAgentAddButton");
-
-  if (islandSelect) {
-    const islands = getIslandsFromVotersStorage();
-    const current = islandSelect.value;
-    islandSelect.innerHTML =
-      '<option value="">Select island…</option>' +
-      islands
-        .map(
-          (name) =>
-            `<option value="${name}"${
-              current === name ? " selected" : ""
-            }>${name}</option>`
-        )
-        .join("");
-  }
-
   if (addBtn) {
-    addBtn.addEventListener("click", () => {
-      const name = (nameEl?.value || "").trim();
-      const nationalId = (nationalIdEl?.value || "").trim();
-      const phone = (phoneEl?.value || "").trim();
-      const island = islandSelect?.value || "";
-      if (!name || !nationalId || !phone || !island) {
-        return;
-      }
-      (async () => {
-        try {
-          const api = await firebaseInitPromise;
-          const nextId =
-            agents.length && agents.every((a) => a.id != null)
-              ? agents.reduce((max, a) => Math.max(max, Number(a.id) || 0), 0) + 1
-              : 1;
-          const agent = {
-            id: String(nextId),
-            name,
-            nationalId,
-            phone,
-            island,
-          };
-          if (api.ready && api.setAgentFs) {
-            await api.setAgentFs(agent);
-            // Rely on onAgentsSnapshotFs to update agents; do not push locally to avoid duplicates
-          } else {
-            agents.push(agent);
-            saveAgentsToStorage();
-            renderAgentsTable();
-            try {
-              window.agentsCached = [...agents];
-            } catch (_) {}
-            document.dispatchEvent(
-              new CustomEvent("agents-updated", { detail: { agents: [...agents] } })
-            );
-          }
-        } catch (_) {}
-      })();
-      if (window.appNotifications) {
-        window.appNotifications.push({
-          title: "Agent added",
-          meta: `${name} • ${island}`,
-        });
-      }
-      if (nameEl) nameEl.value = "";
-      if (nationalIdEl) nationalIdEl.value = "";
-      if (phoneEl) phoneEl.value = "";
-      if (islandSelect) islandSelect.value = "";
-    });
+    addBtn.addEventListener("click", () => openAgentModal(null, {}));
   }
 
   renderAgentsTable();

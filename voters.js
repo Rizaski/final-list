@@ -11,6 +11,11 @@ import {
   createList,
   openListWorkspace,
 } from "./lists.js";
+import {
+  filterAgentsForViewer,
+  getAgentsFromStorage,
+  candidatePledgedAgentStorageKey,
+} from "./agents-context.js";
 const PAGE_SIZE = 15;
 const CANDIDATES_STORAGE_KEY = "candidates-data";
 const VOTERS_STORAGE_KEY = "voters-data";
@@ -608,24 +613,49 @@ function renderVoterDetails(voter) {
         </div>
       </section>`;
 
-  const transportSectionHtml = candCtx
-    ? `
+  const candidateAgentSectionHtml = candCtx
+    ? (() => {
+        const key = candidatePledgedAgentStorageKey(candCtx.candidateId);
+        let assignedByVoterId = {};
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && typeof p === "object") assignedByVoterId = p;
+          }
+        } catch (_) {}
+        const assignedName = assignedByVoterId[String(voter.id)] || "";
+        const agentOptionsList = filterAgentsForViewer(getAgentsFromStorage());
+        const agentOptions =
+          '<option value="">Unassigned</option>' +
+          agentOptionsList
+            .map(
+              (a) =>
+                `<option value="${escapeHtml(a.name)}"${
+                  a.name === assignedName ? " selected" : ""
+                }>${escapeHtml(a.name)}</option>`
+            )
+            .join("");
+        return `
       <section class="voter-details-section voter-details-section--full">
-        <h3 class="voter-details-section__title">Transportation</h3>
+        <h3 class="voter-details-section__title">Assigned agent (this candidate)</h3>
         <div class="details-grid details-grid--two-column">
           <div>
-            <div class="detail-item-label">Transportation needed</div>
-            <div class="detail-item-value">${voter.transportNeeded ? "Yes" : "No"}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Route &amp; trip type</div>
-            <div class="detail-item-value">${escapeHtml(transportRoute || "—")} · ${
-        transportType === "return" ? "Return trip" : "One way"
-      }</div>
+            <div class="detail-item-label">Agent</div>
+            <div class="detail-item-value">
+              <select id="candidateVoterAgentSelect" class="input" style="max-width:100%;">
+                ${agentOptions}
+              </select>
+            </div>
+            <button type="button" class="ghost-button ghost-button--small" id="candidateVoterAddAgentBtn" style="margin-top:8px;">Add new agent…</button>
+            <p class="helper-text" style="margin-top:4px;">Assign follow-up for your campaign. Names must be added with a proper full name (first and last).</p>
           </div>
         </div>
-      </section>`
-    : `
+      </section>`;
+      })()
+    : "";
+
+  const transportSectionHtml = `
       <section class="voter-details-section voter-details-section--full">
         <h3 class="voter-details-section__title">Transportation</h3>
         <div class="details-grid details-grid--two-column">
@@ -752,6 +782,7 @@ function renderVoterDetails(voter) {
       </section>
 
       ${statusSectionHtml}
+      ${candidateAgentSectionHtml}
       ${transportSectionHtml}
     </div>
   `;
@@ -778,6 +809,38 @@ function renderVoterDetails(voter) {
         updateVoterCandidatePledge(voter.id, candCtx.candidateId, val);
       });
     });
+  }
+
+  if (candCtx) {
+    const agentSel = document.getElementById("candidateVoterAgentSelect");
+    if (agentSel) {
+      agentSel.addEventListener("change", () => {
+        const key = candidatePledgedAgentStorageKey(candCtx.candidateId);
+        let map = {};
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && typeof p === "object") map = p;
+          }
+        } catch (_) {}
+        map[String(voter.id)] = agentSel.value || "";
+        try {
+          localStorage.setItem(key, JSON.stringify(map));
+        } catch (_) {}
+        document.dispatchEvent(new CustomEvent("pledges-updated"));
+      });
+    }
+    const addAgentBtn = document.getElementById("candidateVoterAddAgentBtn");
+    if (addAgentBtn) {
+      addAgentBtn.addEventListener("click", () => {
+        import("./settings.js").then((m) => {
+          if (typeof m.openAddAgentModal === "function") {
+            m.openAddAgentModal({ lockCandidateId: candCtx.candidateId });
+          }
+        });
+      });
+    }
   }
 
   voterInteractionTimeline.innerHTML = "";
@@ -813,13 +876,13 @@ function renderVoterDetails(voter) {
     saveVoterNotesButton.disabled = true;
   }
 
-  // Bind transportation controls (staff only)
+  // Bind transportation (admin, staff, and candidate)
   const transportNeededEl = document.getElementById("voterTransportNeeded");
   const transportRouteEl = document.getElementById("voterTransportRoute");
   const transportTypeEls = Array.from(
     document.querySelectorAll("[data-transport-type]")
   );
-  if (!candCtx && transportNeededEl && transportRouteEl) {
+  if (transportNeededEl && transportRouteEl) {
     const updateRoutesDisabled = () => {
       const disabled = !transportNeededEl.checked;
       transportRouteEl.disabled = disabled;
@@ -1390,6 +1453,13 @@ export async function initVotersModule(getCurrentUser) {
 
   // Refresh Voted column when ballot box link (or Zero Day) marks voters as voted
   document.addEventListener("voted-entries-updated", () => renderVotersTable());
+
+  document.addEventListener("agents-updated", () => {
+    if (selectedVoterId) {
+      const v = currentVoters.find((x) => x.id === selectedVoterId);
+      if (v) renderVoterDetails(v);
+    }
+  });
 
   const addVoterBtn = document.getElementById("addVoterButton");
   if (addVoterBtn) addVoterBtn.addEventListener("click", () => openVoterForm(null));

@@ -696,6 +696,7 @@
                   <label for="doorToDoorSearch" class="sr-only">Search</label>
                   <input type="search" id="doorToDoorSearch" placeholder="Search by name, ID, address, notes…">
                 </div>
+                <button type="button" class="ghost-button" id="doorToDoorAddAgentButton" style="align-self:flex-end;">Add agent</button>
                 <div class="pledges-toolbar__controls">
                   <div class="field-group field-group--inline">
                     <label for="doorToDoorSort">Sort</label>
@@ -1332,28 +1333,8 @@
                     </div>
                   </header>
                   <div class="card-body">
-                    <div class="form-grid">
-                      <div class="form-group">
-                        <label for="settingsAgentName">Name</label>
-                        <input id="settingsAgentName" type="text" class="input" placeholder="Full name">
-                      </div>
-                      <div class="form-group">
-                        <label for="settingsAgentNationalId">National ID</label>
-                        <input id="settingsAgentNationalId" type="text" class="input" placeholder="National ID number">
-                      </div>
-                      <div class="form-group">
-                        <label for="settingsAgentPhone">Phone number</label>
-                        <input id="settingsAgentPhone" type="tel" class="input" placeholder="Phone number">
-                      </div>
-                      <div class="form-group">
-                        <label for="settingsAgentIsland">Location (island)</label>
-                        <select id="settingsAgentIsland" class="input">
-                          <option value="">Select island…</option>
-                        </select>
-                        <span class="helper-text">Islands come from the current voters list.</span>
-                      </div>
-                    </div>
-                    <div class="form-actions" style="margin-top: 12px;">
+                    <p class="helper-text" style="margin-bottom: 12px;">Add agents with voter lookup, optional candidate scope, and title-case full names. Staff can add campaign-wide agents; administrators can restrict an agent to a candidate.</p>
+                    <div class="form-actions" style="margin-top: 0;">
                       <button type="button" class="primary-button" id="settingsAgentAddButton">Add agent</button>
                     </div>
 
@@ -1365,12 +1346,13 @@
                             <th>National ID</th>
                             <th>Phone</th>
                             <th>Island</th>
+                            <th>Candidate</th>
                             <th></th>
                           </tr>
                         </thead>
                         <tbody>
                           <tr>
-                            <td colspan="5" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Add an agent to get started.</td>
+                            <td colspan="6" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Add an agent to get started.</td>
                           </tr>
                         </tbody>
                       </table>

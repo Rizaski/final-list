@@ -1,6 +1,6 @@
 import { openModal } from "./ui.js";
 import { updateVoterCandidatePledge, getVoterImageSrc } from "./voters.js";
-import { getAgents, getCandidates } from "./settings.js";
+import { getAgentsForDropdown, getCandidates } from "./settings.js";
 
 const PAGE_SIZE = 15;
 /** Pledges table: Seq, Image, Name, ID, Permanent Address, then candidate columns (Pledge column is on Door to Door). */
@@ -547,7 +547,7 @@ export function initPledgesModule(votersContext) {
     if (index < 0) return;
     const row = pledgeRows[index];
     const body = document.createElement("div");
-    const agents = getAgents();
+    const agents = getAgentsForDropdown();
     const candidates = getCandidates();
     const cp = row.candidatePledges || {};
 
