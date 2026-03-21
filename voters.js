@@ -728,15 +728,18 @@ function renderVoterDetails(voter) {
             .join("");
         return `
       <section class="voter-details-section voter-details-section--full voter-details-section--agent">
-        <h3 class="voter-details-section__title">Assigned agent (this candidate)</h3>
-        <div class="agent-dropdown-field">
-          <label for="candidateVoterAgentSelect" class="sr-only">Assign agent for this candidate</label>
-          <select id="candidateVoterAgentSelect" class="agent-dropdown-select" aria-label="Assign agent for this candidate">
+        <h3 class="voter-details-section__title">Assigned agent — All Campaign</h3>
+        <div class="details-grid details-grid--two-column">
+          <div class="voter-details-agent-col">
+            <div class="detail-item-label">Agent</div>
+            <div class="detail-item-value detail-item-value--agent-stack">
+              <label for="candidateVoterAgentSelect" class="sr-only">Assign agent (All Campaign)</label>
+              <select id="candidateVoterAgentSelect" class="input agent-dropdown-select agent-dropdown-select--voter-detail" aria-label="Assign agent for All Campaign">
                 ${agentOptions}
-          </select>
-          <div class="agent-dropdown-field__footer">
-            <button type="button" class="ghost-button ghost-button--small agent-dropdown-field__add-btn" id="candidateVoterAddAgentBtn">Add new agent…</button>
-            <p class="helper-text agent-dropdown-field__hint">Assign follow-up for your campaign. New agents must use a proper full name (first and last).</p>
+              </select>
+              <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAddAgentBtn">Add new agent…</button>
+              <p class="helper-text voter-details-agent-hint">Assign follow-up for the wider campaign. New agents must use a proper full name (first and last).</p>
+            </div>
           </div>
         </div>
       </section>`;

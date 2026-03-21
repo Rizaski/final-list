@@ -48,13 +48,23 @@ async function syncCampaignConfigFromFirestore() {
   try {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.getFirestoreCampaignConfig) return;
+    /** Snapshot local preference before remote merge — Firestore must not overwrite a deliberate hide/show. */
+    let localSnap = {};
+    try {
+      const raw = localStorage.getItem(CAMPAIGN_STORAGE_KEY);
+      if (raw) localSnap = JSON.parse(raw);
+    } catch (_) {}
     const remote = await api.getFirestoreCampaignConfig();
     if (remote && typeof remote === "object") {
       if (remote.campaignName != null) campaignConfig.campaignName = String(remote.campaignName);
       if (remote.campaignType != null) campaignConfig.campaignType = String(remote.campaignType);
       if (remote.constituency != null) campaignConfig.constituency = String(remote.constituency);
       if (remote.island != null) campaignConfig.island = String(remote.island);
-      if (remote.showPledgesNav !== undefined) campaignConfig.showPledgesNav = Boolean(remote.showPledgesNav);
+      if (localSnap.showPledgesNav !== undefined) {
+        campaignConfig.showPledgesNav = Boolean(localSnap.showPledgesNav);
+      } else if (remote.showPledgesNav !== undefined) {
+        campaignConfig.showPledgesNav = Boolean(remote.showPledgesNav);
+      }
       saveCampaignConfig();
       applyCampaignToSidebar();
       document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: { ...campaignConfig } }));

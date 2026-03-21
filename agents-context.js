@@ -28,19 +28,17 @@ function agentCandidateScopeId(a) {
 }
 
 /**
- * Agents tied to a candidate (agent.candidateId set) are visible only to admin and that candidate's login.
- * Agents with no candidateId are visible to everyone (including staff).
+ * Visibility:
+ * - Admin: all agents.
+ * - Candidate login: only agents whose `candidateId` matches that candidate (not unscoped / not other candidates).
+ * - Staff: agents with no candidateId (campaign-wide / unscoped only).
  */
 export function filterAgentsForViewer(agents) {
   if (!Array.isArray(agents)) return [];
   const u = parseViewerFromStorage();
   if (u.isAdmin) return [...agents];
   if (u.role === "candidate" && u.candidateId) {
-    return agents.filter((a) => {
-      const cid = agentCandidateScopeId(a);
-      if (!cid) return true;
-      return cid === u.candidateId;
-    });
+    return agents.filter((a) => agentCandidateScopeId(a) === u.candidateId);
   }
   // Staff and other roles: only agents not scoped to a specific candidate
   return agents.filter((a) => !agentCandidateScopeId(a));

@@ -51,15 +51,13 @@ function applyPledgesNavVisibility() {
   if (!pledgesBtn) return;
   const cfg = getCampaignConfig();
   const show = cfg.showPledgesNav !== false;
-  if (isCandidateOnly) {
-    pledgesBtn.style.display = "none";
-    return;
-  }
-  pledgesBtn.style.display = show ? "flex" : "none";
+  /** Class + !important survives applyUserToShell clearing inline display on other nav items */
+  pledgesBtn.classList.toggle("nav-item--hidden-sidebar", isCandidateOnly || !show);
+  pledgesBtn.style.removeProperty("display");
   const activePledges = document.querySelector(
     '.nav-item.nav-item--active[data-module="pledges"]'
   );
-  if (!show && activePledges) {
+  if (!show && !isCandidateOnly && activePledges) {
     switchModule("dashboard");
   }
 }
