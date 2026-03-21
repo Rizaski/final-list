@@ -411,6 +411,14 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       ? `Pledged voters – ${candidate.name || candidateId}`
       : "Pledged voters – Candidate";
 
+    /** Same field as candidate login voters list & pledges module — not global pledgeStatus. */
+    function candidatePledgeForRow(v) {
+      const cp = v.candidatePledges || {};
+      const s = cp[String(candidateId)];
+      if (s === "yes" || s === "no" || s === "undecided") return s;
+      return "undecided";
+    }
+
     const body = document.createElement("div");
     body.className = "modal-body-inner";
 
@@ -476,7 +484,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
           <th>ID Number</th>
           <th>Name</th>
           <th>Permanent Address</th>
-          <th>Pledge</th>
+          <th title="Pledge to this candidate">Pledge</th>
           <th>Ballot box</th>
           <th>Assigned agent</th>
           <th>Phone</th>
@@ -501,7 +509,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       const groupBy = body.querySelector("#reportPledgedGroupBy")?.value || "none";
 
       let list = baseList.filter((v) => {
-        if (filterPledge !== "all" && (v.pledgeStatus || "undecided") !== filterPledge) return false;
+        if (filterPledge !== "all" && candidatePledgeForRow(v) !== filterPledge) return false;
         if (filterBox !== "all" && (v.ballotBox || "").trim() !== filterBox) return false;
         if (query) {
           const s = [v.fullName, v.nationalId, v.id, v.permanentAddress, v.ballotBox, v.phone, v.island].filter(Boolean).join(" ").toLowerCase();
@@ -517,7 +525,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
           case "name-asc": return (a.fullName || "").localeCompare(b.fullName || "", "en");
           case "id": return (a.nationalId || "").localeCompare(b.nationalId || "", "en");
           case "address": return (a.permanentAddress || "").localeCompare(b.permanentAddress || "", "en");
-          case "pledge": return (a.pledgeStatus || "").localeCompare(b.pledgeStatus || "", "en");
+          case "pledge": return candidatePledgeForRow(a).localeCompare(candidatePledgeForRow(b), "en");
           case "box": return (a.ballotBox || "").localeCompare(b.ballotBox || "", "en");
           default: return (a.fullName || "").localeCompare(b.fullName || "", "en");
         }
@@ -527,7 +535,14 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       if (groupBy === "none") return list.map((v) => ({ type: "row", voter: v }));
       const out = [];
       let lastKey = null;
-      const getKey = (v) => groupBy === "box" ? (v.ballotBox || "Unassigned") : (v.pledgeStatus === "yes" ? "Yes" : v.pledgeStatus === "no" ? "No" : "Undecided");
+      const getKey = (v) =>
+        groupBy === "box"
+          ? (v.ballotBox || "Unassigned")
+          : candidatePledgeForRow(v) === "yes"
+            ? "Yes"
+            : candidatePledgeForRow(v) === "no"
+              ? "No"
+              : "Undecided";
       list.forEach((v) => {
         const key = getKey(v);
         if (key !== lastKey) { out.push({ type: "group", label: key }); lastKey = key; }
@@ -572,7 +587,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
           const photoCell = photoSrc
             ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
             : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
-          const pledgeStatus = v.pledgeStatus ?? "undecided";
+          const pledgeStatus = candidatePledgeForRow(v);
           const timeMarked = getVotedTimeMarked(v.id);
           const votedCell = timeMarked
             ? (() => {
