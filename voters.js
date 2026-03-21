@@ -62,6 +62,17 @@ function getEffectivePledgeStatus(voter) {
   return (voter && voter.pledgeStatus) || "undecided";
 }
 
+/**
+ * Same set as Reports → Candidate pledge summary → View pledged voters for this candidate:
+ * voters with candidatePledges[candidateId] === "yes".
+ */
+function isInCandidatePledgedVotersList(voter) {
+  const ctx = getCandidateContext();
+  if (!ctx || !voter) return true;
+  const cp = voter.candidatePledges || {};
+  return cp[String(ctx.candidateId)] === "yes";
+}
+
 function pledgeStatusLabel(s) {
   if (s === "yes") return "Yes";
   if (s === "no") return "No";
@@ -81,6 +92,11 @@ function getCandidateRecordById(candidateId) {
   }
 }
 
+const VOTERS_MODULE_DESC_DEFAULT =
+  "Browse and manage voters with side-by-side detailed information.";
+const VOTERS_MODULE_DESC_CANDIDATE =
+  "Shows voters pledged Yes to your campaign — the same list as Reports → Candidate pledge summary → View pledged voters. Change your pledge per voter in the details panel.";
+
 function applyCandidateVotersUi() {
   const ctx = getCandidateContext();
   const isCand = !!ctx;
@@ -90,6 +106,10 @@ function applyCandidateVotersUi() {
   if (addBtn) addBtn.style.display = isCand ? "none" : "";
   if (createListBtn) createListBtn.style.display = isCand ? "none" : "";
   if (myListsWrap) myListsWrap.style.display = isCand ? "none" : "";
+  const descEl = document.getElementById("votersModuleDescription");
+  if (descEl) {
+    descEl.textContent = isCand ? VOTERS_MODULE_DESC_CANDIDATE : VOTERS_MODULE_DESC_DEFAULT;
+  }
   const pledgeTh = document.querySelector("#votersTable thead th[data-sort-key='pledge']");
   if (pledgeTh) {
     pledgeTh.innerHTML = isCand
@@ -178,6 +198,7 @@ function getFilteredSortedGroupedVoters() {
   const groupBy = voterGroupByEl?.value || "none";
 
   let list = currentVoters.filter((voter) => {
+    if (!isInCandidatePledgedVotersList(voter)) return false;
     if (pledgeFilter !== "all" && getEffectivePledgeStatus(voter) !== pledgeFilter)
       return false;
     if (query) {
@@ -255,6 +276,15 @@ export function getCurrentFilteredVoterIds() {
 
 function renderVotersTable() {
   if (!votersTableBody) return;
+  const ctx = getCandidateContext();
+  let clearedSelectionForCandidate = false;
+  if (ctx && selectedVoterId) {
+    const sel = currentVoters.find((v) => v.id === selectedVoterId);
+    if (!sel || !isInCandidatePledgedVotersList(sel)) {
+      selectedVoterId = null;
+      clearedSelectionForCandidate = true;
+    }
+  }
   const displayList = getFilteredSortedGroupedVoters();
   const dataRows = displayList.filter((x) => x.type === "row");
   const total = dataRows.length;
@@ -283,7 +313,10 @@ function renderVotersTable() {
 
   if (total === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="${VOTER_TABLE_COLUMN_COUNT}" class="text-muted" style="text-align:center;padding:24px;">No voters. Add a voter or import from Settings → Data.</td>`;
+    const emptyMsg = ctx
+      ? "No voters pledged Yes to your campaign yet. This list matches Candidate pledge summary → View pledged voters. Staff can set pledges in the Pledges module."
+      : "No voters. Add a voter or import from Settings → Data.";
+    tr.innerHTML = `<td colspan="${VOTER_TABLE_COLUMN_COUNT}" class="text-muted" style="text-align:center;padding:24px;">${emptyMsg}</td>`;
     votersTableBody.appendChild(tr);
   }
 
@@ -387,6 +420,9 @@ function renderVotersTable() {
 
   updateVoterSortIndicators();
   applyCandidateVotersUi();
+  if (clearedSelectionForCandidate) {
+    renderVoterDetails(null);
+  }
 }
 
 function updateVoterSortIndicators() {
