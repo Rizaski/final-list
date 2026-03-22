@@ -2,7 +2,7 @@
  * Door to Door module: track field visits (pledge, ballot box, assigned agent, met, persuadable, date pledged, notes).
  * Table: Seq, Image, Name, ID, Permanent Address, Pledge, Ballot Box, Assigned agent, Met?, Persuadable?, Date pledged, Notes.
  */
-import { getAgentsForDropdown, openAddAgentModal } from "./settings.js";
+import { getAgentsForDropdown } from "./settings.js";
 import {
   updateVoterDoorToDoorFields,
   updateVoterPledgeStatus,
@@ -17,7 +17,6 @@ const doorToDoorSortEl = document.getElementById("doorToDoorSort");
 const doorToDoorFilterStatusEl = document.getElementById("doorToDoorFilterStatus");
 const doorToDoorFilterBoxEl = document.getElementById("doorToDoorFilterBox");
 const doorToDoorGroupByEl = document.getElementById("doorToDoorGroupBy");
-const doorToDoorAddAgentButton = document.getElementById("doorToDoorAddAgentButton");
 
 let votersContext = null;
 let doorToDoorCurrentPage = 1;
@@ -338,14 +337,6 @@ export function initDoorToDoorModule(votersContextParam) {
   votersContext = votersContextParam || null;
   syncBallotBoxFilter();
   renderDoorToDoorTable();
-
-  doorToDoorAddAgentButton?.addEventListener("click", () => {
-    openAddAgentModal({});
-  });
-
-  document.addEventListener("agents-updated", () => {
-    renderDoorToDoorTable();
-  });
 
   doorToDoorSearchEl?.addEventListener("input", () => {
     doorToDoorCurrentPage = 1;

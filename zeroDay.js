@@ -840,50 +840,94 @@ function getUniqueBallotBoxes() {
   return Array.from(set).sort();
 }
 
+/** Resolve share URL and short access code for a monitor (same as copy payload). */
+function getMonitorShareUrls(monitor) {
+  const path = window.location.pathname || "/";
+  const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
+  const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
+  const monitorUrl = `${ballotBoxUrl}?monitor=${encodeURIComponent(monitor.shareToken)}`;
+  const accessCode = (monitor.shareToken || "").split("-")[1] || monitor.shareToken;
+  return { monitorUrl, accessCode, ballotBoxUrl };
+}
+
+/** SVG icons for monitor share UI (copy code vs copy list URL). */
+function monitorShareIconCopy() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+}
+function monitorShareIconLink() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 1 0-7l.7-.7a5 5 0 0 1 7 7l-.2.2"/><path d="M14 11a5 5 0 0 1 0 7l-.7.7a5 5 0 0 1-7-7l.2-.2"/></svg>`;
+}
+
+function copyMonitorAccessCodeOnly(monitorId) {
+  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
+  if (!monitor) return;
+  const { accessCode } = getMonitorShareUrls(monitor);
+  navigator.clipboard.writeText(accessCode).then(() => {
+    if (typeof window.showToast === "function") window.showToast("Code copied to clipboard");
+    else alert("Code copied to clipboard.");
+  }).catch(() => alert("Could not copy code: " + accessCode));
+}
+
+function copyMonitorListUrlOnly(monitorId) {
+  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
+  if (!monitor) return;
+  const { monitorUrl: url } = getMonitorShareUrls(monitor);
+  navigator.clipboard.writeText(url).then(() => {
+    if (typeof window.showToast === "function") window.showToast("List link copied to clipboard");
+    else alert("List link copied to clipboard.");
+  }).catch(() => alert("Could not copy link: " + url));
+}
+
+/** Copy full URL + code (legacy / bulk share). */
+function copyMonitorLink(monitorId) {
+  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
+  if (!monitor) return;
+  const { monitorUrl: url, accessCode } = getMonitorShareUrls(monitor);
+  const payload = `${url}\nCode: ${accessCode}`;
+  navigator.clipboard.writeText(payload).then(() => {
+    if (typeof window.showToast === "function") window.showToast("Link and code copied to clipboard");
+    else alert("Link and code copied to clipboard.");
+  }).catch(() => alert("Could not copy. Link: " + url + " (Code: " + accessCode + ")"));
+}
+
 function renderMonitorsTable() {
   if (!zeroDayMonitorsTableBody) return;
+  const emptyColspan = 6;
   zeroDayMonitorsTableBody.innerHTML = "";
   if (!zeroDayMonitors.length) {
     zeroDayMonitorsTableBody.innerHTML = `
       <tr>
-        <td colspan="5" class="text-muted" style="text-align: center; padding: 24px;">No monitors yet. Add a monitor and assign voters from their ballot box.</td>
+        <td colspan="${emptyColspan}" class="text-muted" style="text-align: center; padding: 24px;">No monitors yet. Add a monitor and assign voters from their ballot box.</td>
       </tr>
     `;
     return;
   }
-  const voters = votersContext ? votersContext.getAllVoters() : [];
   zeroDayMonitors.forEach((m) => {
     const voterCount = (m.voterIds || []).length;
-    const path = window.location.pathname || "/";
-    const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
-    const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
-    const monitorUrl = `${ballotBoxUrl}?monitor=${encodeURIComponent(m.shareToken)}`;
-    const accessCode = (m.shareToken || "").split("-")[1] || m.shareToken;
+    const { accessCode } = getMonitorShareUrls(m);
+    const mid = String(m.id);
     const tr = document.createElement("tr");
-    tr.dataset.monitorId = String(m.id);
+    tr.dataset.monitorId = mid;
     tr.innerHTML = `
-      <td colspan="5">
-        <div class="monitor-card">
-          <div class="monitor-card__ballot">
-            <span class="monitor-card__ballot-title">${escapeHtml(m.ballotBox || "Ballot box")}</span>
-            <span class="monitor-card__ballot-meta">Ballot access for assigned monitor</span>
-          </div>
-          <div>
-            <div class="monitor-card__monitor">
-              <span><strong>Monitor:</strong> ${escapeHtml(m.name || "—")}</span>
-              <span><strong>Mobile:</strong> ${escapeHtml(m.mobile || "—")}</span>
-              <span class="monitor-card__voters"><strong>Voters:</strong> ${voterCount}</span>
-            </div>
-            <div class="monitor-card__link">
-              <span><strong>Link:</strong> <code class="monitor-link-preview">${escapeHtml(monitorUrl)}</code></span>
-              <span class="monitor-card__access"><strong>Access code:</strong> ${escapeHtml(accessCode)}</span>
-            </div>
-          </div>
-          <div class="monitor-card__actions">
-            <button class="ghost-button ghost-button--small" data-assign-voters="${m.id}" title="Assign voters from this ballot box">Assign voters</button>
-            <button class="ghost-button ghost-button--small" data-copy-link="${m.id}" title="Copy link &amp; code">Copy link</button>
-            <button class="ghost-button ghost-button--small" data-delete-monitor="${m.id}" title="Delete this monitor and its access link">Delete link</button>
-          </div>
+      <td>${escapeHtml(m.ballotBox || "—")}</td>
+      <td class="data-table-col--name">${escapeHtml(m.name || "—")}</td>
+      <td>${escapeHtml(m.mobile || "—")}</td>
+      <td>${voterCount}</td>
+      <td>
+        <div class="monitor-share-cell">
+          <code class="monitor-link-preview">${escapeHtml(accessCode)}</code>
+          <span class="monitor-share-cell__icons" role="group" aria-label="Copy code or list link">
+            <button type="button" class="vote-box-card__copy-btn monitor-share-cell__icon-btn" data-copy-monitor-code="${mid}" title="Copy code" aria-label="Copy code">${monitorShareIconCopy()}</button>
+            <button type="button" class="vote-box-card__copy-btn monitor-share-cell__icon-btn" data-copy-monitor-link="${mid}" title="Copy list link" aria-label="Copy list link">${monitorShareIconLink()}</button>
+          </span>
+        </div>
+      </td>
+      <td class="zero-day-monitors-actions-col">
+        <div class="zero-day-monitors-crud" role="group" aria-label="Monitor actions">
+          <button type="button" class="ghost-button ghost-button--small" data-view-monitor="${mid}" title="View details">View</button>
+          <button type="button" class="ghost-button ghost-button--small" data-assign-voters="${mid}" title="Assign voters from this ballot box">Assign</button>
+          <button type="button" class="ghost-button ghost-button--small" data-edit-monitor="${mid}" title="Edit monitor">Edit</button>
+          <button type="button" class="ghost-button ghost-button--small" data-delete-monitor="${mid}" title="Delete this monitor and its access link">Delete</button>
         </div>
       </td>
     `;
@@ -891,42 +935,148 @@ function renderMonitorsTable() {
   });
 }
 
+/** Read-only details (R in CRUD), aligned with Settings → Agents. */
+function openMonitorViewModal(monitor) {
+  if (!monitor) return;
+  const voterCount = (monitor.voterIds || []).length;
+  const { monitorUrl, accessCode } = getMonitorShareUrls(monitor);
+
+  const body = document.createElement("div");
+  body.className = "form-grid";
+  body.innerHTML = `
+    <div class="form-group">
+      <div class="detail-item-label">Ballot box</div>
+      <div class="detail-item-value">${escapeHtml(monitor.ballotBox || "—")}</div>
+    </div>
+    <div class="form-group">
+      <div class="detail-item-label">Monitor name</div>
+      <div class="detail-item-value">${escapeHtml(monitor.name || "—")}</div>
+    </div>
+    <div class="form-group">
+      <div class="detail-item-label">Mobile</div>
+      <div class="detail-item-value">${escapeHtml(monitor.mobile || "—")}</div>
+    </div>
+    <div class="form-group">
+      <div class="detail-item-label">Assigned voters</div>
+      <div class="detail-item-value">${voterCount}</div>
+    </div>
+    <div class="form-group" style="grid-column: 1 / -1;">
+      <label class="detail-item-label">Code</label>
+      <div class="monitor-modal-share-row">
+        <code class="monitor-modal-share-row__code">${escapeHtml(accessCode)}</code>
+        <button type="button" class="vote-box-card__copy-btn" id="monitorModalCopyCode" title="Copy code" aria-label="Copy code">${monitorShareIconCopy()}</button>
+      </div>
+    </div>
+    <div class="form-group" style="grid-column: 1 / -1;">
+      <label for="monitorViewUrlField" class="detail-item-label">List link</label>
+      <div class="monitor-modal-share-row">
+        <input type="text" id="monitorViewUrlField" class="input monitor-modal-share-row__input" readonly value="${escapeHtml(monitorUrl)}">
+        <button type="button" class="vote-box-card__copy-btn" id="monitorModalCopyLink" title="Copy list link" aria-label="Copy list link">${monitorShareIconLink()}</button>
+      </div>
+    </div>
+  `;
+
+  body.querySelector("#monitorModalCopyCode")?.addEventListener("click", () => copyMonitorAccessCodeOnly(monitor.id));
+  body.querySelector("#monitorModalCopyLink")?.addEventListener("click", () => copyMonitorListUrlOnly(monitor.id));
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.flexWrap = "wrap";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "ghost-button";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeModal());
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "primary-button";
+  editBtn.textContent = "Update monitor";
+  editBtn.addEventListener("click", () => {
+    closeModal();
+    openAddMonitorForm(monitor);
+  });
+
+  footer.appendChild(closeBtn);
+  footer.appendChild(editBtn);
+
+  openModal({ title: "View monitor", body, footer });
+}
+
 function openAddMonitorForm(existing) {
   const isEdit = !!existing;
   const ballotBoxes = getUniqueBallotBoxes();
   const body = document.createElement("div");
+  body.className = "form-grid";
   body.innerHTML = `
-    <div class="form-grid">
-      <div class="form-group">
-        <label for="monitorName">Monitor name</label>
-        <input id="monitorName" type="text" value="${escapeHtml(existing?.name || "")}" placeholder="e.g. Ahmed Hassan">
-      </div>
-      <div class="form-group">
-        <label for="monitorMobile">Mobile</label>
-        <input id="monitorMobile" type="text" value="${escapeHtml(existing?.mobile || "")}" placeholder="e.g. 960 123 4567">
-      </div>
-      <div class="form-group">
-        <label for="monitorBallotBox">Ballot box</label>
-        <select id="monitorBallotBox">
-          <option value="">Select ballot box…</option>
-          ${ballotBoxes.map((b) => `<option value="${escapeHtml(b)}"${(existing?.ballotBox || "") === b ? " selected" : ""}>${escapeHtml(b)}</option>`).join("")}
-        </select>
-      </div>
+    <div class="form-group">
+      <label for="monitorName">Monitor name <span class="text-muted">(required)</span></label>
+      <input id="monitorName" class="input" type="text" value="${escapeHtml(existing?.name || "")}" placeholder="e.g. Ahmed Hassan">
     </div>
-    ${!isEdit ? "<p class=\"helper-text\">After adding, use “Assign voters” to add all voters from this ballot box to the monitor’s list. Then use “Copy link” to share.</p>" : ""}
+    <div class="form-group">
+      <label for="monitorMobile">Mobile</label>
+      <input id="monitorMobile" class="input" type="text" value="${escapeHtml(existing?.mobile || "")}" placeholder="e.g. 960 123 4567">
+    </div>
+    <div class="form-group">
+      <label for="monitorBallotBox">Ballot box <span class="text-muted">(required)</span></label>
+      <select id="monitorBallotBox" class="input agent-dropdown-select agent-dropdown-select--modal">
+        <option value="">Select ballot box…</option>
+        ${ballotBoxes.map((b) => `<option value="${escapeHtml(b)}"${(existing?.ballotBox || "") === b ? " selected" : ""}>${escapeHtml(b)}</option>`).join("")}
+      </select>
+    </div>
+    ${
+      !isEdit
+        ? `<p class="helper-text" style="grid-column: 1 / -1;">After adding, use <strong>Assign</strong> to add all voters from this ballot box to the monitor’s list. Then use the <strong>Code</strong> and <strong>list link</strong> copy buttons to share.</p>`
+        : ""
+    }
+    ${
+      ballotBoxes.length === 0
+        ? `<p class="helper-text" style="grid-column: 1 / -1;">No ballot boxes found yet. Add voters with a ballot box in <strong>Voters</strong> first, then return here.</p>`
+        : ""
+    }
   `;
 
   const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => closeModal());
   const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
   saveBtn.className = "primary-button";
-  saveBtn.textContent = isEdit ? "Save changes" : "Add monitor";
+  saveBtn.textContent = isEdit ? "Update monitor" : "Create monitor";
+  footer.appendChild(cancelBtn);
   footer.appendChild(saveBtn);
 
-  saveBtn.addEventListener("click", () => {
+  function trySave() {
     const name = body.querySelector("#monitorName").value.trim();
     const mobile = body.querySelector("#monitorMobile").value.trim();
     const ballotBox = body.querySelector("#monitorBallotBox").value.trim();
-    if (!name || !ballotBox) return;
+    if (!name) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Missing fields",
+          meta: "Monitor name is required.",
+        });
+      }
+      return;
+    }
+    if (!ballotBox) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Missing fields",
+          meta: "Select a ballot box.",
+        });
+      }
+      return;
+    }
 
     if (isEdit) {
       existing.name = name;
@@ -952,10 +1102,12 @@ function openAddMonitorForm(existing) {
     renderMonitorsTable();
     subscribeVotedRealtime();
     closeModal();
-  });
+  }
+
+  saveBtn.addEventListener("click", trySave);
 
   openModal({
-    title: isEdit ? "Edit monitor" : "Add monitor",
+    title: isEdit ? "Update monitor" : "Create monitor",
     body,
     footer,
   });
@@ -1005,21 +1157,6 @@ function assignVotersFromBallotBox(monitorId) {
   saveMonitors();
   syncMonitorToFirestore(monitor);
   renderMonitorsTable();
-}
-
-function copyMonitorLink(monitorId) {
-  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
-  if (!monitor) return;
-  const path = window.location.pathname || "/";
-  const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
-  const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
-  const url = `${ballotBoxUrl}?monitor=${encodeURIComponent(monitor.shareToken)}`;
-  const accessCode = (monitor.shareToken || "").split("-")[1] || monitor.shareToken;
-  const payload = `${url}\nAccess code: ${accessCode}`;
-  navigator.clipboard.writeText(payload).then(() => {
-    if (typeof window.showToast === "function") window.showToast("Link and access code copied to clipboard");
-    else alert("Link and access code copied to clipboard.");
-  }).catch(() => alert("Could not copy. Link: " + url + " (Access code: " + accessCode + ")"));
 }
 
 function deleteMonitorLink(monitorId) {
@@ -1633,7 +1770,7 @@ function getOrEnsureMonitorForBallotBox(ballotBox) {
 
 function ensureMonitorForBallotBox(ballotBox) {
   const monitor = getOrEnsureMonitorForBallotBox(ballotBox);
-  copyMonitorLink(monitor.id);
+  copyMonitorListUrlOnly(monitor.id);
 }
 
 function renderZeroDayVoteTable() {
@@ -1669,18 +1806,29 @@ function renderZeroDayVoteTable() {
           : percentage > 0
             ? "vote-box-card__badge--partial"
             : "vote-box-card__badge--none";
+      const boxKey = (box.box || "").trim();
+      const monitorForBox = zeroDayMonitors.find((m) => (m.ballotBox || "").trim() === boxKey);
+      const mid = monitorForBox ? String(monitorForBox.id) : "";
+      const codeDisplay = monitorForBox ? getMonitorShareUrls(monitorForBox).accessCode : "";
+      const codeCopyAttr = mid
+        ? `data-copy-monitor-code="${mid}"`
+        : `data-copy-monitor-code-for-box="${escapeHtml(boxKey)}"`;
+      const linkCopyAttr = mid
+        ? `data-copy-monitor-link="${mid}"`
+        : `data-copy-monitor-link-for-box="${escapeHtml(boxKey)}"`;
       card.innerHTML = `
         <div class="vote-box-card__header">
           <div>
             <div class="vote-box-card__title-wrap">
               <span class="vote-box-card__title">${escapeHtml(box.box)}</span>
-              <button type="button" class="vote-box-card__copy-btn" data-copy-code="${escapeHtml(
-                box.box
-              )}" title="Copy access code" aria-label="Copy access code">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              </button>
             </div>
             <div class="vote-box-card__meta">${escapeHtml(box.island || "")}</div>
+            <div class="vote-box-card__code-row">
+              <span class="vote-box-card__code-label">Code</span>
+              <code class="vote-box-card__code-value">${escapeHtml(codeDisplay || "—")}</code>
+              <button type="button" class="vote-box-card__copy-btn" ${codeCopyAttr} title="Copy code" aria-label="Copy code">${monitorShareIconCopy()}</button>
+              <button type="button" class="vote-box-card__copy-btn" ${linkCopyAttr} title="Copy list link" aria-label="Copy list link">${monitorShareIconLink()}</button>
+            </div>
           </div>
           <span class="vote-box-card__badge ${badgeClass}">${percentage}% voted</span>
         </div>
@@ -1901,15 +2049,29 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   const monitorsPanel = document.getElementById("zero-day-tab-monitors");
   if (monitorsPanel) {
     monitorsPanel.addEventListener("click", (e) => {
+      const viewBtn = e.target.closest("[data-view-monitor]");
       const assignBtn = e.target.closest("[data-assign-voters]");
-      const copyBtn = e.target.closest("[data-copy-link]");
+      const copyCodeBtn = e.target.closest("[data-copy-monitor-code]");
+      const copyLinkBtn = e.target.closest("[data-copy-monitor-link]");
+      const editBtn = e.target.closest("[data-edit-monitor]");
       const deleteBtn = e.target.closest("[data-delete-monitor]");
-      if (assignBtn) {
+      if (viewBtn) {
+        const id = Number(viewBtn.getAttribute("data-view-monitor"));
+        const monitor = zeroDayMonitors.find((m) => m.id === id);
+        if (monitor) openMonitorViewModal(monitor);
+      } else if (assignBtn) {
         const id = Number(assignBtn.getAttribute("data-assign-voters"));
         assignVotersFromBallotBox(id);
-      } else if (copyBtn) {
-        const id = Number(copyBtn.getAttribute("data-copy-link"));
-        copyMonitorLink(id);
+      } else if (copyCodeBtn) {
+        const id = Number(copyCodeBtn.getAttribute("data-copy-monitor-code"));
+        copyMonitorAccessCodeOnly(id);
+      } else if (copyLinkBtn) {
+        const id = Number(copyLinkBtn.getAttribute("data-copy-monitor-link"));
+        copyMonitorListUrlOnly(id);
+      } else if (editBtn) {
+        const id = Number(editBtn.getAttribute("data-edit-monitor"));
+        const monitor = zeroDayMonitors.find((m) => m.id === id);
+        if (monitor) openAddMonitorForm(monitor);
       } else if (deleteBtn) {
         const id = Number(deleteBtn.getAttribute("data-delete-monitor"));
         deleteMonitorLink(id);
@@ -2040,23 +2202,32 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 
   if (zeroDayVoteCardsContainer) {
     zeroDayVoteCardsContainer.addEventListener("click", (e) => {
-      const copyBtn = e.target.closest("[data-copy-code]");
+      const copyCodeBtn = e.target.closest("[data-copy-monitor-code], [data-copy-monitor-code-for-box]");
+      const copyLinkBtn = e.target.closest("[data-copy-monitor-link], [data-copy-monitor-link-for-box]");
       const viewVotedBtn = e.target.closest("[data-view-voted]");
       const viewNotYetBtn = e.target.closest("[data-view-not-yet]");
       const openBtn = e.target.closest("[data-open-box]");
       const shareBtn = e.target.closest("[data-share-box]");
 
-      if (copyBtn) {
-        const code = copyBtn.getAttribute("data-copy-code");
-        if (code) {
-          navigator.clipboard
-            .writeText(code)
-            .then(() => {
-              if (typeof window.showToast === "function") {
-                window.showToast("Access code copied to clipboard.");
-              }
-            })
-            .catch(() => {});
+      if (copyCodeBtn) {
+        const idAttr = copyCodeBtn.getAttribute("data-copy-monitor-code");
+        const boxAttr = copyCodeBtn.getAttribute("data-copy-monitor-code-for-box");
+        if (idAttr) {
+          copyMonitorAccessCodeOnly(Number(idAttr));
+        } else if (boxAttr) {
+          const m = getOrEnsureMonitorForBallotBox(boxAttr);
+          copyMonitorAccessCodeOnly(m.id);
+        }
+        return;
+      }
+      if (copyLinkBtn) {
+        const idAttr = copyLinkBtn.getAttribute("data-copy-monitor-link");
+        const boxAttr = copyLinkBtn.getAttribute("data-copy-monitor-link-for-box");
+        if (idAttr) {
+          copyMonitorListUrlOnly(Number(idAttr));
+        } else if (boxAttr) {
+          const m = getOrEnsureMonitorForBallotBox(boxAttr);
+          copyMonitorListUrlOnly(m.id);
         }
         return;
       }

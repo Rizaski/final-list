@@ -50,14 +50,20 @@ service cloud.firestore {
       allow write: if signedIn() && sizeOk();
     }
 
-    // Monitors (e.g. zero-day / transport views)
+    // Monitors (Zero Day ballot box share links). Document id `token` is the secret in the URL;
+    // unauthenticated clients must read/write only via that exact path (no collection listing).
     match /monitors/{token} {
-      allow read: if signedIn();
-      allow write: if signedIn() && sizeOk();
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if signedIn() && sizeOk();
+      allow delete: if signedIn();
 
       match /voted/{voterId} {
-        allow read: if signedIn();
-        allow write: if signedIn() && sizeOk();
+        // Standalone ballot-box.html: anyone with the link can list/read/write marks (token is the credential).
+        allow read: if true;
+        allow create, update: if sizeOk();
+        // Clearing a mark from the main app (staff) still requires sign-in.
+        allow delete: if signedIn();
       }
     }
 

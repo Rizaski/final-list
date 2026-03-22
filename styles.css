@@ -2917,76 +2917,109 @@ body.list-workspace-page {
   vertical-align: middle;
 }
 
-/* Zero Day monitors: ballot cards in table body */
-.data-table--monitors tbody td {
-  padding: 0;
-  border: none;
+/* Zero Day monitors: standard data table rows + action column */
+.data-table--monitors {
+  min-width: 720px;
 }
 
-.monitor-card {
-  margin: 8px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: #f9fafb;
-  border: 1px solid var(--color-border-subtle);
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr) minmax(0, 1fr);
-  gap: 10px;
+.zero-day-monitors-actions-col {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+  text-align: right;
+}
+
+.zero-day-monitors-crud {
+  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-}
-
-.monitor-card__ballot {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.monitor-card__ballot-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.monitor-card__ballot-meta {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.monitor-card__monitor {
-  font-size: 12px;
-  color: var(--color-text);
-}
-
-.monitor-card__monitor span {
-  display: block;
-}
-
-.monitor-card__voters {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.monitor-card__link {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  word-break: break-all;
-}
-
-.monitor-card__access {
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--color-primary);
-}
-
-.monitor-card__actions {
-  display: flex;
-  flex-direction: column;
   gap: 6px;
-  align-items: flex-end;
+  justify-content: flex-end;
+  max-width: 280px;
+}
+
+.zero-day-monitors-crud .ghost-button--small {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 4px 10px;
+  white-space: nowrap;
 }
 
 .monitor-link-preview {
-  font-size: 11px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* Monitors table: code + copy icons */
+.monitor-share-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.monitor-share-cell__icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.monitor-share-cell__icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* View monitor modal: Code + list link rows with icon buttons */
+.monitor-modal-share-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.monitor-modal-share-row__code {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted, #f3f4f6);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.monitor-modal-share-row__input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Vote marking cards: Code row */
+.vote-box-card__code-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 8px;
+}
+
+.vote-box-card__code-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.vote-box-card__code-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  background: var(--color-primary-soft);
+  padding: 2px 8px;
+  border-radius: 6px;
+  min-height: 1.25em;
 }
 
 /* Compact Seq column (numeric, right-aligned; minimal width) */

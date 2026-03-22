@@ -71,8 +71,8 @@
         <h2 class="monitor-view-gate__title">Ballot box access</h2>
         <p class="monitor-view-gate__hint">Enter the access code shared by your Campaign Manager to view the voter list.</p>
         <form id="monitorViewGateForm" class="monitor-view-gate__form" autocomplete="off" method="dialog" action="javascript:void(0)">
-          <label for="monitorViewAccessCode" class="sr-only">Access code</label>
-          <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input" placeholder="Access code" autocomplete="off" inputmode="numeric" maxlength="20">
+          <label for="monitorViewAccessCode" class="sr-only">Code</label>
+          <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input" placeholder="Code" autocomplete="off" inputmode="numeric" maxlength="20">
           <p id="monitorViewGateError" class="monitor-view-gate__error" role="alert" hidden></p>
           <button type="submit" class="primary-button monitor-view-gate__submit">Continue</button>
         </form>
@@ -706,7 +706,6 @@
                   <input type="search" id="doorToDoorSearch" placeholder="Search by name, ID, address, notes…">
                 </div>
                 <div class="pledges-toolbar__controls">
-                  <button type="button" class="ghost-button" id="doorToDoorAddAgentButton">Add agent</button>
                   <div class="field-group field-group--inline">
                     <label for="doorToDoorSort">Sort</label>
                     <select id="doorToDoorSort">
@@ -1042,11 +1041,12 @@
                     <table class="data-table data-table--monitors" id="zeroDayMonitorsTable">
                       <thead>
                         <tr>
-                          <th>Ballot box</th>
-                          <th>Monitor</th>
-                          <th>Voters</th>
-                          <th>Link &amp; access</th>
-                          <th></th>
+                          <th scope="col">Ballot box</th>
+                          <th scope="col" class="data-table-col--name">Monitor</th>
+                          <th scope="col">Mobile</th>
+                          <th scope="col">Voters</th>
+                          <th scope="col">Code</th>
+                          <th scope="col" class="zero-day-monitors-actions-col">Actions</th>
                         </tr>
                       </thead>
                       <tbody>

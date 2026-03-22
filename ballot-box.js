@@ -1,6 +1,8 @@
 /**
- * Standalone ballot box page: works from any device with internet.
- * Tries Firestore first (monitor + voters + voted). Falls back to localStorage (same browser only).
+ * Standalone ballot box page: works from any device with internet (no login required).
+ * Tries Firestore first (monitor + voters + voted). Requires firestore.rules that allow
+ * unauthenticated get on monitors/{token} and read/write on monitors/{token}/voted/*.
+ * Falls back to localStorage if Firestore is unavailable (same browser only).
  */
 import { firebaseInitPromise } from "./firebase.js";
 import { getVotersContextForStandalone } from "./voters.js";
@@ -36,7 +38,9 @@ async function main() {
           monitoringDisabled,
           onSaveVoted: monitoringDisabled ? undefined : async (t, voterId, timeMarked) => {
             await api.setVotedForMonitor(t, voterId, timeMarked);
-            if (api.setVoterVotedAtFs) await api.setVoterVotedAtFs(voterId, timeMarked);
+            // Voter documents require signed-in staff; standalone links only update monitors/.../voted.
+            const staff = api.auth && api.auth.currentUser;
+            if (staff && api.setVoterVotedAtFs) await api.setVoterVotedAtFs(voterId, timeMarked);
           },
           onRefreshVoted: async () => {
             const entries = await api.getVotedForMonitor(token);
@@ -48,7 +52,7 @@ async function main() {
       }
     }
   } catch (err) {
-    console.warn("[Ballot box] Firestore error (use same browser or deploy rules):", err.message || err);
+    console.warn("[Ballot box] Firestore error (check connection and deployed rules):", err.message || err);
   }
 
   const votersContext = getVotersContextForStandalone();
