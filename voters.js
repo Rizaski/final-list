@@ -189,6 +189,7 @@ const voterDetailsSubtitle = document.getElementById("voterDetailsSubtitle");
 const voterDetailsContent = document.getElementById("voterDetailsContent");
 const voterNotesTextarea = document.getElementById("voterNotes");
 const saveVoterNotesButton = document.getElementById("saveVoterNotesButton");
+const voterNotesHelperEl = document.getElementById("voterNotesHelper");
 const voterInteractionTimeline = document.getElementById(
   "voterInteractionTimeline"
 );
@@ -1070,15 +1071,18 @@ function renderVoterDetails(voter) {
     </div>
   `;
 
-  if (candCtx) {
-    voterNotesTextarea.disabled = true;
-    if (saveVoterNotesButton) saveVoterNotesButton.style.display = "none";
-  } else {
-    voterNotesTextarea.disabled = false;
-    if (saveVoterNotesButton) saveVoterNotesButton.style.display = "";
+  // Agent notes: candidates may edit the same shared notes field as staff (saved on voter record).
+  voterNotesTextarea.disabled = false;
+  if (saveVoterNotesButton) {
+    saveVoterNotesButton.style.display = "";
+    saveVoterNotesButton.disabled = true;
   }
   voterNotesTextarea.value = voter.notes || "";
-  saveVoterNotesButton.disabled = true;
+  if (voterNotesHelperEl) {
+    voterNotesHelperEl.textContent = candCtx
+      ? "Your edits save to this voter’s record. Agent comments are visible to campaign staff and administrators."
+      : "Agent comments are visible to authorised campaign staff.";
+  }
 
   const pledgePicker = document.querySelector(".candidate-pledge-picker");
   if (pledgePicker && candCtx) {
@@ -1194,13 +1198,6 @@ function renderVoterDetails(voter) {
       `;
       voterInteractionTimeline.appendChild(li);
     });
-  }
-
-  // Bind notes
-  if (!candCtx) {
-    voterNotesTextarea.disabled = false;
-    voterNotesTextarea.value = voter.notes || "";
-    saveVoterNotesButton.disabled = true;
   }
 
   // Bind transportation (admin, staff, and candidate)
