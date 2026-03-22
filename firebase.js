@@ -226,7 +226,8 @@ export const firebaseInitPromise = (async () => {
 
       getAllAgentsFs = async () => {
         const snap = await firestoreMod.getDocs(agentsColRef);
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // Document id must win — stored `id` field in data would overwrite d.id and break delete/update.
+        return snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
       };
 
       setAgentFs = async (agent) => {
@@ -244,7 +245,7 @@ export const firebaseInitPromise = (async () => {
       onAgentsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return firestoreMod.onSnapshot(agentsColRef, (snap) => {
-          const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const items = snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
           handler(items);
         });
       };
