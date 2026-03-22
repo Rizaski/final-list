@@ -1164,18 +1164,6 @@
           <div class="grid grid--two-column">
             <section class="card">
               <header class="card-header card-header--split">
-                <h2>Candidate vote result (pledged vs voted)</h2>
-                <button type="button" class="ghost-button ghost-button--small" data-report-details="box-pledge">View details</button>
-              </header>
-              <div class="card-body">
-                <div id="reportsBoxPledgeChart" class="chart-row">
-                  <!-- For each candidate: % of their pledged voters who have voted -->
-                </div>
-              </div>
-            </section>
-
-            <section class="card">
-              <header class="card-header card-header--split">
                 <h2>Support distribution</h2>
                 <button type="button" class="ghost-button ghost-button--small" data-report-details="support">View details</button>
               </header>
@@ -1185,9 +1173,7 @@
                 </div>
               </div>
             </section>
-          </div>
 
-          <div class="grid grid--two-column">
             <section class="card">
               <header class="card-header card-header--split">
                 <div>
@@ -1199,6 +1185,20 @@
               <div class="card-body">
                 <div id="reportsWinOMeter" class="chart-row">
                   <!-- Populated by reports module -->
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid grid--two-column">
+            <section class="card">
+              <header class="card-header card-header--split">
+                <h2>Candidate vote result (pledged vs voted)</h2>
+                <button type="button" class="ghost-button ghost-button--small" data-report-details="box-pledge">View details</button>
+              </header>
+              <div class="card-body">
+                <div id="reportsBoxPledgeChart" class="chart-row">
+                  <!-- For each candidate: % of their pledged voters who have voted -->
                 </div>
               </div>
             </section>
