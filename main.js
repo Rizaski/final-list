@@ -4,7 +4,12 @@ import { initVotersModule, getVoterStats, getPledgeByBallotBox, refreshVotersFro
 import { initPledgesModule, getPledgeStatsFromPledges } from "./pledges.js";
 import { initEventsModule, getUpcomingEventsSummary } from "./events.js";
 import { initReportsModule } from "./reports.js";
-import { initSettingsModule, getCampaignConfig, syncCampaignConfigFromFirestore } from "./settings.js";
+import {
+  initSettingsModule,
+  getCampaignConfig,
+  syncCampaignConfigFromFirestore,
+  openAddAgentModal,
+} from "./settings.js";
 import { initCallsModule } from "./calls.js";
 import { initZeroDayModule, initMonitorView, syncVotedFromFirestore } from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
@@ -630,7 +635,7 @@ async function startAppModules(firebaseApi) {
   startAppModules._started = true;
   console.log("[App] Starting application modules…");
 
-  const votersContext = await initVotersModule(getCurrentUser);
+  const votersContext = await initVotersModule(getCurrentUser, { openAddAgentModal });
   const monitorToken = new URLSearchParams(window.location.search).get("monitor");
 
   if (monitorToken) {

@@ -19,11 +19,11 @@ const zeroDayVotePaginationEl = document.getElementById("zeroDayVotePagination")
 const zeroDayAddMonitorButton = document.getElementById("zeroDayAddMonitorButton");
 const zeroDayMonitorsTableBody = document.querySelector("#zeroDayMonitorsTable tbody");
 
-const TRIP_TYPES = [
+export const TRIP_TYPES = [
   { value: "flight", label: "Flight" },
   { value: "speedboat", label: "Speed boat" },
 ];
-const TRIP_STATUSES = ["Scheduled", "In progress", "Completed"];
+export const TRIP_STATUSES = ["Scheduled", "In progress", "Completed"];
 const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
 const VOTED_STORAGE_KEY = "zero-day-voted";
@@ -64,6 +64,12 @@ function normalizeRouteKey(s) {
 /**
  * Create a minimal Zero Day transport trip so the route appears in voter route dropdowns.
  * Syncs to Firestore when available. Dispatches `transport-trips-updated`.
+ * @param {object} [options]
+ * @param {string} [options.tripType] flight | speedboat
+ * @param {string} [options.driver]
+ * @param {string} [options.vehicle]
+ * @param {string} [options.pickupTime] datetime-local value or ISO string
+ * @param {string} [options.status] Scheduled | In progress | Completed
  * @returns {{ ok: true, route: string, trip: object } | { ok: false, error: 'empty' | 'duplicate' }}
  */
 export async function addTransportRouteFromName(routeName, options = {}) {
@@ -78,14 +84,25 @@ export async function addTransportRouteFromName(routeName, options = {}) {
       ? 1
       : zeroDayTrips.reduce((max, t) => Math.max(max, Number(t.id) || 0), 0) + 1;
   const tripType = options.tripType === "speedboat" ? "speedboat" : "flight";
+  const driver = String(options.driver || "").trim();
+  const vehicle = String(options.vehicle || "").trim();
+  const pickupRaw = options.pickupTime != null ? String(options.pickupTime).trim() : "";
+  const pickupTime = pickupRaw
+    ? (() => {
+        const d = new Date(pickupRaw);
+        return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+      })()
+    : "";
+  const statusOpt = String(options.status || "").trim();
+  const status = TRIP_STATUSES.includes(statusOpt) ? statusOpt : "Scheduled";
   const trip = normalizeTrip({
     id: nextId,
     tripType,
     route,
-    driver: "",
-    vehicle: "",
-    pickupTime: "",
-    status: "Scheduled",
+    driver,
+    vehicle,
+    pickupTime,
+    status,
     voterCount: 0,
     voterIds: [],
   });
@@ -129,7 +146,28 @@ function normalizeTrip(t) {
     status: t.status || "Scheduled",
     voterCount: t.voterCount != null ? t.voterCount : (Array.isArray(t.voterIds) ? t.voterIds.length : 0),
     voterIds: Array.isArray(t.voterIds) ? t.voterIds : [],
+    onboardedVoterIds: Array.isArray(t.onboardedVoterIds)
+      ? t.onboardedVoterIds.map((x) => String(x))
+      : [],
   };
+}
+
+/** Toggle voter on-board status for a transport trip (persisted on trip + Firestore). */
+async function toggleTripVoterOnboarded(tripId, voterIdStr) {
+  const t = zeroDayTrips.find((x) => x.id === tripId);
+  if (!t) return;
+  const id = String(voterIdStr);
+  let arr = Array.isArray(t.onboardedVoterIds) ? t.onboardedVoterIds.map(String) : [];
+  const ix = arr.indexOf(id);
+  if (ix >= 0) arr.splice(ix, 1);
+  else arr.push(id);
+  t.onboardedVoterIds = arr;
+  saveTrips();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
+  } catch (_) {}
+  renderZeroDayTripsTable();
 }
 
 function loadMonitors() {
@@ -453,7 +491,6 @@ function renderZeroDayTripsTable() {
       <td><span class="${escapeHtml(statusClass)}">${escapeHtml(trip.status)}</span></td>
       <td style="text-align:right; white-space:nowrap;">
         <button class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
-        <button class="ghost-button ghost-button--small" data-assign-trip="${trip.id}" title="Assign voters">Assign</button>
         <button class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">View voters</button>
         <button class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
         <button class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
@@ -660,7 +697,6 @@ function openTripVotersModal(trip) {
   const summary = document.createElement("div");
   summary.className = "helper-text";
   summary.style.margin = "6px 0 10px";
-  summary.textContent = `Matched ${assigned.length} voters (Trip assignment: ${assignedByIds.length}, By route: ${assignedByRoute.length})`;
 
   const listToolbar = document.createElement("div");
   listToolbar.className = "modal-list-toolbar list-toolbar";
@@ -741,7 +777,18 @@ function openTripVotersModal(trip) {
     });
   }
 
+  function isVoterOnboardedForTrip(v) {
+    const tLive = zeroDayTrips.find((x) => x.id === trip.id);
+    const set = new Set((tLive?.onboardedVoterIds || []).map(String));
+    const id = String(v.id);
+    const nid = String(v.nationalId || "").trim();
+    return set.has(id) || (nid && set.has(nid));
+  }
+
   function render() {
+    const tLive = zeroDayTrips.find((x) => x.id === trip.id);
+    const obCount = (tLive?.onboardedVoterIds || []).length;
+    summary.textContent = `Matched ${assigned.length} voters (Trip assignment: ${assignedByIds.length}, By route: ${assignedByRoute.length}) · On-board: ${obCount}`;
     const filterPledge = (body.querySelector("#zdTripVotersFilter") || {}).value || "all";
     const sortBy = (body.querySelector("#zdTripVotersSort") || {}).value || "sequence";
     const groupBy = (body.querySelector("#zdTripVotersGroupBy") || {}).value || "none";
@@ -753,6 +800,7 @@ function openTripVotersModal(trip) {
       includeTimeVoted: false,
       showUnmarkAction: false,
       usePledgePills: true,
+      isOnboarded: isVoterOnboardedForTrip,
     });
     tableWrap.innerHTML = "";
     tableWrap.appendChild(newTable.firstElementChild);
@@ -763,6 +811,15 @@ function openTripVotersModal(trip) {
   body.appendChild(listToolbar);
   body.appendChild(tableWrap);
 
+  tableWrap.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-trip-onboard-toggle]");
+    if (!btn) return;
+    const voterId = btn.getAttribute("data-trip-onboard-toggle");
+    if (voterId == null || voterId === "") return;
+    e.preventDefault();
+    toggleTripVoterOnboarded(trip.id, voterId).then(() => render());
+  });
+
   listToolbar.querySelector("#zdTripVotersFilter").addEventListener("change", render);
   listToolbar.querySelector("#zdTripVotersSort").addEventListener("change", render);
   listToolbar.querySelector("#zdTripVotersGroupBy").addEventListener("change", render);
@@ -771,76 +828,6 @@ function openTripVotersModal(trip) {
 
   render();
   openModal({ title, body });
-}
-
-function openAssignVotersModal(trip) {
-  const voters = votersContext ? votersContext.getAllVoters() : [];
-  const assignedSet = new Set((trip.voterIds || []).map(String));
-  const body = document.createElement("div");
-  body.className = "form-group";
-  body.innerHTML = `<p class="helper-text" style="margin-bottom:8px">Select voters to assign to <strong>${escapeHtml(trip.route)}</strong>. Assigned count will update the trip.</p>`;
-  const list = document.createElement("div");
-  list.style.maxHeight = "320px";
-  list.style.overflowY = "auto";
-  list.style.border = "1px solid var(--color-border, #e5e7eb)";
-  list.style.borderRadius = "6px";
-  list.style.padding = "8px";
-  const boxes = getUniqueBallotBoxes();
-  boxes.forEach((box) => {
-    const inBox = voters.filter((v) => (v.ballotBox || "").trim() === box);
-    if (!inBox.length) return;
-    const heading = document.createElement("div");
-    heading.style.fontWeight = "600";
-    heading.style.marginTop = "8px";
-    heading.style.marginBottom = "4px";
-    heading.textContent = box;
-    list.appendChild(heading);
-    inBox.forEach((v) => {
-      const label = document.createElement("label");
-      label.style.display = "flex";
-      label.style.alignItems = "center";
-      label.style.gap = "8px";
-      label.style.padding = "4px 0";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = assignedSet.has(String(v.id));
-      cb.dataset.voterId = String(v.id);
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(`${v.fullName || v.id} ${(v.nationalId || "").slice(0, 12)}`));
-      list.appendChild(label);
-    });
-  });
-  if (!boxes.length) {
-    list.innerHTML = "<p class=\"text-muted\">No voters with ballot box. Import voters first.</p>";
-  }
-  body.appendChild(list);
-  const footer = document.createElement("div");
-  footer.className = "form-actions";
-  const cancelBtn = document.createElement("button");
-  cancelBtn.type = "button";
-  cancelBtn.className = "ghost-button";
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.addEventListener("click", closeModal);
-  const saveBtn = document.createElement("button");
-  saveBtn.type = "button";
-  saveBtn.className = "primary-button";
-  saveBtn.textContent = "Save assignment";
-  saveBtn.addEventListener("click", async () => {
-    const checked = list.querySelectorAll("input[type=checkbox]:checked");
-    const voterIds = Array.from(checked).map((el) => el.dataset.voterId);
-    trip.voterIds = voterIds;
-    trip.voterCount = voterIds.length;
-    saveTrips();
-    try {
-      const api = await firebaseInitPromise;
-      if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(trip);
-    } catch (_) {}
-    renderZeroDayTripsTable();
-    closeModal();
-  });
-  footer.appendChild(cancelBtn);
-  footer.appendChild(saveBtn);
-  openModal({ title: "Assign voters to trip", body, footer });
 }
 
 function getUniqueBallotBoxes() {
@@ -1211,6 +1198,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
   const showUnmarkAction = !!options.showUnmarkAction;
   const includeVotedStatus = !!options.includeVotedStatus;
   const usePledgePills = !!options.usePledgePills;
+  const includeOnboardedColumn = typeof options.isOnboarded === "function";
   const columns = [
     "Image",
     "Seq",
@@ -1224,6 +1212,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
   ];
   if (includeVotedStatus) columns.push("Voted status");
   if (includeTimeVoted) columns.push("Time voted");
+  if (includeOnboardedColumn) columns.push("On-board");
   if (showUnmarkAction) columns.push("Actions");
   const colCount = columns.length;
 
@@ -1299,6 +1288,15 @@ function buildTableFromDisplayList(displayList, options = {}) {
       ];
       if (includeVotedStatus) row.push({ html: votedCell });
       if (includeTimeVoted) row.push(formatDateTime(v._timeMarked));
+      if (includeOnboardedColumn) {
+        const on = options.isOnboarded(v);
+        row.push({
+          html: `<div class="trip-voter-onboard-cell">
+            <span class="${on ? "pledge-pill pledge-pill--pledged" : "pledge-pill pledge-pill--undecided"}">${on ? "On-board" : "Pending"}</span>
+            <button type="button" class="ghost-button ghost-button--small" data-trip-onboard-toggle="${escapeHtml(String(v.id))}">${on ? "Undo" : "Mark on-board"}</button>
+          </div>`,
+        });
+      }
       if (showUnmarkAction) {
         row.push(
           `<button type="button" class="ghost-button ghost-button--small" data-unmark-voted="${escapeHtml(
@@ -1912,17 +1910,12 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   if (transportPanel) {
     transportPanel.addEventListener("click", (e) => {
       const statusBtn = e.target.closest("[data-trip-status]");
-      const assignBtn = e.target.closest("[data-assign-trip]");
       const viewBtn = e.target.closest("[data-view-trip-voters]");
       const editBtn = e.target.closest("[data-edit-trip]");
       const deleteBtn = e.target.closest("[data-delete-trip]");
       if (statusBtn) {
         const id = Number(statusBtn.getAttribute("data-trip-status"));
         openTripStatusModal(id);
-      } else if (assignBtn) {
-        const id = Number(assignBtn.getAttribute("data-assign-trip"));
-        const trip = zeroDayTrips.find((t) => t.id === id);
-        if (trip) openAssignVotersModal(trip);
       } else if (viewBtn) {
         const id = Number(viewBtn.getAttribute("data-view-trip-voters"));
         const trip = zeroDayTrips.find((t) => t.id === id);

@@ -2348,6 +2348,19 @@ body.list-workspace-page {
   gap: 12px 16px;
 }
 
+/* Dropdowns (Transport, Assigned agent): same comfortable width — not full column */
+.voter-details-layout .field-group {
+  width: 100%;
+  max-width: min(100%, 300px);
+}
+
+.voter-details-layout .field-group select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .voter-details-section {
   background-color: var(--color-surface);
   border-radius: var(--radius-lg);
@@ -2958,22 +2971,24 @@ body.list-workspace-page {
 /* Candidate detail: pledge segmented control (replaces plain select) */
 .candidate-pledge-picker {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   max-width: 100%;
 }
 
 .candidate-pledge-option {
-  flex: 1 1 88px;
-  min-width: 72px;
+  flex: 1 1 0;
+  min-width: 0;
   border: 1px solid var(--color-border-subtle, #e5e7eb);
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-size: 13px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   line-height: 1.2;
+  white-space: nowrap;
+  text-align: center;
   cursor: pointer;
   background: var(--color-surface, #fff);
   color: var(--color-text-muted, #64748b);
@@ -3092,18 +3107,6 @@ body.list-workspace-page {
 .voter-details-agent-hint {
   margin: 0;
   max-width: 42rem;
-}
-
-/* Larger agent control for voter detail panel (matches visual weight of route + transport) */
-.agent-dropdown-select.agent-dropdown-select--voter-detail {
-  width: 100%;
-  min-height: 52px;
-  padding: 14px 46px 14px 16px;
-  font-size: 15px;
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  background-position: right 14px center;
-  background-size: 20px;
 }
 
 .agent-dropdown-field__footer {
@@ -3250,6 +3253,52 @@ body.list-workspace-page {
   border-radius: 6px;
   background: rgba(15, 23, 42, 0.06);
   color: var(--color-text-muted);
+}
+
+/* Create / edit agent — matched voter card (same labels as Voters detail) */
+.agent-modal-voter-preview {
+  margin-top: 10px;
+  padding: 10px 12px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-subtle);
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.agent-modal-voter-preview__title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.agent-modal-voter-preview__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 16px;
+}
+
+.agent-modal-voter-preview__avatar {
+  flex-shrink: 0;
+}
+
+.agent-modal-voter-preview__details {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.agent-modal-voter-preview__grid {
+  margin-top: 0;
+}
+
+.agent-modal-voter-preview__grid .agent-modal-voter-preview__span2 {
+  grid-column: 1 / -1;
+}
+
+.agent-modal-voter-preview__details .detail-item-value {
+  white-space: normal;
+  word-break: break-word;
 }
 
 .agent-view-readonly .detail-item-value {
@@ -3538,12 +3587,14 @@ body.list-workspace-page {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .modal-header__actions {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .modal-header h2 {
@@ -3552,6 +3603,11 @@ body.list-workspace-page {
   font-weight: 600;
   color: var(--color-primary);
   letter-spacing: 0.01em;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .modal-header .icon-button {
@@ -3630,6 +3686,15 @@ body.list-workspace-page {
   align-items: center;
   justify-content: flex-end;
   flex-shrink: 0;
+}
+
+/* Zero Day → View voters (trip): on-board status + action */
+.trip-voter-onboard-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
 }
 
 .modal-body-inner .table-wrapper {

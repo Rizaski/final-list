@@ -15,6 +15,8 @@ export function openModal({ title, body, footer, startMaximized }) {
   }
   const maxBtn = document.getElementById("modalMaximizeButton");
   if (maxBtn) {
+    maxBtn.hidden = false;
+    maxBtn.style.removeProperty("display");
     const isMax = modalDialog && modalDialog.classList.contains("modal--maximized");
     maxBtn.setAttribute("aria-label", isMax ? "Restore" : "Maximize");
     const iconMax = maxBtn.querySelector(".modal-icon-maximize");

@@ -3,6 +3,7 @@
  */
 import { firebaseInitPromise } from "./firebase.js";
 import { getList, getListFromServer, saveList, createShareLink, getListStatusValues, getListStatusLabel } from "./lists.js";
+import { openModal, closeModal } from "./ui.js";
 
 const PAGE_SIZE = 20;
 const VOTER_IMAGES_BASE = "photos/";
@@ -381,23 +382,6 @@ function bindShowTableToggle() {
   if (btn) btn.addEventListener("click", () => setTableSectionVisible(!tableSectionVisible));
 }
 
-function openModal(title, body, footer) {
-  const backdrop = document.getElementById("modalBackdrop");
-  const titleEl = document.getElementById("modalTitle");
-  const bodyEl = document.getElementById("modalBody");
-  const footerEl = document.getElementById("modalFooter");
-  if (!backdrop || !titleEl) return;
-  titleEl.textContent = title || "";
-  if (bodyEl) { bodyEl.innerHTML = ""; if (body) bodyEl.appendChild(body); }
-  if (footerEl) { footerEl.innerHTML = ""; if (footer) footerEl.appendChild(footer); }
-  backdrop.hidden = false;
-}
-
-function closeModal() {
-  const backdrop = document.getElementById("modalBackdrop");
-  if (backdrop) backdrop.hidden = true;
-}
-
 function openColumnsModal() {
   const body = document.createElement("div");
   body.className = "form-group";
@@ -445,7 +429,7 @@ function openColumnsModal() {
   });
   footer.appendChild(cancelBtn);
   footer.appendChild(saveBtn);
-  openModal("Columns", body, footer);
+  openModal({ title: "Columns", body, footer });
 }
 
 function exportCsv() {
@@ -495,7 +479,7 @@ function openShareLinkModal() {
       closeBtn.addEventListener("click", closeModal);
       footer.appendChild(copyBtn);
       footer.appendChild(closeBtn);
-      openModal("Share link", body, footer);
+      openModal({ title: "Share link", body, footer });
     })
     .catch((e) => {
       body.textContent = "Failed to create share link: " + (e?.message || String(e));
@@ -506,7 +490,7 @@ function openShareLinkModal() {
       closeBtn.textContent = "Close";
       closeBtn.addEventListener("click", closeModal);
       footer.appendChild(closeBtn);
-      openModal("Error", body, footer);
+      openModal({ title: "Error", body, footer });
     });
 }
 

@@ -124,9 +124,19 @@
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <header class="modal-header">
         <h2 id="modalTitle">Modal</h2>
-        <button type="button" class="icon-button" id="modalCloseButton" aria-label="Close">
-          <svg viewBox="0 0 24 24" class="icon-svg"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </button>
+        <div class="modal-header__actions">
+          <button type="button" class="icon-button" id="modalMaximizeButton" aria-label="Maximize">
+            <svg viewBox="0 0 24 24" class="icon-svg modal-icon-maximize" aria-hidden="true">
+              <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 0h3M3 16v3a2 2 0 002 2h3m0 0h-3M21 16v3a2 2 0 01-2 2h-3m3 0h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <svg viewBox="0 0 24 24" class="icon-svg modal-icon-restore" aria-hidden="true" hidden>
+              <path d="M9 9V4.5H4.5M9 15v4.5H4.5M15 9h4.5V4.5M15 15h4.5V4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button type="button" class="icon-button" id="modalCloseButton" aria-label="Close">
+            <svg viewBox="0 0 24 24" class="icon-svg"><path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
       </header>
       <div class="modal-body" id="modalBody"></div>
       <footer class="modal-footer" id="modalFooter"></footer>

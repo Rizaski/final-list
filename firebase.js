@@ -452,7 +452,17 @@ export const firebaseInitPromise = (async () => {
       setTransportTripFs = async (trip) => {
         if (!trip || trip.id == null) return;
         const ref = firestoreMod.doc(db, TRANSPORT_TRIPS_COLLECTION, String(trip.id));
-        const data = { tripType: trip.tripType, route: trip.route, driver: trip.driver || "", vehicle: trip.vehicle || "", pickupTime: trip.pickupTime || "", status: trip.status || "Scheduled", voterCount: trip.voterCount != null ? trip.voterCount : 0, voterIds: Array.isArray(trip.voterIds) ? trip.voterIds : [] };
+        const data = {
+          tripType: trip.tripType,
+          route: trip.route,
+          driver: trip.driver || "",
+          vehicle: trip.vehicle || "",
+          pickupTime: trip.pickupTime || "",
+          status: trip.status || "Scheduled",
+          voterCount: trip.voterCount != null ? trip.voterCount : 0,
+          voterIds: Array.isArray(trip.voterIds) ? trip.voterIds : [],
+          onboardedVoterIds: Array.isArray(trip.onboardedVoterIds) ? trip.onboardedVoterIds : [],
+        };
         await firestoreMod.setDoc(ref, data, { merge: true });
       };
       deleteTransportTripFs = async (tripId) => {

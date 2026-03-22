@@ -6,6 +6,8 @@ import {
   clearVotedForVoter,
   getAvailableTransportRoutes,
   addTransportRouteFromName,
+  TRIP_TYPES,
+  TRIP_STATUSES,
 } from "./zeroDay.js";
 import {
   getLists,
@@ -45,6 +47,41 @@ let unsubscribeVotersFs = null;
 
 /** Set by initVotersModule — used for candidate-only UI and pledge column logic. */
 let getCurrentUserFn = () => null;
+
+/** Injected from main.js (Settings) so “Add new agent…” works without fragile dynamic import. */
+let openAddAgentModalRef = null;
+
+function callOpenAddAgentModal(options) {
+  const opts = options || {};
+  if (typeof openAddAgentModalRef === "function") {
+    try {
+      openAddAgentModalRef(opts);
+    } catch (err) {
+      console.error("[Voters] openAddAgentModal failed", err);
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Could not open agent form",
+          meta: err?.message || String(err),
+        });
+      }
+    }
+    return;
+  }
+  import("./settings.js")
+    .then((m) => {
+      if (typeof m.openAddAgentModal === "function") m.openAddAgentModal(opts);
+      else throw new Error("openAddAgentModal is not available");
+    })
+    .catch((err) => {
+      console.error("[Voters] Failed to load settings for Add agent", err);
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Could not open agent form",
+          meta: err?.message || String(err),
+        });
+      }
+    });
+}
 
 function getCandidateContext() {
   try {
@@ -490,24 +527,51 @@ function bindVoterTableHeaderSort() {
   });
 }
 
-/** Admin: create a Zero Day trip from voter detail so the route appears in the dropdown. */
+/** Admin: create a Zero Day trip from voter detail (same fields as Zero Day → Add trip). */
 function openVoterDetailAddTransportRouteModal(voter) {
   if (!voter) return;
+  const defaultPickup = new Date().toISOString().slice(0, 16);
   const body = document.createElement("div");
-  body.className = "form-grid";
   body.innerHTML = `
-    <div class="form-group">
-      <label for="voterQuickRouteName">Route name</label>
-      <input id="voterQuickRouteName" class="input" type="text" placeholder="e.g. Dhuvaafaru → Male" />
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="vdTripType">Type</label>
+        <select id="vdTripType" class="input">
+          ${TRIP_TYPES.map(
+            (t) =>
+              `<option value="${escapeHtml(t.value)}">${escapeHtml(t.label)}</option>`
+          ).join("")}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="vdTripRoute">Trip / Route name</label>
+        <input id="vdTripRoute" class="input" type="text" value="" placeholder="e.g. North pickup run 1" />
+      </div>
+      <div class="form-group">
+        <label for="vdTripDriver">Driver / Pilot / Captain</label>
+        <input id="vdTripDriver" class="input" type="text" value="" placeholder="Name" />
+      </div>
+      <div class="form-group">
+        <label for="vdTripVehicle">Vessel name / Flight number</label>
+        <input id="vdTripVehicle" class="input" type="text" value="" placeholder="e.g. MDR-301 or Flight XY123" />
+      </div>
+      <div class="form-group">
+        <label for="vdTripPickupTime">Pickup time</label>
+        <input id="vdTripPickupTime" class="input" type="datetime-local" value="${escapeHtml(defaultPickup)}" />
+      </div>
+      <div class="form-group">
+        <label for="vdTripStatus">Status</label>
+        <select id="vdTripStatus" class="input">
+          ${TRIP_STATUSES.map(
+            (s) =>
+              `<option value="${escapeHtml(s)}"${s === "Scheduled" ? " selected" : ""}>${escapeHtml(
+                s
+              )}</option>`
+          ).join("")}
+        </select>
+      </div>
     </div>
-    <div class="form-group">
-      <label for="voterQuickRouteType">Trip type</label>
-      <select id="voterQuickRouteType" class="input">
-        <option value="flight">Flight</option>
-        <option value="speedboat">Speed boat</option>
-      </select>
-    </div>
-    <p class="helper-text">Creates a scheduled trip in Zero Day → Transport and adds this route to the dropdown.</p>
+    <p class="helper-text">Creates the trip in Zero Day → Transport and adds this route to the voter dropdown.</p>
   `;
   const footer = document.createElement("div");
   footer.className = "form-actions";
@@ -519,17 +583,27 @@ function openVoterDetailAddTransportRouteModal(voter) {
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "primary-button";
-  saveBtn.textContent = "Add route";
+  saveBtn.textContent = "Add trip";
   saveBtn.addEventListener("click", async () => {
-    const name = (body.querySelector("#voterQuickRouteName")?.value || "").trim();
-    const tripType = (body.querySelector("#voterQuickRouteType")?.value || "flight").trim();
+    const tripType = (body.querySelector("#vdTripType")?.value || "flight").trim();
+    const name = (body.querySelector("#vdTripRoute")?.value || "").trim();
+    const driver = (body.querySelector("#vdTripDriver")?.value || "").trim();
+    const vehicle = (body.querySelector("#vdTripVehicle")?.value || "").trim();
+    const pickupTime = body.querySelector("#vdTripPickupTime")?.value || "";
+    const status = (body.querySelector("#vdTripStatus")?.value || "Scheduled").trim();
     if (!name) {
       if (window.appNotifications) {
-        window.appNotifications.push({ title: "Enter a route name", meta: "" });
+        window.appNotifications.push({ title: "Enter a trip / route name", meta: "" });
       }
       return;
     }
-    const result = await addTransportRouteFromName(name, { tripType });
+    const result = await addTransportRouteFromName(name, {
+      tripType,
+      driver,
+      vehicle,
+      pickupTime,
+      status,
+    });
     if (!result.ok) {
       if (result.error === "duplicate" && window.appNotifications) {
         window.appNotifications.push({
@@ -560,8 +634,8 @@ function openVoterDetailAddTransportRouteModal(voter) {
   });
   footer.appendChild(cancelBtn);
   footer.appendChild(saveBtn);
-  openModal({ title: "Add transport route", body, footer });
-  setTimeout(() => body.querySelector("#voterQuickRouteName")?.focus(), 100);
+  openModal({ title: "Add trip", body, footer });
+  setTimeout(() => body.querySelector("#vdTripRoute")?.focus(), 100);
 }
 
 function formatDobAndAge(voter) {
@@ -722,7 +796,7 @@ function renderVoterDetails(voter) {
 
   const voterTransportAddRouteBtnHtml = showAdminTransportAddRoute
     ? `<div class="voter-transport-add-route">
-        <button type="button" class="ghost-button ghost-button--small" id="voterTransportAddRouteBtn">Add new route…</button>
+        <button type="button" class="ghost-button ghost-button--small" id="voterTransportAddRouteBtn">Add trip…</button>
       </div>`
     : "";
 
@@ -765,10 +839,12 @@ function renderVoterDetails(voter) {
           <div class="voter-details-agent-col">
             <div class="detail-item-label">Agent</div>
             <div class="detail-item-value detail-item-value--agent-stack">
-              <label for="candidateVoterAgentSelect" class="sr-only">Assign agent (All Campaign)</label>
-              <select id="candidateVoterAgentSelect" class="input agent-dropdown-select agent-dropdown-select--voter-detail" aria-label="Assign agent for All Campaign">
-                ${agentOptions}
-              </select>
+              <div class="field-group">
+                <label for="candidateVoterAgentSelect" class="sr-only">Assign agent (All Campaign)</label>
+                <select id="candidateVoterAgentSelect" class="input" aria-label="Assign agent for All Campaign">
+                  ${agentOptions}
+                </select>
+              </div>
               <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAddAgentBtn">Add new agent…</button>
               <p class="helper-text voter-details-agent-hint">Assign follow-up for the wider campaign. New agents must use a proper full name (first and last).</p>
             </div>
@@ -834,22 +910,26 @@ function renderVoterDetails(voter) {
           <div>
             <div class="detail-item-label">Candidate scope</div>
             <div class="detail-item-value">
-              <label for="voterAgentCandidateScope" class="sr-only">Candidate for assignment</label>
-              <select id="voterAgentCandidateScope" class="input agent-dropdown-select agent-dropdown-select--voter-detail" aria-label="Candidate for agent assignment">
-                ${scopeOptions}
-              </select>
+              <div class="field-group">
+                <label for="voterAgentCandidateScope" class="sr-only">Candidate for assignment</label>
+                <select id="voterAgentCandidateScope" class="input" aria-label="Candidate for agent assignment">
+                  ${scopeOptions}
+                </select>
+              </div>
               <p class="helper-text" style="margin-top:6px;">Uses the same per-candidate assignments as Reports → pledged voters.</p>
             </div>
           </div>
           <div class="voter-details-agent-col">
             <div class="detail-item-label">Agent</div>
             <div class="detail-item-value detail-item-value--agent-stack">
-              <label for="candidateVoterAgentSelect" class="sr-only">Assign agent</label>
-              <select id="candidateVoterAgentSelect" class="input agent-dropdown-select agent-dropdown-select--voter-detail"${
-                !selectedScope ? " disabled" : ""
-              } aria-label="Assign agent for selected candidate">
-                ${agentOptions}
-              </select>
+              <div class="field-group">
+                <label for="candidateVoterAgentSelect" class="sr-only">Assign agent</label>
+                <select id="candidateVoterAgentSelect" class="input"${
+                  !selectedScope ? " disabled" : ""
+                } aria-label="Assign agent for selected candidate">
+                  ${agentOptions}
+                </select>
+              </div>
               <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAddAgentBtn"${
                 !selectedScope ? " disabled" : ""
               }>Add new agent…</button>
@@ -861,7 +941,7 @@ function renderVoterDetails(voter) {
   })();
 
   const transportNoRoutesMsg = showAdminTransportAddRoute
-    ? "No transport routes yet. Use “Add new route…” below or add trips in Zero Day → Transport."
+    ? "No transport routes yet. Use “Add trip…” below or add trips in Zero Day → Transport."
     : "No transport routes yet. Add trips in Zero Day → Transport.";
 
   const transportSectionHtml = `
@@ -916,7 +996,7 @@ function renderVoterDetails(voter) {
                      </div>
                      <p class="helper-text" style="margin-top:4px;">Choose the route this voter will use and whether transport is one way or return.${
                        showAdminTransportAddRoute
-                         ? " Admins can add routes without leaving this panel."
+                         ? " Admins can add trips without leaving this panel."
                          : ""
                      }</p>`
                   : `<p class="helper-text">${transportNoRoutesMsg}</p>
@@ -1049,11 +1129,7 @@ function renderVoterDetails(voter) {
     const addAgentBtn = document.getElementById("candidateVoterAddAgentBtn");
     if (addAgentBtn) {
       addAgentBtn.addEventListener("click", () => {
-        import("./settings.js").then((m) => {
-          if (typeof m.openAddAgentModal === "function") {
-            m.openAddAgentModal({ lockCandidateId: candCtx.candidateId });
-          }
-        });
+        callOpenAddAgentModal({ lockCandidateId: candCtx.candidateId });
       });
     }
   } else if (getViewerIsAdmin()) {
@@ -1101,11 +1177,7 @@ function renderVoterDetails(voter) {
           }
           return;
         }
-        import("./settings.js").then((m) => {
-          if (typeof m.openAddAgentModal === "function") {
-            m.openAddAgentModal({ lockCandidateId: scopeId });
-          }
-        });
+        callOpenAddAgentModal({ lockCandidateId: scopeId });
       });
     }
   }
@@ -1735,8 +1807,10 @@ function deleteVoter(voterId) {
   })();
 }
 
-export async function initVotersModule(getCurrentUser) {
+export async function initVotersModule(getCurrentUser, options = {}) {
   getCurrentUserFn = typeof getCurrentUser === "function" ? getCurrentUser : () => null;
+  openAddAgentModalRef =
+    typeof options.openAddAgentModal === "function" ? options.openAddAgentModal : null;
   const votersTableLoader = document.getElementById("votersTableLoader");
   if (votersTableLoader) votersTableLoader.hidden = false;
 
