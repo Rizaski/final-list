@@ -38,11 +38,13 @@ function getCurrentUser() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
+    const role =
+      parsed.role === "candidate" ? "candidate" : parsed.role === "admin" ? "admin" : "staff";
     return {
       email: String(parsed.email || ""),
       name: String(parsed.name || "Campaign User"),
-      isAdmin: Boolean(parsed.isAdmin),
-      role: parsed.role === "candidate" ? "candidate" : parsed.role === "admin" ? "admin" : "staff",
+      isAdmin: Boolean(parsed.isAdmin) || role === "admin",
+      role,
       candidateId: parsed.candidateId != null ? String(parsed.candidateId) : null,
     };
   } catch (_) {

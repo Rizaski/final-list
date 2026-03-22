@@ -3686,6 +3686,26 @@ body.list-workspace-page {
   color: var(--color-text-muted);
 }
 
+/* Settings → Agents: photo when agent matches a voter (national ID / name) */
+#settingsAgentsTable .settings-agents-photo-cell {
+  width: 1%;
+  vertical-align: middle;
+}
+
+#settingsAgentsTable .avatar-cell--settings-agent {
+  position: relative;
+}
+
+#settingsAgentsTable .avatar-cell--settings-agent .avatar-img {
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+
+#settingsAgentsTable .avatar-cell--settings-agent .avatar-img:hover {
+  transform: scale(2.2);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.45);
+  z-index: 2;
+}
+
 /* Create / edit agent — matched voter card (same labels as Voters detail) */
 .agent-modal-voter-preview {
   margin-top: 10px;

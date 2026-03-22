@@ -279,6 +279,58 @@ function getVotersForAgentModalSearch() {
   }
 }
 
+function normalizeAgentNationalId(s) {
+  return String(s || "").trim().replace(/\s+/g, "");
+}
+
+function normalizeAgentCandidateScope(c) {
+  if (c == null || c === "") return "";
+  return String(c).trim();
+}
+
+/** Another agent already uses this national ID + candidate scope (same person twice for one candidate). */
+function isDuplicateAgentScope({ nationalId, candidateId, excludeAgentId }) {
+  const nid = normalizeAgentNationalId(nationalId);
+  if (!nid) return false;
+  const scope = normalizeAgentCandidateScope(candidateId);
+  return agents.some((a) => {
+    if (excludeAgentId != null && String(a.id) === String(excludeAgentId)) return false;
+    if (normalizeAgentNationalId(a.nationalId) !== nid) return false;
+    return normalizeAgentCandidateScope(a.candidateId) === scope;
+  });
+}
+
+function findVoterForAgentPhoto(agent, votersList) {
+  if (!agent || !Array.isArray(votersList)) return null;
+  const nid = normalizeAgentNationalId(agent.nationalId);
+  if (nid) {
+    const byNid = votersList.find(
+      (v) =>
+        normalizeAgentNationalId(v.nationalId) === nid || String(v.id || "").trim() === nid
+    );
+    if (byNid) return byNid;
+  }
+  const name = (agent.name || "").trim().toLowerCase();
+  if (!name) return null;
+  return votersList.find((v) => (v.fullName || "").trim().toLowerCase() === name) || null;
+}
+
+function buildAgentTablePhotoCell(agent, voter) {
+  const initials = (agent.name || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() || "")
+    .join("") || "?";
+  const photoSrc = voter ? getVoterImageSrc(voter) : "";
+  const imgOnError =
+    "var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
+  if (photoSrc) {
+    return `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="${imgOnError}"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`;
+  }
+  return `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+}
+
 function candidateLabelById(id) {
   if (!id) return "All campaigns";
   const c = getCandidates().find((x) => String(x.id) === String(id));
@@ -621,6 +673,24 @@ export function openAgentModal(existing = null, options = {}) {
       return;
     }
 
+    const scopeForDup = (candidateId || "").trim();
+    if (
+      isDuplicateAgentScope({
+        nationalId,
+        candidateId: scopeForDup || null,
+        excludeAgentId: isEdit && existing?.id != null ? existing.id : null,
+      })
+    ) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Duplicate agent",
+          meta:
+            "An agent with this national ID already exists for this candidate scope (same person cannot be added twice).",
+        });
+      }
+      return;
+    }
+
     (async () => {
       try {
         const api = await firebaseInitPromise;
@@ -788,12 +858,13 @@ function renderAgentsTable() {
 
   const viewer = parseViewerFromStorage();
   const showEdit = viewer.isAdmin;
+  const votersList = getVotersForAgentModalSearch();
 
   tbody.innerHTML = "";
   if (!agents.length) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      '<td colspan="7" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Use <strong>Create agent</strong> to add one.</td>';
+      '<td colspan="8" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Use <strong>Create agent</strong> to add one.</td>';
     tbody.appendChild(tr);
     return;
   }
@@ -803,6 +874,8 @@ function renderAgentsTable() {
     const aid = a && a.id != null ? String(a.id) : "";
     const cid = a.candidateId != null && String(a.candidateId).trim() !== "" ? String(a.candidateId).trim() : "";
     const candCell = cid ? escapeHtml(candidateLabelById(cid)) : '<span class="text-muted">All campaigns</span>';
+    const voterForPhoto = findVoterForAgentPhoto(a, votersList);
+    const photoCell = buildAgentTablePhotoCell(a, voterForPhoto);
     const mutateActions =
       showEdit
         ? `<button type="button" class="ghost-button ghost-button--small" data-edit-agent="${escapeHtml(aid)}" title="Update">Edit</button>
@@ -811,6 +884,7 @@ function renderAgentsTable() {
     tr.dataset.agentId = aid;
     tr.innerHTML = `
       <td><code class="settings-agents-id">${escapeHtml(aid)}</code></td>
+      <td class="settings-agents-photo-cell">${photoCell}</td>
       <td class="data-table-col--name">${escapeHtml(a.name || "")}</td>
       <td>${escapeHtml(a.nationalId || "")}</td>
       <td>${escapeHtml(a.phone || "")}</td>

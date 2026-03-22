@@ -9,9 +9,12 @@ export function parseViewerFromStorage() {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return { isAdmin: false, role: "staff", candidateId: null };
     const p = JSON.parse(raw);
+    const role =
+      p?.role === "candidate" ? "candidate" : p?.role === "admin" ? "admin" : "staff";
     return {
-      isAdmin: Boolean(p?.isAdmin),
-      role: p?.role === "candidate" ? "candidate" : p?.role === "admin" ? "admin" : "staff",
+      // Treat role admin like isAdmin so delete/edit agents works if only role was persisted.
+      isAdmin: Boolean(p?.isAdmin) || role === "admin",
+      role,
       candidateId: p?.candidateId != null && String(p.candidateId).trim() ? String(p.candidateId).trim() : null,
     };
   } catch (_) {
