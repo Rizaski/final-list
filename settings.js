@@ -821,13 +821,22 @@ function openAgentViewModal(agent) {
 /** Delete agent (D in CRUD) — Firestore + local cache. */
 async function deleteAgentRecord(agent) {
   if (!agent || agent.id == null) return;
-  const id = String(agent.id);
+  const id = String(agent.id).trim();
+  if (!id) return;
   try {
     const api = await firebaseInitPromise;
-    if (api.ready && api.deleteAgentFs) {
-      await api.deleteAgentFs(id);
+    const canDeleteRemote = Boolean(api.ready && typeof api.deleteAgentFs === "function");
+    if (!canDeleteRemote) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Cannot delete agent",
+          meta: "Firebase is not ready. Check your connection and try again.",
+        });
+      }
+      return;
     }
-    agents = agents.filter((a) => String(a.id) !== id);
+    await api.deleteAgentFs(id);
+    agents = agents.filter((a) => String(a.id).trim() !== id);
     saveAgentsToStorage();
     renderAgentsTable();
     try {

@@ -231,15 +231,21 @@ export const firebaseInitPromise = (async () => {
       };
 
       setAgentFs = async (agent) => {
-        if (!agent || !agent.id) return;
-        const ref = firestoreMod.doc(db, AGENTS_COLLECTION, String(agent.id));
-        await firestoreMod.setDoc(ref, agent, { merge: true });
+        if (!agent || agent.id == null || agent.id === "") return;
+        const docId = String(agent.id).trim();
+        const ref = firestoreMod.doc(db, AGENTS_COLLECTION, docId);
+        // Do not store `id` in document body — only the path id is canonical (avoids mismatch with delete/read).
+        const { id: _drop, ...payload } = agent;
+        await firestoreMod.setDoc(ref, payload, { merge: true });
       };
 
       deleteAgentFs = async (id) => {
         if (!id) return;
         const ref = firestoreMod.doc(db, AGENTS_COLLECTION, String(id));
         await firestoreMod.deleteDoc(ref);
+        if (typeof firestoreMod.waitForPendingWrites === "function") {
+          await firestoreMod.waitForPendingWrites(db);
+        }
       };
 
       onAgentsSnapshotFs = (handler) => {
