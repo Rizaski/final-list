@@ -3710,8 +3710,96 @@ body.list-workspace-page {
   gap: 12px 16px;
 }
 
-.agent-modal-voter-preview__avatar {
+/* Photo: explicit box so the file is never styled/read as link text */
+.agent-modal-voter-preview__photo-wrap {
   flex-shrink: 0;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid rgba(0, 156, 156, 0.35);
+  background: var(--color-bg);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+.agent-modal-voter-preview__photo-wrap .agent-modal-voter-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 50%;
+  vertical-align: top;
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+.agent-modal-voter-preview__photo-wrap--empty .agent-modal-voter-photo-fallback {
+  width: 60px;
+  height: 60px;
+  font-size: 18px;
+}
+
+.agent-modal-voter-preview__photo-wrap .agent-modal-voter-photo-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Agent modal — voter search (matches list toolbar search + brand focus ring) */
+.agent-modal-voter-search-wrap {
+  margin-top: 4px;
+}
+
+.agent-modal-voter-search-group .agent-modal-voter-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+  background-color: #ffffff;
+  box-sizing: border-box;
+  font-family: inherit;
+  color: var(--color-text);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.agent-modal-voter-search-group .agent-modal-voter-search-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.agent-modal-voter-search-group .agent-modal-voter-search-input:hover {
+  border-color: rgba(0, 156, 156, 0.35);
+}
+
+.agent-modal-voter-search-group .agent-modal-voter-search-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+.agent-modal-voter-search-hint {
+  margin-top: 8px;
+  margin-bottom: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
+.agent-modal-voter-search-hint__kbd {
+  font-family: ui-monospace, "Cascadia Code", "Segoe UI Mono", monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 156, 156, 0.08);
+  color: var(--color-primary);
+  border: 1px solid rgba(0, 156, 156, 0.2);
 }
 
 .agent-modal-voter-preview__details {

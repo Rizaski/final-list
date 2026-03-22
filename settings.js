@@ -334,11 +334,13 @@ export function openAgentModal(existing = null, options = {}) {
       : `<input type="hidden" id="agentModalCandidateId" value="">`;
 
   body.innerHTML = `
-    <div class="form-group" style="grid-column: 1 / -1;">
-      <label for="agentModalVoterSearch">Search voter (name lookup)</label>
-      <input type="text" id="agentModalVoterSearch" class="input" list="${datalistId}" placeholder="Name, national ID, or pick from list…" autocomplete="off">
+    <div class="form-group agent-modal-voter-search-group" style="grid-column: 1 / -1;">
+      <label for="agentModalVoterSearch">Search voter</label>
+      <div class="agent-modal-voter-search-wrap">
+        <input type="text" id="agentModalVoterSearch" class="input agent-modal-voter-search-input" list="${datalistId}" placeholder="Name, national ID, address, or pick a match…" autocomplete="off" spellcheck="false">
+      </div>
       <datalist id="${datalistId}"></datalist>
-      <span class="helper-text">Choose a suggestion or enter a full name / national ID. A match shows the voter card below and fills the form.</span>
+      <p class="helper-text agent-modal-voter-search-hint">Match on name, national ID, permanent address, or ID-based photo filename (e.g. <span class="agent-modal-voter-search-hint__kbd">photos/…</span>). When exactly one voter matches, their details appear below.</p>
       <div id="agentModalVoterPreview" class="agent-modal-voter-preview" hidden aria-live="polite"></div>
     </div>
     <div class="form-group">
@@ -368,7 +370,11 @@ export function openAgentModal(existing = null, options = {}) {
         const name = (v.fullName || "").trim();
         const nid = (v.nationalId || v.id || "").trim();
         const val = `${name} | ${nid}`;
-        return `<option value="${escapeHtml(val)}"></option>`;
+        const addr = (v.permanentAddress || "").trim();
+        // Only address in label — file paths in datalist labels look like links in some browsers.
+        return addr
+          ? `<option value="${escapeHtml(val)}" label="${escapeHtml(addr)}"></option>`
+          : `<option value="${escapeHtml(val)}"></option>`;
       })
       .join("");
   }
@@ -423,12 +429,12 @@ export function openAgentModal(existing = null, options = {}) {
     const imgOnError =
       "var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
     const photoBlock = photoSrc
-      ? `<div class="avatar-cell avatar-cell--large agent-modal-voter-preview__avatar">
-           <img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="${imgOnError}">
-           <div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div>
+      ? `<div class="agent-modal-voter-preview__photo-wrap" aria-hidden="true">
+           <img class="avatar-img agent-modal-voter-photo" width="60" height="60" decoding="async" loading="eager" src="${escapeHtml(photoSrc)}" alt="" onerror="${imgOnError}">
+           <div class="avatar-circle avatar-circle--fallback agent-modal-voter-photo-fallback" style="display:none">${escapeHtml(initials)}</div>
          </div>`
-      : `<div class="avatar-cell avatar-cell--large agent-modal-voter-preview__avatar">
-           <div class="avatar-circle">${escapeHtml(initials)}</div>
+      : `<div class="agent-modal-voter-preview__photo-wrap agent-modal-voter-preview__photo-wrap--empty" aria-hidden="true">
+           <div class="avatar-circle agent-modal-voter-photo-fallback">${escapeHtml(initials)}</div>
          </div>`;
     wrap.innerHTML = `
       <p class="agent-modal-voter-preview__title">Matched voter</p>
@@ -455,16 +461,38 @@ export function openAgentModal(existing = null, options = {}) {
     wrap.hidden = false;
   }
 
+  function voterMatchesAgentSearchQuery(voter, rawQuery) {
+    const q = (rawQuery || "").trim().toLowerCase();
+    if (!q || !voter) return false;
+    const name = (voter.fullName || "").toLowerCase();
+    const nid = String(voter.nationalId || "").trim().toLowerCase();
+    const id = String(voter.id != null ? voter.id : "").trim().toLowerCase();
+    const addr = (voter.permanentAddress || "").toLowerCase();
+    const phone = (voter.phone || "").toLowerCase();
+    const img = (getVoterImageSrc(voter) || "").toLowerCase();
+    const photoUrl = (voter.photoUrl || "").toLowerCase();
+    return (
+      name.includes(q) ||
+      nid.includes(q) ||
+      id.includes(q) ||
+      addr.includes(q) ||
+      phone.includes(q) ||
+      img.includes(q) ||
+      (photoUrl && photoUrl.includes(q))
+    );
+  }
+
   function findVoterFromSearchValue(val) {
     const raw = (val || "").trim();
     if (!raw) return null;
     const pipeParts = raw.split("|").map((s) => s.trim()).filter(Boolean);
+    // Canonical datalist value: "Full name | national ID" (ID is always second segment)
     if (pipeParts.length >= 2) {
-      const nid = pipeParts[pipeParts.length - 1];
+      const nidFromList = pipeParts[1];
       const found = votersList.find(
         (x) =>
-          String(x.nationalId || "").trim() === nid ||
-          String(x.id || "").trim() === nid
+          String(x.nationalId || "").trim() === nidFromList ||
+          String(x.id || "").trim() === nidFromList
       );
       if (found) return found;
     }
@@ -475,9 +503,12 @@ export function openAgentModal(existing = null, options = {}) {
     );
     if (byNid) return byNid;
     const lower = raw.toLowerCase();
-    return (
-      votersList.find((x) => (x.fullName || "").trim().toLowerCase() === lower) || null
+    const exactName = votersList.find(
+      (x) => (x.fullName || "").trim().toLowerCase() === lower
     );
+    if (exactName) return exactName;
+    const matches = votersList.filter((x) => voterMatchesAgentSearchQuery(x, raw));
+    return matches.length === 1 ? matches[0] : null;
   }
 
   function applyVoterMatch(voter) {
