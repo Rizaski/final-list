@@ -205,6 +205,10 @@ function renderCandidatesTable() {
       });
     });
   }
+
+  if (document.getElementById("settingsAgentsFilterCandidate")) {
+    ensureAgentsCandidateFilterOptions();
+  }
 }
 
 function loadAgentsFromStorage() {
@@ -288,16 +292,18 @@ function normalizeAgentCandidateScope(c) {
   return String(c).trim();
 }
 
-/** Another agent already uses this national ID + candidate scope (same person twice for one candidate). */
-function isDuplicateAgentScope({ nationalId, candidateId, excludeAgentId }) {
+/** Returns the existing agent row if this national ID + scope is already registered, else null. */
+function getDuplicateAgentInScope({ nationalId, candidateId, excludeAgentId }) {
   const nid = normalizeAgentNationalId(nationalId);
-  if (!nid) return false;
+  if (!nid) return null;
   const scope = normalizeAgentCandidateScope(candidateId);
-  return agents.some((a) => {
-    if (excludeAgentId != null && String(a.id) === String(excludeAgentId)) return false;
-    if (normalizeAgentNationalId(a.nationalId) !== nid) return false;
-    return normalizeAgentCandidateScope(a.candidateId) === scope;
-  });
+  return (
+    agents.find((a) => {
+      if (excludeAgentId != null && String(a.id) === String(excludeAgentId)) return false;
+      if (normalizeAgentNationalId(a.nationalId) !== nid) return false;
+      return normalizeAgentCandidateScope(a.candidateId) === scope;
+    }) || null
+  );
 }
 
 function findVoterForAgentPhoto(agent, votersList) {
@@ -335,6 +341,189 @@ function candidateLabelById(id) {
   if (!id) return "All campaigns";
   const c = getCandidates().find((x) => String(x.id) === String(id));
   return c ? c.name : `Candidate #${id}`;
+}
+
+const SETTINGS_AGENTS_TABLE_COL_COUNT = 8;
+
+function ensureAgentsCandidateFilterOptions() {
+  const sel = document.getElementById("settingsAgentsFilterCandidate");
+  if (!sel) return;
+  const preserved = sel.value;
+  const candList = getCandidates();
+  sel.innerHTML = `
+    <option value="all">All scopes</option>
+    <option value="unscoped">All campaigns (unscoped)</option>
+    ${candList
+      .map(
+        (c) =>
+          `<option value="${escapeHtml(String(c.id))}">${escapeHtml(c.name || String(c.id))}</option>`
+      )
+      .join("")}
+  `;
+  if ([...sel.options].some((o) => o.value === preserved)) sel.value = preserved;
+  else sel.value = "all";
+}
+
+function getAgentCandidateScopeId(agent) {
+  const raw = agent && agent.candidateId;
+  if (raw == null || raw === "") return "";
+  return String(raw).trim();
+}
+
+function getFilteredSortedGroupedAgents() {
+  const list = Array.isArray(agents) ? [...agents] : [];
+  const searchEl = document.getElementById("settingsAgentsSearch");
+  const filterEl = document.getElementById("settingsAgentsFilterCandidate");
+  const sortEl = document.getElementById("settingsAgentsSort");
+  const groupEl = document.getElementById("settingsAgentsGroupBy");
+  const query = (searchEl?.value || "").toLowerCase().trim();
+  const filterScope = (filterEl?.value || "all").trim();
+  const sortBy = sortEl?.value || "id";
+  const groupBy = groupEl?.value || "none";
+
+  const filtered = list.filter((a) => {
+    const cid = getAgentCandidateScopeId(a);
+    if (filterScope === "all") {
+      /* keep */
+    } else if (filterScope === "unscoped") {
+      if (cid) return false;
+    } else if (cid !== filterScope) {
+      return false;
+    }
+    if (!query) return true;
+    const aid = String(a.id ?? "");
+    const name = (a.name || "").toLowerCase();
+    const nid = (a.nationalId || "").toLowerCase();
+    const phone = (a.phone || "").toLowerCase();
+    const island = (a.island || "").toLowerCase();
+    const candLabel = candidateLabelById(cid).toLowerCase();
+    return (
+      aid.includes(query) ||
+      name.includes(query) ||
+      nid.includes(query) ||
+      phone.includes(query) ||
+      island.includes(query) ||
+      candLabel.includes(query)
+    );
+  });
+
+  const cmp = (a, b) => {
+    const candA = candidateLabelById(getAgentCandidateScopeId(a));
+    const candB = candidateLabelById(getAgentCandidateScopeId(b));
+    switch (sortBy) {
+      case "name-desc":
+        return (b.name || "").localeCompare(a.name || "", "en");
+      case "nationalId":
+        return (a.nationalId || "").localeCompare(b.nationalId || "", "en");
+      case "phone":
+        return (a.phone || "").localeCompare(b.phone || "", "en");
+      case "island":
+        return (a.island || "").localeCompare(b.island || "", "en");
+      case "candidate":
+        return candA.localeCompare(candB, "en");
+      case "name-asc":
+        return (a.name || "").localeCompare(b.name || "", "en");
+      case "id":
+      default:
+        return (Number(a.id) || 0) - (Number(b.id) || 0);
+    }
+  };
+  filtered.sort(cmp);
+
+  if (groupBy === "none") {
+    return filtered.map((agent) => ({ type: "row", agent }));
+  }
+
+  const getGroupKey = (v) => {
+    if (groupBy === "island") return (v.island || "").trim() || "—";
+    if (groupBy === "candidate") return candidateLabelById(getAgentCandidateScopeId(v));
+    return "";
+  };
+
+  const displayList = [];
+  let lastKey = null;
+  filtered.forEach((agent) => {
+    const key = getGroupKey(agent);
+    if (key !== lastKey) {
+      displayList.push({ type: "group", label: key });
+      lastKey = key;
+    }
+    displayList.push({ type: "row", agent });
+  });
+  return displayList;
+}
+
+function updateAgentsSortIndicators() {
+  const headers = document.querySelectorAll("#settingsAgentsTable thead th.th-sortable");
+  if (!headers.length) return;
+  const sortEl = document.getElementById("settingsAgentsSort");
+  const sortBy = sortEl?.value || "id";
+  headers.forEach((th) => {
+    const key = th.getAttribute("data-sort-key");
+    th.classList.remove("is-sorted-asc", "is-sorted-desc");
+    th.removeAttribute("aria-sort");
+    if (key === "name" && (sortBy === "name-asc" || sortBy === "name-desc")) {
+      th.classList.add(sortBy === "name-asc" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "name-asc" ? "ascending" : "descending");
+    } else if (key === "agent-id" && sortBy === "id") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key && key !== "name" && key !== "agent-id" && sortBy === key) {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    }
+  });
+}
+
+function bindAgentsTableHeaderSort() {
+  const thead = document.querySelector("#settingsAgentsTable thead");
+  if (!thead || thead.dataset.agentsSortBound === "1") return;
+  thead.dataset.agentsSortBound = "1";
+  thead.addEventListener("click", (e) => {
+    const th = e.target.closest("th.th-sortable");
+    if (!th) return;
+    const key = th.getAttribute("data-sort-key");
+    const sortEl = document.getElementById("settingsAgentsSort");
+    if (!key || !sortEl) return;
+    if (key === "name") {
+      sortEl.value = sortEl.value === "name-asc" ? "name-desc" : "name-asc";
+    } else {
+      const map = {
+        "agent-id": "id",
+        nationalId: "nationalId",
+        phone: "phone",
+        island: "island",
+        candidate: "candidate",
+      };
+      sortEl.value = map[key] ?? sortEl.value;
+    }
+    renderAgentsTable();
+  });
+}
+
+function initAgentsToolbarListeners() {
+  const searchEl = document.getElementById("settingsAgentsSearch");
+  const filterEl = document.getElementById("settingsAgentsFilterCandidate");
+  const sortEl = document.getElementById("settingsAgentsSort");
+  const groupEl = document.getElementById("settingsAgentsGroupBy");
+  const re = () => renderAgentsTable();
+  if (searchEl && !searchEl.dataset.agentsToolbarBound) {
+    searchEl.dataset.agentsToolbarBound = "1";
+    searchEl.addEventListener("input", re);
+  }
+  if (filterEl && !filterEl.dataset.agentsToolbarBound) {
+    filterEl.dataset.agentsToolbarBound = "1";
+    filterEl.addEventListener("change", re);
+  }
+  if (sortEl && !sortEl.dataset.agentsToolbarBound) {
+    sortEl.dataset.agentsToolbarBound = "1";
+    sortEl.addEventListener("change", re);
+  }
+  if (groupEl && !groupEl.dataset.agentsToolbarBound) {
+    groupEl.dataset.agentsToolbarBound = "1";
+    groupEl.addEventListener("change", re);
+  }
+  bindAgentsTableHeaderSort();
 }
 
 /**
@@ -674,18 +863,20 @@ export function openAgentModal(existing = null, options = {}) {
     }
 
     const scopeForDup = (candidateId || "").trim();
-    if (
-      isDuplicateAgentScope({
-        nationalId,
-        candidateId: scopeForDup || null,
-        excludeAgentId: isEdit && existing?.id != null ? existing.id : null,
-      })
-    ) {
+    const existingDup = getDuplicateAgentInScope({
+      nationalId,
+      candidateId: scopeForDup || null,
+      excludeAgentId: isEdit && existing?.id != null ? existing.id : null,
+    });
+    if (existingDup) {
+      const scopeLabel = scopeForDup
+        ? candidateLabelById(scopeForDup)
+        : "All campaigns (unscoped)";
+      const existingLabel = (existingDup.name || "").trim() || "this national ID";
       if (window.appNotifications) {
         window.appNotifications.push({
-          title: "Duplicate agent",
-          meta:
-            "An agent with this national ID already exists for this candidate scope (same person cannot be added twice).",
+          title: "Agent already exists",
+          meta: `An agent with this national ID is already registered for ${scopeLabel}. Existing: ${existingLabel} (agent ID ${existingDup.id}). Remove or edit that record instead of adding again.`,
         });
       }
       return;
@@ -847,10 +1038,17 @@ async function deleteAgentRecord(agent) {
       window.appNotifications.push({ title: "Agent deleted", meta: agent.name || id });
     }
   } catch (err) {
+    const code = err && err.code;
+    let meta = err?.message || String(err);
+    if (code === "permission-denied") {
+      meta =
+        "Firestore blocked this delete. Deploy the latest firestore.rules (e.g. firebase deploy --only firestore:rules).";
+    }
+    console.error("[Agents] delete failed", code, err);
     if (window.appNotifications) {
       window.appNotifications.push({
         title: "Could not delete agent",
-        meta: err?.message || String(err),
+        meta,
       });
     }
   }
@@ -865,6 +1063,9 @@ function renderAgentsTable() {
   const tbody = document.querySelector("#settingsAgentsTable tbody");
   if (!tbody) return;
 
+  ensureAgentsCandidateFilterOptions();
+  initAgentsToolbarListeners();
+
   const viewer = parseViewerFromStorage();
   const showEdit = viewer.isAdmin;
   const votersList = getVotersForAgentModalSearch();
@@ -872,13 +1073,23 @@ function renderAgentsTable() {
   tbody.innerHTML = "";
   if (!agents.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      '<td colspan="8" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Use <strong>Create agent</strong> to add one.</td>';
+    tr.innerHTML = `<td colspan="${SETTINGS_AGENTS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">No agents yet. Use <strong>Create agent</strong> to add one.</td>`;
     tbody.appendChild(tr);
+    updateAgentsSortIndicators();
     return;
   }
 
-  agents.forEach((a) => {
+  const displayList = getFilteredSortedGroupedAgents();
+  const dataRows = displayList.filter((x) => x.type === "row");
+  if (dataRows.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="${SETTINGS_AGENTS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">No agents match your search or filters.</td>`;
+    tbody.appendChild(tr);
+    updateAgentsSortIndicators();
+    return;
+  }
+
+  function appendAgentRow(a) {
     const tr = document.createElement("tr");
     const aid = a && a.id != null ? String(a.id) : "";
     const cid = a.candidateId != null && String(a.candidateId).trim() !== "" ? String(a.candidateId).trim() : "";
@@ -907,7 +1118,18 @@ function renderAgentsTable() {
       </td>
     `;
     tbody.appendChild(tr);
-  });
+  }
+
+  for (const item of displayList) {
+    if (item.type === "group") {
+      const tr = document.createElement("tr");
+      tr.className = "pledges-toolbar__group-header";
+      tr.innerHTML = `<td colspan="${SETTINGS_AGENTS_TABLE_COL_COUNT}">${escapeHtml(item.label)}</td>`;
+      tbody.appendChild(tr);
+      continue;
+    }
+    appendAgentRow(item.agent);
+  }
 
   tbody.querySelectorAll("[data-view-agent]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -943,6 +1165,8 @@ function renderAgentsTable() {
       await deleteAgentRecord(agent);
     });
   });
+
+  updateAgentsSortIndicators();
 }
 
 function openCandidateForm(existing) {
@@ -1219,6 +1443,7 @@ function initAgentsTab() {
     addBtn.addEventListener("click", () => openAgentModal(null, {}));
   }
 
+  initAgentsToolbarListeners();
   renderAgentsTable();
 }
 

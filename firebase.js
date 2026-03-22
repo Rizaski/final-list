@@ -243,9 +243,6 @@ export const firebaseInitPromise = (async () => {
         if (!id) return;
         const ref = firestoreMod.doc(db, AGENTS_COLLECTION, String(id));
         await firestoreMod.deleteDoc(ref);
-        if (typeof firestoreMod.waitForPendingWrites === "function") {
-          await firestoreMod.waitForPendingWrites(db);
-        }
       };
 
       onAgentsSnapshotFs = (handler) => {

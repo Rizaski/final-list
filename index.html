@@ -1447,17 +1447,53 @@
                       <button type="button" class="primary-button" id="settingsAgentAddButton">Create agent</button>
                     </div>
 
-                    <div class="table-wrapper table-wrapper--sticky-header" style="margin-top: 24px;">
+                    <div class="voters-toolbar list-toolbar settings-agents-toolbar" style="margin-top: 16px;">
+                      <div class="list-toolbar__search">
+                        <label for="settingsAgentsSearch" class="sr-only">Search agents</label>
+                        <input type="search" id="settingsAgentsSearch" placeholder="Search by name, ID, phone, island…" autocomplete="off">
+                      </div>
+                      <div class="list-toolbar__controls">
+                        <div class="field-group field-group--inline">
+                          <label for="settingsAgentsFilterCandidate">Candidate</label>
+                          <select id="settingsAgentsFilterCandidate">
+                            <option value="all">All scopes</option>
+                            <option value="unscoped">All campaigns (unscoped)</option>
+                          </select>
+                        </div>
+                        <div class="field-group field-group--inline">
+                          <label for="settingsAgentsSort">Sort</label>
+                          <select id="settingsAgentsSort">
+                            <option value="id">Agent ID</option>
+                            <option value="name-asc">Name A–Z</option>
+                            <option value="name-desc">Name Z–A</option>
+                            <option value="nationalId">National ID</option>
+                            <option value="phone">Phone</option>
+                            <option value="island">Island</option>
+                            <option value="candidate">Candidate scope</option>
+                          </select>
+                        </div>
+                        <div class="field-group field-group--inline">
+                          <label for="settingsAgentsGroupBy">Group by</label>
+                          <select id="settingsAgentsGroupBy">
+                            <option value="none">None</option>
+                            <option value="island">Island</option>
+                            <option value="candidate">Candidate scope</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="table-wrapper table-wrapper--sticky-header" style="margin-top: 12px;">
                       <table class="data-table" id="settingsAgentsTable">
                         <thead>
                           <tr>
-                            <th scope="col">ID</th>
+                            <th scope="col" class="th-sortable" data-sort-key="agent-id">ID<span class="sort-indicator"></span></th>
                             <th scope="col" class="settings-agents-photo-col">Photo</th>
-                            <th scope="col" class="data-table-col--name">Name</th>
-                            <th scope="col">National ID</th>
-                            <th scope="col">Phone</th>
-                            <th scope="col">Island</th>
-                            <th scope="col">Candidate</th>
+                            <th scope="col" class="data-table-col--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
+                            <th scope="col" class="th-sortable" data-sort-key="nationalId">National ID<span class="sort-indicator"></span></th>
+                            <th scope="col" class="th-sortable" data-sort-key="phone">Phone<span class="sort-indicator"></span></th>
+                            <th scope="col" class="th-sortable" data-sort-key="island">Island<span class="sort-indicator"></span></th>
+                            <th scope="col" class="th-sortable" data-sort-key="candidate">Candidate<span class="sort-indicator"></span></th>
                             <th scope="col" class="settings-agents-actions-col">Actions</th>
                           </tr>
                         </thead>
