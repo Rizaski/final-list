@@ -3,6 +3,7 @@
  */
 import { firebaseInitPromise } from "./firebase.js";
 import { getListStatusLabel, getListStatusValues } from "./lists.js";
+import { initTableViewMenus } from "./table-view-menu.js";
 
 const STATUS_OPTIONS = ["", ...getListStatusValues()];
 
@@ -40,7 +41,7 @@ function renderTable() {
     const current = statusMap[v.id];
     const currentStatus = (current && current.status) || "";
     tr.innerHTML = `
-      <td>${escapeHtml(v.fullName || v.id)}</td>
+      <td class="data-table-col--name">${escapeHtml(v.fullName || v.id)}</td>
       <td>${escapeHtml(v.nationalId ?? "")}</td>
       <td>${escapeHtml(v.permanentAddress ?? "")}</td>
       <td><select class="status-select" data-voter-id="${escapeHtml(v.id)}" data-status>
@@ -110,6 +111,7 @@ async function init() {
   }
 
   renderTable();
+  initTableViewMenus();
 }
 
 init();

@@ -1223,7 +1223,15 @@ function buildTableFromDisplayList(displayList, options = {}) {
   const thead = document.createElement("thead");
   thead.innerHTML =
     "<tr>" +
-    columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("") +
+    columns
+      .map((c) =>
+        c === "Seq"
+          ? `<th class="data-table-col--seq">${escapeHtml(c)}</th>`
+          : c === "Name"
+            ? `<th class="data-table-col--name">${escapeHtml(c)}</th>`
+            : `<th>${escapeHtml(c)}</th>`
+      )
+      .join("") +
     "</tr>";
   table.appendChild(thead);
   const tbody = document.createElement("tbody");
@@ -1306,17 +1314,20 @@ function buildTableFromDisplayList(displayList, options = {}) {
       }
       const tr = document.createElement("tr");
       const [imageHtml, ...rest] = row;
-      tr.innerHTML =
-        `<td>${imageHtml}</td>` +
-        rest
-          .map((cell) =>
-            typeof cell === "string" && cell.startsWith("<button")
-              ? `<td>${cell}</td>`
-              : cell && typeof cell === "object" && typeof cell.html === "string"
-                ? `<td>${cell.html}</td>`
-                : `<td>${escapeHtml(String(cell))}</td>`
-          )
-          .join("");
+      const restTds = rest.map((cell, idx) => {
+        let colCls = "";
+        if (idx === 0) colCls = "data-table-col--seq";
+        else if (idx === 1) colCls = "data-table-col--name";
+        const clsAttr = colCls ? ` class="${colCls}"` : "";
+        if (typeof cell === "string" && cell.startsWith("<button")) {
+          return `<td${clsAttr}>${cell}</td>`;
+        }
+        if (cell && typeof cell === "object" && typeof cell.html === "string") {
+          return `<td${clsAttr}>${cell.html}</td>`;
+        }
+        return `<td${clsAttr}>${escapeHtml(String(cell))}</td>`;
+      });
+      tr.innerHTML = `<td>${imageHtml}</td>` + restTds.join("");
       tbody.appendChild(tr);
     });
   }

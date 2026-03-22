@@ -1,6 +1,7 @@
 import { openModal } from "./ui.js";
 import { updateVoterCandidatePledge, getVoterImageSrc } from "./voters.js";
 import { getAgentsForDropdown, getCandidates } from "./settings.js";
+import { TABLE_VIEW_MENU_SECTION_HTML, initPledgesTableViewInColumnMenu } from "./table-view-menu.js";
 
 const PAGE_SIZE = 15;
 /** Pledges table: Seq, Image, Name, ID, Permanent Address, then candidate columns (Pledge column is on Door to Door). */
@@ -218,10 +219,10 @@ function updatePledgesTableHeader() {
     .join("");
   thead.innerHTML = `
     <tr>
-      <th scope="col" class="pledge-th pledge-th--sequence th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
+      <th scope="col" class="pledge-th pledge-th--sequence data-table-col--seq th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--photo">Image</th>
       <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
-      <th scope="col" class="pledge-th pledge-th--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
+      <th scope="col" class="pledge-th pledge-th--name data-table-col--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
       ${candidateHeaders}
     </tr>
@@ -297,10 +298,10 @@ function renderPledgesTable() {
       .join("");
 
     tr.innerHTML = `
-      <td class="pledge-cell pledge-cell--sequence">${escapeHtml(String(row.sequence ?? ""))}</td>
+      <td class="pledge-cell pledge-cell--sequence data-table-col--seq">${escapeHtml(String(row.sequence ?? ""))}</td>
       <td class="pledge-cell pledge-cell--photo">${photoCell}</td>
       <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
-      <td class="pledge-cell pledge-cell--name">${escapeHtml(row.name)}</td>
+      <td class="pledge-cell pledge-cell--name data-table-col--name">${escapeHtml(row.name)}</td>
       <td class="pledge-cell pledge-cell--address">${escapeHtml(row.permanentAddress || "")}</td>
       ${candidateCells}
     `;
@@ -448,7 +449,8 @@ function renderCandidateVisibilityMenu() {
   const stored = getVisibleCandidateIds();
   const visibleSet = new Set(stored && stored.length > 0 ? stored : all.map((c) => String(c.id)));
   menu.innerHTML = `
-    <div class="dropdown-menu__item" style="pointer-events:none; font-weight:600;">Show columns</div>
+    ${TABLE_VIEW_MENU_SECTION_HTML}
+    <div class="dropdown-menu__item dropdown-menu__item--static">Show columns</div>
     ${all
       .map(
         (c) => {
@@ -505,10 +507,12 @@ export function initPledgesModule(votersContext) {
 
   document.addEventListener("candidates-updated", () => {
     renderCandidateVisibilityMenu();
+    initPledgesTableViewInColumnMenu();
     renderPledgesTable();
   });
 
   renderCandidateVisibilityMenu();
+  initPledgesTableViewInColumnMenu();
   const pledgeColumnsBtn = document.getElementById("pledgeColumnsButton");
   const pledgeColumnsMenu = document.getElementById("pledgeColumnsMenu");
   if (pledgeColumnsBtn && pledgeColumnsMenu) {

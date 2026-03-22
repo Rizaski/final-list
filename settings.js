@@ -780,7 +780,7 @@ function renderAgentsTable() {
     tr.dataset.agentId = aid;
     tr.innerHTML = `
       <td><code class="settings-agents-id">${escapeHtml(aid)}</code></td>
-      <td>${escapeHtml(a.name || "")}</td>
+      <td class="data-table-col--name">${escapeHtml(a.name || "")}</td>
       <td>${escapeHtml(a.nationalId || "")}</td>
       <td>${escapeHtml(a.phone || "")}</td>
       <td>${escapeHtml(a.island || "")}</td>
@@ -1141,7 +1141,7 @@ function renderUsersTable() {
     const candName = cand ? (cand.name || cand.id || u.candidateId) : "—";
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${escapeHtml(u.displayName || "")}</td>
+      <td class="data-table-col--name">${escapeHtml(u.displayName || "")}</td>
       <td>${escapeHtml(email)}</td>
       <td>${escapeHtml(role)}</td>
       <td>${escapeHtml(u.role === "candidate" ? candName : "—")}</td>

@@ -428,10 +428,10 @@ function renderVotersTable() {
         })()
       : '<span class="text-muted">—</span>';
     tr.innerHTML = `
-      <td>${voter.sequence ?? ""}</td>
+      <td class="data-table-col--seq">${voter.sequence ?? ""}</td>
       <td>${photoCell}</td>
       <td>${voter.nationalId ?? ""}</td>
-      <td>${voter.fullName}</td>
+      <td class="data-table-col--name">${voter.fullName}</td>
       <td>${voter.permanentAddress ?? ""}</td>
       <td><span class="${pledgePillClass(
         effPledge

@@ -4,6 +4,7 @@ import { openModal, closeModal } from "./ui.js";
 import { getCandidates } from "./settings.js";
 import { candidatePledgedAgentStorageKey } from "./agents-context.js";
 import { firebaseInitPromise } from "./firebase.js";
+import { initTableViewMenus } from "./table-view-menu.js";
 
 const REPORT_PLEDGED_PAGE_SIZE = 20;
 
@@ -11,6 +12,99 @@ function escapeHtml(str) {
   if (str == null) return "";
   const s = String(str);
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Combined momentum score (0–100): pledge yes rate, support blend, marked turnout. */
+function computeWinOMeter(voters) {
+  const n = voters.length;
+  if (n === 0) {
+    return {
+      score: 0,
+      empty: true,
+      pledgeRate: 0,
+      supportBlend: 0,
+      turnoutRate: 0,
+      yesPledge: 0,
+      supporting: 0,
+      leaning: 0,
+      votedCount: 0,
+      total: 0,
+    };
+  }
+  const yesPledge = voters.filter((v) => v.pledgeStatus === "yes").length;
+  const pledgeRate = yesPledge / n;
+  const supporting = voters.filter((v) => v.supportStatus === "supporting").length;
+  const leaning = voters.filter((v) => v.supportStatus === "leaning").length;
+  const supportBlend = (supporting + leaning * 0.5) / n;
+  const votedIds = getVotedVoterIds();
+  const votedCount = voters.filter((v) => votedIds.has(String(v.id))).length;
+  const turnoutRate = votedCount / n;
+  const score = Math.min(
+    100,
+    Math.round(100 * (0.45 * pledgeRate + 0.35 * supportBlend + 0.2 * turnoutRate))
+  );
+  return {
+    score,
+    empty: false,
+    pledgeRate,
+    supportBlend,
+    turnoutRate,
+    yesPledge,
+    supporting,
+    leaning,
+    votedCount,
+    total: n,
+  };
+}
+
+function renderWinOMeter(container, voters) {
+  if (!container) return;
+  const w = computeWinOMeter(voters);
+  if (w.empty) {
+    container.innerHTML =
+      '<div class="helper-text">Import voters to see your Win O Meter.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <div class="win-o-meter" style="--wom-score:${w.score}">
+      <div class="win-o-meter__layout">
+        <div class="win-o-meter__visual-col">
+          <div class="win-o-meter__ring" role="img" aria-label="Win O Meter ${w.score} out of 100">
+            <div class="win-o-meter__ring-inner">
+              <span class="win-o-meter__score">${w.score}</span>
+              <span class="win-o-meter__score-suffix">/ 100</span>
+              <span class="win-o-meter__score-caption">Momentum</span>
+            </div>
+          </div>
+          <div class="win-o-meter__track-wrap">
+            <div class="chart-bar__track win-o-meter__bar-track" aria-hidden="true">
+              <div class="win-o-meter__fill" style="width:${w.score}%"></div>
+            </div>
+            <p class="helper-text win-o-meter__formula">
+              45% pledge (Yes) · 35% support (Supporting + ½ Leaning) · 20% marked voted
+            </p>
+          </div>
+        </div>
+        <div class="win-o-meter__metrics">
+          <div class="win-o-meter__metric">
+            <span class="win-o-meter__metric-label">Pledge yes</span>
+            <span class="win-o-meter__metric-value">${(w.pledgeRate * 100).toFixed(1)}%</span>
+            <span class="win-o-meter__metric-meta">${w.yesPledge.toLocaleString("en-MV")} / ${w.total.toLocaleString("en-MV")}</span>
+          </div>
+          <div class="win-o-meter__metric">
+            <span class="win-o-meter__metric-label">Support blend</span>
+            <span class="win-o-meter__metric-value">${(w.supportBlend * 100).toFixed(1)}%</span>
+            <span class="win-o-meter__metric-meta">${w.supporting} supporting · ${w.leaning} leaning</span>
+          </div>
+          <div class="win-o-meter__metric">
+            <span class="win-o-meter__metric-label">Marked voted</span>
+            <span class="win-o-meter__metric-value">${(w.turnoutRate * 100).toFixed(1)}%</span>
+            <span class="win-o-meter__metric-meta">${w.votedCount.toLocaleString("en-MV")} / ${w.total.toLocaleString("en-MV")}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderBarSet(container, items) {
@@ -109,10 +203,10 @@ function buildVoterDetailTable(voters) {
   table.innerHTML = `
     <thead>
       <tr>
-        <th>Seq</th>
+        <th class="data-table-col--seq">Seq</th>
         <th>Image</th>
         <th>ID Number</th>
-        <th>Name</th>
+        <th class="data-table-col--name">Name</th>
         <th>Permanent Address</th>
         <th>Pledge</th>
         <th>Ballot box</th>
@@ -167,10 +261,10 @@ function buildVoterDetailTable(voters) {
       : '<span class="text-muted">—</span>';
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${v.sequence ?? ""}</td>
+      <td class="data-table-col--seq">${v.sequence ?? ""}</td>
       <td>${photoCell}</td>
       <td>${escapeHtml(v.nationalId ?? "")}</td>
-      <td>${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
+      <td class="data-table-col--name">${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
       <td>${escapeHtml(v.permanentAddress ?? "")}</td>
       <td><span class="${pledgeClass}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
       <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
@@ -279,7 +373,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   const supportChart = document.getElementById("reportsSupportChart");
   const registrationChart = document.getElementById("reportsRegistrationChart");
   const boxPledgeChart = document.getElementById("reportsBoxPledgeChart");
-  const eventChart = document.getElementById("reportsEventChart");
+  const winOMeterEl = document.getElementById("reportsWinOMeter");
   const candidateSummaryEl = document.getElementById("reportsCandidatePledgeSummary");
   const reportsModule = document.getElementById("module-reports");
 
@@ -306,7 +400,6 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
 
   function openReportDetails(reportType) {
     const voters = votersContext.getAllVoters();
-    const events = eventsContext.getEvents();
     let title = "";
     // Use the same inner layout shell as the pledged voters window for consistent styling
     const body = document.createElement("div");
@@ -341,29 +434,56 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
         .sort((a, b) => (a.supportStatus || "").localeCompare(b.supportStatus || "", "en"));
       title = "Support distribution – voters";
       body.appendChild(buildVoterDetailTable(bySupport));
-    } else if (reportType === "events") {
-      const sorted = [...events].sort(
-        (a, b) => new Date(a.dateTime || 0) - new Date(b.dateTime || 0)
-      );
-      const formatDt = (dt) => {
-        if (!dt) return "–";
-        return new Date(dt).toLocaleString("en-MV", {
-          day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-        });
-      };
-      const rows = sorted.map((ev) => [
-        ev.name || "–",
-        ev.location || "–",
-        ev.scope || "–",
-        formatDt(ev.dateTime),
-        ev.team || "–",
-        ev.expectedAttendees ?? "–",
-      ]);
-      title = "Event participation – details";
-      body.appendChild(buildDetailTable(
-        ["Event", "Location", "Scope", "Date & time", "Team", "Expected attendees"],
-        rows
-      ));
+    } else if (reportType === "win-o-meter") {
+      const w = computeWinOMeter(voters);
+      title = "Win O Meter – breakdown";
+      if (w.empty) {
+        body.innerHTML =
+          '<p class="helper-text">No voters in the system yet. Import voters to compute the score.</p>';
+      } else {
+        const intro = document.createElement("p");
+        intro.className = "helper-text win-o-meter-modal__intro";
+        intro.textContent =
+          "The Win O Meter (0–100) blends overall pledge Yes rate, support sentiment (Supporting counts full; Leaning counts half), and share of voters marked as voted in Zero Day.";
+        body.appendChild(intro);
+        const scoreBanner = document.createElement("div");
+        scoreBanner.className = "win-o-meter-modal__score-banner";
+        scoreBanner.innerHTML = `<span class="win-o-meter-modal__score-num">${w.score}</span><span class="win-o-meter-modal__score-outof">/ 100</span>`;
+        body.appendChild(scoreBanner);
+        const metrics = document.createElement("div");
+        metrics.className = "table-wrapper win-o-meter-modal__table-wrap";
+        metrics.innerHTML = `
+          <table class="data-table">
+            <thead>
+              <tr><th>Component</th><th>Weight</th><th>Value</th><th>Contribution</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Pledge Yes rate</td>
+                <td>45%</td>
+                <td>${(w.pledgeRate * 100).toFixed(1)}% (${w.yesPledge} / ${w.total})</td>
+                <td>${(0.45 * w.pledgeRate * 100).toFixed(1)} pts</td>
+              </tr>
+              <tr>
+                <td>Support blend</td>
+                <td>35%</td>
+                <td>${(w.supportBlend * 100).toFixed(1)}% (${w.supporting} supporting, ${w.leaning} leaning)</td>
+                <td>${(0.35 * w.supportBlend * 100).toFixed(1)} pts</td>
+              </tr>
+              <tr>
+                <td>Marked voted</td>
+                <td>20%</td>
+                <td>${(w.turnoutRate * 100).toFixed(1)}% (${w.votedCount} / ${w.total})</td>
+                <td>${(0.2 * w.turnoutRate * 100).toFixed(1)} pts</td>
+              </tr>
+              <tr>
+                <td colspan="3"><strong>Total (rounded)</strong></td>
+                <td><strong>${w.score} / 100</strong></td>
+              </tr>
+            </tbody>
+          </table>`;
+        body.appendChild(metrics);
+      }
     }
 
     if (!title) return;
@@ -467,6 +587,15 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
             <option value="pledge">Pledge</option>
           </select>
         </div>
+        <div class="dropdown-wrap table-view-dropdown" data-table-view-for="reportPledgedTable">
+          <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+          <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+            <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+          </div>
+        </div>
       </div>
     `;
     body.appendChild(toolbar);
@@ -479,10 +608,10 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     table.innerHTML = `
       <thead>
         <tr>
-          <th>Seq</th>
+          <th class="data-table-col--seq">Seq</th>
           <th>Image</th>
           <th>ID Number</th>
-          <th>Name</th>
+          <th class="data-table-col--name">Name</th>
           <th>Permanent Address</th>
           <th title="Pledge to this candidate">Pledge</th>
           <th>Ballot box</th>
@@ -496,6 +625,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     `;
     tableWrap.appendChild(table);
     body.appendChild(tableWrap);
+    initTableViewMenus(body);
 
     const tbody = table.querySelector("#reportPledgedTableBody");
     const COL_COUNT = 11;
@@ -599,10 +729,10 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
           const assignedAgentName = assignedByVoterId[String(v.id)] || "";
           const tr = document.createElement("tr");
           tr.innerHTML = `
-            <td>${v.sequence ?? ""}</td>
+            <td class="data-table-col--seq">${v.sequence ?? ""}</td>
             <td>${photoCell}</td>
             <td>${escapeHtml(v.nationalId ?? "")}</td>
-            <td>${escapeHtml(v.fullName ?? "")}</td>
+            <td class="data-table-col--name">${escapeHtml(v.fullName ?? "")}</td>
             <td>${escapeHtml(v.permanentAddress ?? "")}</td>
             <td><span class="${pledgePillClass(pledgeStatus)}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
             <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
@@ -672,8 +802,6 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
 
   function recomputeReports() {
     const voters = votersContext.getAllVoters();
-    const pledges = pledgesContext.getPledges();
-    const events = eventsContext.getEvents();
 
     // Pledge percentage by ballot box only (so chart shows only locations in the voter list, e.g. Dhuvaafaru, Kandolhudhoo)
     const pledgeByBox = getPledgeByBallotBox();
@@ -725,21 +853,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     });
     renderBarSet(supportChart, supportDistribution);
 
-    const attendedEvents = events.length;
-    const plannedEvents = events.length;
-    const participationItems =
-      plannedEvents === 0
-        ? []
-        : [
-            {
-              label: "Attended events",
-              value:
-                plannedEvents === 0
-                  ? 0
-                  : (attendedEvents / plannedEvents) * 100,
-            },
-          ];
-    renderBarSet(eventChart, participationItems);
+    renderWinOMeter(winOMeterEl, voters);
 
     // Candidate pledge summary (restrict to one candidate when current user is a candidate)
     const currentUser = getCurrentUser ? getCurrentUser() : null;
@@ -772,5 +886,6 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   document.addEventListener("pledges-updated", recomputeReports);
   document.addEventListener("events-updated", recomputeReports);
   document.addEventListener("candidates-updated", recomputeReports);
+  document.addEventListener("voted-entries-updated", recomputeReports);
 }
 

@@ -13,6 +13,7 @@ import {
 import { initCallsModule } from "./calls.js";
 import { initZeroDayModule, initMonitorView, syncVotedFromFirestore } from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
+import { initTableViewMenus } from "./table-view-menu.js";
 
 const modulesMap = {
   dashboard: document.getElementById("module-dashboard"),
@@ -648,6 +649,7 @@ async function startAppModules(firebaseApi) {
   }
 
   const pledgesContext = initPledgesModule(votersContext);
+  initTableViewMenus();
   initDoorToDoorModule(votersContext);
   const eventsContext = initEventsModule();
   const callsContext = initCallsModule(votersContext);

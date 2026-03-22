@@ -495,6 +495,15 @@
                       <option value="pledge">Pledge status</option>
                     </select>
                   </div>
+                  <div class="dropdown-wrap table-view-dropdown" data-table-view-for="votersTable">
+                    <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                    <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                      <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="table-wrapper table-wrapper--sticky-header" style="position: relative;">
@@ -504,10 +513,10 @@
                 <table class="data-table" id="votersTable">
                   <thead>
                     <tr>
-                      <th class="th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
+                      <th class="th-sortable data-table-col--seq" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
                       <th>Image</th>
                       <th class="th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
-                      <th class="th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
+                      <th class="th-sortable data-table-col--name" data-sort-key="name">Name<span class="sort-indicator"></span></th>
                       <th class="th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
                       <th class="th-sortable" data-sort-key="pledge">Pledge<span class="sort-indicator"></span></th>
                       <th>Voted</th>
@@ -585,7 +594,7 @@
               <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                 <button type="button" class="primary-button" id="pledgesExportCsvButton">Export list as CSV</button>
                 <div class="dropdown-wrap">
-                  <button type="button" class="ghost-button" id="pledgeColumnsButton" title="Show or hide candidate columns" aria-haspopup="true" aria-expanded="false">⋮</button>
+                  <button type="button" class="ghost-button" id="pledgeColumnsButton" title="Table view and candidate columns" aria-haspopup="true" aria-expanded="false">⋮</button>
                   <div class="dropdown-menu" id="pledgeColumnsMenu" role="menu" hidden aria-label="Candidate columns">
                     <div class="dropdown-menu__item" style="pointer-events:none; font-weight:600;">Show columns</div>
                     <!-- Checkboxes for each candidate injected by pledges.js -->
@@ -660,7 +669,7 @@
                       <th scope="col" class="pledge-th pledge-th--sequence th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
                       <th scope="col" class="pledge-th pledge-th--photo">Image</th>
                       <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
+                      <th scope="col" class="pledge-th pledge-th--name data-table-col--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
                       <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
                       <!-- Candidate pledge columns are injected dynamically by pledges.js -->
                     </tr>
@@ -696,8 +705,8 @@
                   <label for="doorToDoorSearch" class="sr-only">Search</label>
                   <input type="search" id="doorToDoorSearch" placeholder="Search by name, ID, address, notes…">
                 </div>
-                <button type="button" class="ghost-button" id="doorToDoorAddAgentButton" style="align-self:flex-end;">Add agent</button>
                 <div class="pledges-toolbar__controls">
+                  <button type="button" class="ghost-button" id="doorToDoorAddAgentButton">Add agent</button>
                   <div class="field-group field-group--inline">
                     <label for="doorToDoorSort">Sort</label>
                     <select id="doorToDoorSort">
@@ -738,15 +747,24 @@
                       <option value="pledge">Pledge status</option>
                     </select>
                   </div>
+                  <div class="dropdown-wrap table-view-dropdown" data-table-view-for="doorToDoorTable">
+                    <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                    <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                      <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="table-wrapper table-wrapper--sticky-header">
-                <table class="data-table" id="doorToDoorTable" role="table" aria-label="Door to door list">
+              <div class="table-wrapper table-wrapper--sticky-header table-wrapper--door-to-door">
+                <table class="data-table data-table--door-to-door" id="doorToDoorTable" role="table" aria-label="Door to door list">
                   <thead>
                     <tr>
-                      <th scope="col">Seq</th>
+                      <th scope="col" class="data-table-col--seq">Seq</th>
                       <th scope="col">Image</th>
-                      <th scope="col">Name</th>
+                      <th scope="col" class="data-table-col--name">Name</th>
                       <th scope="col">ID Number</th>
                       <th scope="col">Permanent Address</th>
                       <th scope="col">Pledge</th>
@@ -836,13 +854,22 @@
                       <option value="address">Permanent address</option>
                     </select>
                   </div>
+                  <div class="dropdown-wrap table-view-dropdown" data-table-view-for="callsTable">
+                    <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                    <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                      <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                      <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="table-wrapper table-wrapper--sticky-header">
-                <table class="data-table" id="callsTable">
+              <div class="table-wrapper table-wrapper--sticky-header table-wrapper--calls">
+                <table class="data-table data-table--calls" id="callsTable">
                   <thead>
                     <tr>
-                      <th>Voter name</th>
+                      <th class="data-table-col--name">Voter name</th>
                       <th>Phone</th>
                       <th>ID Number</th>
                       <th>Permanent address</th>
@@ -896,13 +923,22 @@
                   </div>
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <div class="dropdown-wrap">
-                      <button type="button" class="icon-button" id="zeroDayTransportMenuButton" aria-label="View options" aria-haspopup="true" aria-expanded="false">
+                      <button type="button" class="icon-button" id="zeroDayTransportMenuButton" aria-label="Filter trips by type" aria-haspopup="true" aria-expanded="false">
                         <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true"><circle cx="12" cy="6" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="18" r="1.5" fill="currentColor"/></svg>
                       </button>
                       <div class="dropdown-menu" id="zeroDayTransportMenu" role="menu" hidden>
                         <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="all">View all</button>
                         <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="flight">View flights only</button>
                         <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="speedboat">View speed boats only</button>
+                      </div>
+                    </div>
+                    <div class="dropdown-wrap table-view-dropdown" data-table-view-for="zeroDayTripsTable">
+                      <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                      <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                        <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
                       </div>
                     </div>
                     <button type="button" class="primary-button" id="zeroDayAddTripButton">Add trip</button>
@@ -988,7 +1024,18 @@
                     <h2>Manage Monitors</h2>
                     <p class="card-subtitle">Add monitors by ballot box and share a link so they can search their voters and mark as voted.</p>
                   </div>
-                  <button type="button" class="primary-button" id="zeroDayAddMonitorButton">Add monitor</button>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <div class="dropdown-wrap table-view-dropdown" data-table-view-for="zeroDayMonitorsTable">
+                      <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                      <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                        <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                      </div>
+                    </div>
+                    <button type="button" class="primary-button" id="zeroDayAddMonitorButton">Add monitor</button>
+                  </div>
                 </header>
                 <div class="card-body">
                   <div class="table-wrapper table-wrapper--sticky-header">
@@ -1029,8 +1076,17 @@
 
           <div class="grid grid--two-column">
             <section class="card">
-              <header class="card-header">
+              <header class="card-header card-header--split">
                 <h2>Campaign Events</h2>
+                <div class="dropdown-wrap table-view-dropdown" data-table-view-for="eventsTable">
+                  <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                  <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                    <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                  </div>
+                </div>
               </header>
               <div class="card-body">
                 <div class="table-wrapper table-wrapper--sticky-header">
@@ -1134,11 +1190,14 @@
           <div class="grid grid--two-column">
             <section class="card">
               <header class="card-header card-header--split">
-                <h2>Event participation</h2>
-                <button type="button" class="ghost-button ghost-button--small" data-report-details="events">View details</button>
+                <div>
+                  <h2>Win O Meter</h2>
+                  <p class="card-subtitle">Campaign momentum from pledges, support, and turnout.</p>
+                </div>
+                <button type="button" class="ghost-button ghost-button--small" data-report-details="win-o-meter">View details</button>
               </header>
               <div class="card-body">
-                <div id="reportsEventChart" class="chart-row">
+                <div id="reportsWinOMeter" class="chart-row">
                   <!-- Populated by reports module -->
                 </div>
               </div>
@@ -1226,7 +1285,18 @@
                       <h2>Candidate Management</h2>
                       <p class="card-subtitle">Add and edit candidates for each election.</p>
                     </div>
-                    <button class="primary-button" id="addCandidateButton">Add candidate</button>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div class="dropdown-wrap table-view-dropdown" data-table-view-for="candidatesTable">
+                        <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                        <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                          <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                          <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                          <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                          <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                        </div>
+                      </div>
+                      <button class="primary-button" id="addCandidateButton">Add candidate</button>
+                    </div>
                   </header>
                   <div class="card-body">
                     <div class="table-wrapper table-wrapper--sticky-header">
@@ -1361,6 +1431,15 @@
                       <h2>Agents</h2>
                       <p class="card-subtitle">Create, view, update, and delete campaign agents. Islands come from the imported voters list.</p>
                     </div>
+                    <div class="dropdown-wrap table-view-dropdown" data-table-view-for="settingsAgentsTable">
+                      <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                      <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                        <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                      </div>
+                    </div>
                   </header>
                   <div class="card-body">
                     <p class="helper-text" style="margin-bottom: 12px;"><strong>CRUD:</strong> <strong>C</strong>reate (button below), <strong>R</strong>ead (View on each row), <strong>U</strong>pdate (Edit), <strong>D</strong>elete (Delete). Use voter lookup and title-case full names; admins may scope an agent to one candidate.</p>
@@ -1373,7 +1452,7 @@
                         <thead>
                           <tr>
                             <th scope="col">ID</th>
-                            <th scope="col">Name</th>
+                            <th scope="col" class="data-table-col--name">Name</th>
                             <th scope="col">National ID</th>
                             <th scope="col">Phone</th>
                             <th scope="col">Island</th>
@@ -1401,14 +1480,25 @@
                       <h2>User management</h2>
                       <p class="card-subtitle">Manage campaign staff and permissions.</p>
                     </div>
-                    <button type="button" class="primary-button" id="settingsAddUserButton">Add user</button>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div class="dropdown-wrap table-view-dropdown" data-table-view-for="settingsUsersTable">
+                        <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                        <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                          <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                          <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                          <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                          <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                        </div>
+                      </div>
+                      <button type="button" class="primary-button" id="settingsAddUserButton">Add user</button>
+                    </div>
                   </header>
                   <div class="card-body">
                     <div class="table-wrapper table-wrapper--sticky-header">
                       <table class="data-table" id="settingsUsersTable">
                         <thead>
                           <tr>
-                            <th>Name</th>
+                            <th class="data-table-col--name">Name</th>
                             <th>Email</th>
                             <th>Role</th>
                             <th>Candidate</th>

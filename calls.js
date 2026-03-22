@@ -183,20 +183,20 @@ function renderCallsTable() {
     }
 
     tr.innerHTML = `
-      <td>${escapeHtml(call.voterName)}</td>
+      <td class="data-table-col--name">${escapeHtml(call.voterName)}</td>
       <td>${escapeHtml(call.phone || "")}</td>
       <td>${escapeHtml(call.nationalId || "")}</td>
       <td>${escapeHtml(call.permanentAddress || "")}</td>
       <td>
         <input
           type="text"
-          class="input calls-input"
+          class="table-cell-input calls-table-cell-input"
           data-call-field="caller"
           value="${escapeHtml(call.caller || "")}"
         >
       </td>
       <td>
-        <select class="input calls-select" data-call-field="type">
+        <select class="calls-table-select" data-call-field="type">
           <option value="Pledge confirmation"${
             call.type === "Pledge confirmation" ? " selected" : ""
           }>Pledge confirmation</option>
@@ -211,13 +211,13 @@ function renderCallsTable() {
       <td>
         <input
           type="datetime-local"
-          class="input calls-input"
+          class="table-cell-input calls-table-cell-input calls-table-cell-input--datetime"
           data-call-field="scheduledAt"
           value="${escapeHtml(call.scheduledAt)}"
         >
       </td>
       <td>
-        <select class="input calls-select" data-call-field="status">
+        <select class="calls-table-select" data-call-field="status">
           <option value="pending"${
             call.status === "pending" ? " selected" : ""
           }>Pending</option>
@@ -230,7 +230,7 @@ function renderCallsTable() {
         </select>
       </td>
       <td>
-        <select class="input calls-select" data-call-field="outcome">
+        <select class="calls-table-select" data-call-field="outcome">
           <option value="not-reached"${
             call.outcome === "not-reached" ? " selected" : ""
           }>Not reached</option>
@@ -249,7 +249,7 @@ function renderCallsTable() {
         </select>
       </td>
       <td>
-        <select class="input calls-select" data-call-field="persuadable">
+        <select class="calls-table-select" data-call-field="persuadable">
           <option value="unknown"${
             call.persuadable === "unknown" ? " selected" : ""
           }>Unknown</option>
@@ -264,7 +264,7 @@ function renderCallsTable() {
       <td>
         <input
           type="text"
-          class="input calls-input"
+          class="table-cell-input calls-table-cell-input"
           data-call-field="notes"
           value="${escapeHtml(call.notes || "")}"
           placeholder="Add comment (optional)"

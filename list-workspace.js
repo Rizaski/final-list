@@ -4,6 +4,7 @@
 import { firebaseInitPromise } from "./firebase.js";
 import { getList, getListFromServer, saveList, createShareLink, getListStatusValues, getListStatusLabel } from "./lists.js";
 import { openModal, closeModal } from "./ui.js";
+import { initTableViewMenus } from "./table-view-menu.js";
 
 const PAGE_SIZE = 20;
 const VOTER_IMAGES_BASE = "photos/";
@@ -140,7 +141,10 @@ function renderTable() {
   const headerRow = document.createElement("tr");
   visibleColumns.forEach((key) => {
     const opt = COLUMN_OPTIONS.find((c) => c.key === key);
-    headerRow.appendChild(document.createElement("th")).textContent = opt ? opt.label : key;
+    const th = headerRow.appendChild(document.createElement("th"));
+    th.textContent = opt ? opt.label : key;
+    if (key === "sequence") th.classList.add("data-table-col--seq");
+    if (key === "fullName") th.classList.add("data-table-col--name");
   });
   headerRow.appendChild(document.createElement("th")).innerHTML = "Actions";
   thead.appendChild(headerRow);
@@ -156,6 +160,8 @@ function renderTable() {
       : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
     visibleColumns.forEach((key) => {
       const td = tr.appendChild(document.createElement("td"));
+      if (key === "sequence") td.classList.add("data-table-col--seq");
+      if (key === "fullName") td.classList.add("data-table-col--name");
       if (key === "image") {
         td.innerHTML = photoCellHtml;
       } else if (key === "pledgeStatus") {
@@ -584,6 +590,7 @@ async function init() {
   bindToolbar();
   renderAddSearchResults();
   renderTable();
+  initTableViewMenus();
 }
 
 init();

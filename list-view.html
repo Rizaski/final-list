@@ -20,15 +20,28 @@
 <body>
   <div class="list-view-page">
     <header class="list-view-page__header">
-      <h1 id="listViewTitle">Loading…</h1>
-      <p class="helper-text" id="listViewSubtitle">You can mark status for each voter. Changes sync in real time.</p>
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <h1 id="listViewTitle">Loading…</h1>
+          <p class="helper-text" id="listViewSubtitle">You can mark status for each voter. Changes sync in real time.</p>
+        </div>
+        <div class="dropdown-wrap table-view-dropdown" data-table-view-for="listViewTable">
+          <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+          <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+            <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+          </div>
+        </div>
+      </div>
     </header>
 
     <div class="list-view-page__table-wrap">
       <table class="data-table" id="listViewTable">
         <thead>
           <tr>
-            <th>Name</th>
+            <th class="data-table-col--name">Name</th>
             <th>ID Number</th>
             <th>Address</th>
             <th>Status</th>

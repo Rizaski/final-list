@@ -2,6 +2,7 @@
  * Pledged report view: open shared link (?token=xxx), see only pledged voters for a candidate (read-only).
  */
 import { firebaseInitPromise } from "./firebase.js";
+import { initTableViewMenus } from "./table-view-menu.js";
 
 function getTokenFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -35,9 +36,9 @@ function renderTable() {
   sorted.forEach((v) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${escapeHtml(v.sequence ?? "")}</td>
+      <td class="data-table-col--seq">${escapeHtml(v.sequence ?? "")}</td>
       <td>${escapeHtml(v.nationalId ?? "")}</td>
-      <td>${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
+      <td class="data-table-col--name">${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
       <td>${escapeHtml(v.permanentAddress ?? "")}</td>
       <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
       <td>${escapeHtml(v.assignedAgent ?? "")}</td>
@@ -75,6 +76,7 @@ async function init() {
   document.getElementById("pledgedViewSubtitle").textContent = `Read-only list (${(share.voters || []).length} voter(s)). Shared from Campaign Reports.`;
 
   renderTable();
+  initTableViewMenus();
 }
 
 init();

@@ -227,9 +227,9 @@ function renderDoorToDoorTable() {
         '<option value="">Unassigned</option>' +
         agents.map((a) => `<option value="${escapeHtml(a.name)}"${a.name === volunteer ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("");
       tr.innerHTML = `
-        <td>${escapeHtml(String(v.sequence ?? ""))}</td>
+        <td class="data-table-col--seq">${escapeHtml(String(v.sequence ?? ""))}</td>
         <td>${photoCell}</td>
-        <td>${escapeHtml(v.fullName || "")}</td>
+        <td class="data-table-col--name">${escapeHtml(v.fullName || "")}</td>
         <td>${escapeHtml(v.nationalId || v.id || "")}</td>
         <td>${escapeHtml(v.permanentAddress || "")}</td>
         <td>
@@ -243,18 +243,18 @@ function renderDoorToDoorTable() {
         </td>
         <td>${escapeHtml(v.ballotBox || "")}</td>
         <td>
-          <select class="door-to-door-agent agent-dropdown-select agent-dropdown-select--inline" data-voter-id="${escapeHtml(v.id)}" data-field="volunteer" aria-label="Assigned agent">
+          <select class="door-to-door-agent agent-dropdown-select agent-dropdown-select--table" data-voter-id="${escapeHtml(v.id)}" data-field="volunteer" aria-label="Assigned agent">
             ${agentOptions}
           </select>
         </td>
         <td>
-          <select class="inline-select door-to-door-met" data-voter-id="${escapeHtml(v.id)}" data-field="metStatus">
+          <select class="door-to-door-table-select door-to-door-met" data-voter-id="${escapeHtml(v.id)}" data-field="metStatus">
             <option value="not-met"${metStatus === "not-met" ? " selected" : ""}>No</option>
             <option value="met"${metStatus === "met" ? " selected" : ""}>Yes</option>
           </select>
         </td>
         <td>
-          <select class="inline-select door-to-door-persuadable" data-voter-id="${escapeHtml(v.id)}" data-field="persuadable">
+          <select class="door-to-door-table-select door-to-door-persuadable" data-voter-id="${escapeHtml(v.id)}" data-field="persuadable">
             <option value="unknown"${persuadable === "unknown" ? " selected" : ""}>Unknown</option>
             <option value="yes"${persuadable === "yes" ? " selected" : ""}>Yes</option>
             <option value="no"${persuadable === "no" ? " selected" : ""}>No</option>
@@ -262,10 +262,10 @@ function renderDoorToDoorTable() {
           </select>
         </td>
         <td>
-          <input type="date" class="input" style="max-width:140px;" value="${pledgedAt ? pledgedAt.slice(0, 10) : ""}" data-voter-id="${escapeHtml(v.id)}" data-field="pledgedAt" placeholder="Date">
+          <input type="date" class="table-cell-input table-cell-input--date" value="${pledgedAt ? pledgedAt.slice(0, 10) : ""}" data-voter-id="${escapeHtml(v.id)}" data-field="pledgedAt" placeholder="Date">
         </td>
         <td>
-          <input type="text" class="pledge-notes-input" value="${escapeHtml(notes)}" placeholder="Notes" data-voter-id="${escapeHtml(v.id)}" data-field="notes">
+          <input type="text" class="table-cell-input pledge-notes-input" value="${escapeHtml(notes)}" placeholder="Notes" data-voter-id="${escapeHtml(v.id)}" data-field="notes">
         </td>
       `;
       doorToDoorTableBody.appendChild(tr);

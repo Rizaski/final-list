@@ -90,6 +90,15 @@
         </div>
       </div>
       <div class="list-workspace-toolbar-actions">
+        <div class="dropdown-wrap table-view-dropdown" data-table-view-for="listWorkspaceTable">
+          <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+          <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+            <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+          </div>
+        </div>
         <button type="button" class="ghost-button" id="listWorkspaceColumnsBtn">Columns</button>
         <button type="button" class="ghost-button" id="listWorkspaceExportBtn">Export CSV</button>
         <div class="field-group field-group--inline">
@@ -111,7 +120,7 @@
     <div class="table-wrapper table-wrapper--sticky-header">
       <table class="data-table" id="listWorkspaceTable">
         <thead id="listWorkspaceThead">
-          <tr><th>Seq</th><th>ID</th><th>Name</th><th>Address</th><th>Pledge</th><th>Actions</th></tr>
+          <tr><th class="data-table-col--seq">Seq</th><th>ID</th><th class="data-table-col--name">Name</th><th>Address</th><th>Pledge</th><th>Actions</th></tr>
         </thead>
         <tbody id="listWorkspaceTbody"></tbody>
       </table>

@@ -19,17 +19,30 @@
 <body>
   <div class="pledged-view-page">
     <header class="pledged-view-page__header">
-      <h1 id="pledgedViewTitle">Loading…</h1>
-      <p class="helper-text" id="pledgedViewSubtitle">Read-only list of pledged voters. Shared from Campaign Reports.</p>
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <h1 id="pledgedViewTitle">Loading…</h1>
+          <p class="helper-text" id="pledgedViewSubtitle">Read-only list of pledged voters. Shared from Campaign Reports.</p>
+        </div>
+        <div class="dropdown-wrap table-view-dropdown" data-table-view-for="pledgedViewTable">
+          <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+          <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+            <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+            <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+          </div>
+        </div>
+      </div>
     </header>
 
     <div class="pledged-view-page__table-wrap">
       <table class="data-table" id="pledgedViewTable">
         <thead>
           <tr>
-            <th>Seq</th>
+            <th class="data-table-col--seq">Seq</th>
             <th>ID Number</th>
-            <th>Name</th>
+            <th class="data-table-col--name">Name</th>
             <th>Permanent Address</th>
             <th>Ballot box</th>
             <th>Assigned agent</th>
