@@ -1274,7 +1274,7 @@ async function openEditUserModal(email) {
       <select id="editUserCandidate" class="input">
         ${candidateOptions}
       </select>
-      <p class="helper-text">Only for Candidate role. This user will only see pledged voters for this candidate.</p>
+      <p class="helper-text">Only for Candidate role. This user sees the full voter list scoped to this candidate for pledges and agents.</p>
     </div>
   `;
   const footer = document.createElement("div");
@@ -1373,7 +1373,7 @@ async function openAddUserModal() {
       <select id="userCandidate" class="input">
         ${candidateOptions}
       </select>
-      <p class="helper-text">Only for Candidate role. This user will only see pledged voters for this candidate.</p>
+      <p class="helper-text">Only for Candidate role. This user sees the full voter list scoped to this candidate for pledges and agents.</p>
     </div>
   `;
   const footer = document.createElement("div");
