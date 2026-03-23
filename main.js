@@ -328,6 +328,33 @@ window.appNotifications = {
   push: pushNotification,
 };
 
+/**
+ * Short-lived toast bottom-left (matches shell branding). Bell panel lists still use appNotifications.push.
+ */
+function showAppToast({ title, meta = "", durationMs = 6500, variant = "success" }) {
+  const region = document.getElementById("appToastRegion");
+  if (!region) return;
+  const toast = document.createElement("div");
+  toast.className = `app-toast app-toast--${variant}`;
+  toast.setAttribute("role", "status");
+  const tEl = document.createElement("div");
+  tEl.className = "app-toast__title";
+  tEl.textContent = title || "";
+  const mEl = document.createElement("div");
+  mEl.className = "app-toast__meta";
+  mEl.textContent = meta || "";
+  toast.appendChild(tEl);
+  toast.appendChild(mEl);
+  region.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("app-toast--visible"));
+  window.setTimeout(() => {
+    toast.classList.remove("app-toast--visible");
+    window.setTimeout(() => toast.remove(), 280);
+  }, durationMs);
+}
+
+window.showAppToast = showAppToast;
+
 function toggleUserMenu() {
   if (!userMenu || !userProfileToggle) return;
   const isOpen = userMenu.classList.toggle("user-menu--open");

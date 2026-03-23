@@ -9,6 +9,59 @@ import {
   parseViewerFromStorage,
 } from "./agents-context.js";
 
+/**
+ * Resolve Firebase API for agent save — never rejects on timeout (local save must still run).
+ */
+async function getFirebaseApiForAgentSave(timeoutMs = 20000) {
+  try {
+    const api = await Promise.race([
+      firebaseInitPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+    if (api && typeof api === "object" && api.ready !== undefined) return api;
+  } catch (_) {
+    /* init rejected */
+  }
+  return { ready: false, setAgentFs: null, getAllAgentsFs: null };
+}
+
+/**
+ * Snapshot replaces in-memory agents; rows only on disk (failed Firestore write) would vanish.
+ * Keep agents marked __localPendingSync until the server includes the same id.
+ */
+function mergeAgentsSnapshotWithLocal(serverItems, previousAgents) {
+  const byId = new Map();
+  const serverArr = Array.isArray(serverItems) ? serverItems : [];
+  serverArr.forEach((a) => {
+    if (a && a.id != null) {
+      const clean = { ...a };
+      delete clean.__localPendingSync;
+      byId.set(String(a.id), clean);
+    }
+  });
+  const prevArr = Array.isArray(previousAgents) ? previousAgents : [];
+  prevArr.forEach((a) => {
+    if (!a || a.id == null) return;
+    const id = String(a.id);
+    if (a.__localPendingSync && !byId.has(id)) {
+      byId.set(id, { ...a });
+    }
+  });
+  return Array.from(byId.values());
+}
+
+/** Last-write-wins by agent id — prevents duplicate rows if save ran twice with same id. */
+function dedupeAgentsById(list) {
+  const byId = new Map();
+  (Array.isArray(list) ? list : []).forEach((a) => {
+    if (a && a.id != null) {
+      const id = String(a.id);
+      if (!byId.has(id)) byId.set(id, a);
+    }
+  });
+  return Array.from(byId.values());
+}
+
 const PAGE_SIZE = 15;
 const MAX_VOTER_ROWS = 20000;
 const MAX_VOTERS_FILE_BYTES = 15 * 1024 * 1024; // ~15MB safety cap
@@ -158,11 +211,72 @@ export function getCandidates() {
   return candidates.slice(0, MAX_CANDIDATES);
 }
 
+/**
+ * Load candidates before building Create/Edit Agent "Candidate scope" for admins.
+ * In-memory `candidates` can still be [] if the user opens the modal before
+ * initSettingsModule's async Firestore fetch completes.
+ */
+async function ensureCandidatesLoadedForAgentModal() {
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.getAllCandidatesFs) {
+      const items = await api.getAllCandidatesFs();
+      if (Array.isArray(items)) {
+        candidates = items;
+        saveCandidatesToStorage();
+        try {
+          renderCandidatesTable();
+        } catch (_) {}
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("[Agents] Could not load candidates for agent modal", err);
+  }
+  loadCandidatesFromStorage();
+  try {
+    renderCandidatesTable();
+  } catch (_) {}
+}
+
+/**
+ * After the modal is open, refill "Candidate scope" from Firestore so the list is never empty
+ * just because the user opened Create agent before the initial sync finished.
+ */
+async function refreshAgentModalCandidateScopeOptions(modalBodyRoot, existing) {
+  try {
+    await ensureCandidatesLoadedForAgentModal();
+    const sel =
+      (modalBodyRoot && modalBodyRoot.querySelector("#agentModalCandidateId")) ||
+      document.getElementById("agentModalCandidateId");
+    if (!sel || sel.tagName !== "SELECT" || sel.disabled) return;
+    const preserve = String(sel.value || "").trim();
+    const candList = getCandidates();
+    sel.innerHTML = `
+      <option value="">All campaigns (visible to staff &amp; all candidates)</option>
+      ${candList
+        .map(
+          (c) =>
+            `<option value="${escapeHtml(String(c.id))}"${
+              String(existing?.candidateId || "") === String(c.id) ? " selected" : ""
+            }>${escapeHtml(c.name || String(c.id))}</option>`
+        )
+        .join("")}
+    `;
+    if (preserve && [...sel.options].some((o) => o.value === preserve)) {
+      sel.value = preserve;
+    }
+  } catch (err) {
+    console.warn("[Agents] candidate scope options refresh failed", err);
+  }
+}
+
 let agents = [];
 let campaignUsers = [];
 let unsubscribeAgentsFs = null;
 
 function renderCandidatesTable() {
+  if (!candidatesTableBody) return;
   candidatesTableBody.innerHTML = "";
   const total = candidates.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -287,26 +401,21 @@ function normalizeAgentNationalId(s) {
   return String(s || "").trim().replace(/\s+/g, "");
 }
 
-function normalizeAgentName(s) {
-  return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function normalizeAgentCandidateScope(c) {
   if (c == null || c === "") return "";
   return String(c).trim();
 }
 
-/** Returns existing agent row if same name or national ID exists in this scope. */
-function getDuplicateAgentInScope({ name, nationalId, candidateId, excludeAgentId }) {
+/** Returns existing agent row if the same national ID (ID number) exists in this candidate scope. Name is not used for duplicate detection. */
+function getDuplicateAgentInScope({ nationalId, candidateId, excludeAgentId }) {
   const nid = normalizeAgentNationalId(nationalId);
-  const nameKey = normalizeAgentName(name);
+  if (!nid) return null;
   const scope = normalizeAgentCandidateScope(candidateId);
   return (
     agents.find((a) => {
       if (excludeAgentId != null && String(a.id) === String(excludeAgentId)) return false;
-      const sameNid = nid && normalizeAgentNationalId(a.nationalId) === nid;
-      const sameName = nameKey && normalizeAgentName(a.name) === nameKey;
-      if (!sameNid && !sameName) return false;
+      const aNid = normalizeAgentNationalId(a.nationalId);
+      if (!aNid || aNid !== nid) return false;
       return normalizeAgentCandidateScope(a.candidateId) === scope;
     }) || null
   );
@@ -536,7 +645,7 @@ function initAgentsToolbarListeners() {
  * @param {object | null} existing
  * @param {{ lockCandidateId?: string | null }} [options]
  */
-export function openAgentModal(existing = null, options = {}) {
+function openAgentModalCore(existing = null, options = {}) {
   const opts = options || {};
   const lockCandidateId =
     opts.lockCandidateId != null && String(opts.lockCandidateId).trim() !== ""
@@ -548,10 +657,14 @@ export function openAgentModal(existing = null, options = {}) {
   const isEdit = !!(existing && existing.id != null);
   const votersList = getVotersForAgentModalSearch();
   const islands = getIslandsFromVotersStorage();
+
+  // Never block opening the modal on Firestore — await was preventing openModal() from running
+  // when the network was slow or init hadn’t finished. Cache first, then refresh options async.
+  loadCandidatesFromStorage();
   const candList = getCandidates();
 
   const body = document.createElement("div");
-  body.className = "form-grid";
+  body.className = "form-grid form-grid--agent-modal";
 
   const candidateFieldHtml = effectiveLockCandidate
     ? `
@@ -744,6 +857,10 @@ export function openAgentModal(existing = null, options = {}) {
     return matches.length === 1 ? matches[0] : null;
   }
 
+  function hideAgentModalVoterSearchMenu() {
+    if (searchMenu) searchMenu.style.display = "none";
+  }
+
   function applyVoterMatch(voter) {
     if (!voter) return;
     const nameEl = body.querySelector("#agentModalName");
@@ -763,6 +880,8 @@ export function openAgentModal(existing = null, options = {}) {
       islandSelect.value = isl;
     }
     updateAgentModalVoterPreview(voter);
+    // Close dropdown so its overlay (z-index) does not block Candidate scope / other fields below.
+    hideAgentModalVoterSearchMenu();
   }
 
   function clearAgentModalVoterPreviewOnly() {
@@ -834,7 +953,6 @@ export function openAgentModal(existing = null, options = {}) {
     if (!voter) return;
     searchInput.value = `${(voter.fullName || "").trim()} | ${(voter.nationalId || voter.id || "").trim()}`;
     applyVoterMatch(voter);
-    searchMenu.style.display = "none";
   });
   body.querySelector("#agentModalVoterPicker")?.addEventListener("focusout", () => {
     window.setTimeout(() => {
@@ -882,6 +1000,13 @@ export function openAgentModal(existing = null, options = {}) {
   footer.appendChild(saveBtn);
 
   saveBtn.addEventListener("click", () => {
+    if (saveBtn.disabled) return;
+
+    const labelDefault = isEdit ? "Update agent" : "Create agent";
+    const labelBusy = isEdit ? "Saving…" : "Creating…";
+    saveBtn.disabled = true;
+    saveBtn.setAttribute("aria-busy", "true");
+
     const name = (body.querySelector("#agentModalName")?.value || "").trim();
     const nationalId = (body.querySelector("#agentModalNationalId")?.value || "").trim();
     const phone = (body.querySelector("#agentModalPhone")?.value || "").trim();
@@ -893,7 +1018,15 @@ export function openAgentModal(existing = null, options = {}) {
       else candidateId = (candEl.value || "").trim();
     }
 
+    function resetSaveButton() {
+      if (!saveBtn.isConnected) return;
+      saveBtn.disabled = false;
+      saveBtn.removeAttribute("aria-busy");
+      saveBtn.textContent = labelDefault;
+    }
+
     if (!isProperAgentFullName(name)) {
+      resetSaveButton();
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Invalid name",
@@ -903,6 +1036,7 @@ export function openAgentModal(existing = null, options = {}) {
       return;
     }
     if (!nationalId || !phone) {
+      resetSaveButton();
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Missing fields",
@@ -912,30 +1046,58 @@ export function openAgentModal(existing = null, options = {}) {
       return;
     }
 
-    const scopeForDup = (candidateId || "").trim();
-    const existingDup = getDuplicateAgentInScope({
-      name,
-      nationalId,
-      candidateId: scopeForDup || null,
-      excludeAgentId: isEdit && existing?.id != null ? existing.id : null,
-    });
-    if (existingDup) {
-      const scopeLabel = scopeForDup
-        ? candidateLabelById(scopeForDup)
-        : "All campaigns (unscoped)";
-      const existingLabel = (existingDup.name || "").trim() || "this agent";
-      if (window.appNotifications) {
-        window.appNotifications.push({
-          title: "Agent already exists",
-          meta: `An agent with the same name or national ID is already registered for ${scopeLabel}. Existing: ${existingLabel} (agent ID ${existingDup.id}). Remove or edit that record instead of adding again.`,
-        });
-      }
-      return;
-    }
+    saveBtn.textContent = labelBusy;
 
     (async () => {
+      if (saveBtn._agentSaveInFlight) return;
+      saveBtn._agentSaveInFlight = true;
+      let closedOnSuccess = false;
       try {
-        const api = await firebaseInitPromise;
+        const api = await getFirebaseApiForAgentSave();
+
+        // Merge latest Firestore agents before duplicate check and before assigning a new id.
+        // If the user opens Create before the first snapshot/load finishes, `agents` can be
+        // empty while the server already has agents/1, agents/2, … — reusing id 1 would
+        // overwrite the wrong document.
+        if (api.ready && api.getAllAgentsFs) {
+          try {
+            const fresh = await api.getAllAgentsFs();
+            if (Array.isArray(fresh)) {
+              const byId = new Map();
+              agents.forEach((a) => {
+                if (a && a.id != null) byId.set(String(a.id), a);
+              });
+              fresh.forEach((a) => {
+                if (a && a.id != null) byId.set(String(a.id), a);
+              });
+              agents = Array.from(byId.values());
+            }
+          } catch (_) {
+            /* offline / transient — continue with local agents */
+          }
+        }
+
+        const scopeForDup = (candidateId || "").trim();
+        const existingDup = getDuplicateAgentInScope({
+          nationalId,
+          candidateId: scopeForDup || null,
+          excludeAgentId: isEdit && existing?.id != null ? existing.id : null,
+        });
+        if (existingDup) {
+          resetSaveButton();
+          const scopeLabel = scopeForDup
+            ? candidateLabelById(scopeForDup)
+            : "All campaigns (unscoped)";
+          const existingLabel = (existingDup.name || "").trim() || "this agent";
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "National ID already registered",
+              meta: `National ID ${nationalId} is already used for an agent in ${scopeLabel}. Existing: ${existingLabel} (agent ID ${existingDup.id}). Remove or edit that record instead of adding again.`,
+            });
+          }
+          return;
+        }
+
         let savedToFirestore = false;
         const nextId =
           agents.length && agents.every((a) => a.id != null)
@@ -953,10 +1115,20 @@ export function openAgentModal(existing = null, options = {}) {
         else agent.candidateId = null;
 
         if (api.ready && api.setAgentFs) {
-          await api.setAgentFs(agent);
-          savedToFirestore = true;
+          try {
+            const forFs = { ...agent };
+            delete forFs.__localPendingSync;
+            await api.setAgentFs(forFs);
+            savedToFirestore = true;
+          } catch (fsErr) {
+            console.warn("[Agents] Firestore write failed; row kept locally until sync succeeds", fsErr);
+            agent.__localPendingSync = true;
+            savedToFirestore = false;
+          }
+        } else {
+          agent.__localPendingSync = true;
         }
-        // Always reflect successful create/update in local UI immediately.
+        // Always reflect create/update in local UI (even if Firestore write failed, above).
         if (isEdit) {
           const ix = agents.findIndex((a) => String(a.id) === idStr);
           if (ix >= 0) agents[ix] = agent;
@@ -964,34 +1136,79 @@ export function openAgentModal(existing = null, options = {}) {
         } else {
           agents.push(agent);
         }
+        agents = dedupeAgentsById(agents);
         saveAgentsToStorage();
-        renderAgentsTable();
+        // Close modal immediately after persistence — render/toast/notifications can throw; closing must not be skipped.
+        closeModal();
+        closedOnSuccess = true;
+        const searchEl = document.getElementById("settingsAgentsSearch");
+        if (searchEl) searchEl.value = "";
+        try {
+          renderAgentsTable();
+        } catch (renderErr) {
+          console.error("[Agents] renderAgentsTable after save", renderErr);
+        }
         try {
           window.agentsCached = [...agents];
         } catch (_) {}
-        document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
-        closeModal();
-        if (window.appNotifications) {
-          window.appNotifications.push({
-            title: savedToFirestore
-              ? isEdit
-                ? "Agent updated"
-                : "Agent created"
-              : isEdit
-                ? "Agent updated (local only)"
-                : "Agent created (local only)",
-            meta: savedToFirestore
-              ? name
-              : `${name} — Firebase sync unavailable. Check connection/permissions.`,
-          });
+        try {
+          document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
+        } catch (evErr) {
+          console.warn("[Agents] agents-updated dispatch", evErr);
+        }
+        const successMsg = isEdit
+          ? `Updated agent "${name}" (National ID: ${nationalId}, agent ID: ${idStr})`
+          : `Created agent "${name}" (National ID: ${nationalId}, agent ID: ${idStr})`;
+        console.log(`[Agents] ${successMsg}${savedToFirestore ? "" : " — saved locally only"}`);
+        try {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: savedToFirestore
+                ? isEdit
+                  ? "Agent updated successfully"
+                  : "Agent created successfully"
+                : isEdit
+                  ? "Agent updated (local only)"
+                  : "Agent created (local only)",
+              meta: savedToFirestore
+                ? `${name} — National ID: ${nationalId}. Agent ID: ${idStr}.`
+                : `${name} — National ID: ${nationalId}. ${isEdit ? "Updated" : "Saved"} locally until Firebase sync works (check connection/permissions).`,
+            });
+          }
+          if (typeof window.showAppToast === "function") {
+            window.showAppToast({
+              title: savedToFirestore
+                ? isEdit
+                  ? "Agent updated successfully"
+                  : "Agent created successfully"
+                : isEdit
+                  ? "Agent updated (saved locally)"
+                  : "Agent created (saved locally)",
+              meta: savedToFirestore
+                ? `${name} — National ID: ${nationalId} — Agent ID ${idStr}`
+                : `${name} — National ID: ${nationalId}. Cloud sync unavailable; saved on this device only.`,
+            });
+          }
+        } catch (uiErr) {
+          console.warn("[Agents] notification/toast after save", uiErr);
         }
       } catch (err) {
+        const code = err && err.code;
+        let meta = err?.message || String(err);
+        if (code === "permission-denied") {
+          meta =
+            "Firestore denied this write. Sign in, deploy firestore.rules, and check your connection.";
+        }
+        console.error("[Agents] save failed", code, err);
         if (window.appNotifications) {
           window.appNotifications.push({
             title: "Could not save agent",
-            meta: err?.message || String(err),
+            meta,
           });
         }
+      } finally {
+        saveBtn._agentSaveInFlight = false;
+        if (!closedOnSuccess) resetSaveButton();
       }
     })();
   });
@@ -1000,8 +1217,39 @@ export function openAgentModal(existing = null, options = {}) {
     title: isEdit ? "Update agent" : "Create agent",
     body,
     footer,
+    dialogClass: "modal--wide",
   });
+
+  if (viewer.isAdmin && !effectiveLockCandidate) {
+    void refreshAgentModalCandidateScopeOptions(body, existing);
+  }
 }
+
+export function openAgentModal(existing = null, options = {}) {
+  try {
+    openAgentModalCore(existing, options);
+  } catch (err) {
+    console.error("[Agents] openAgentModal failed", err);
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Could not open agent form",
+        meta: err?.message || String(err),
+      });
+    }
+  }
+}
+
+/**
+ * Inline onclick from index.html — registered as soon as the module defines openAgentModal
+ * (not at file end, so a later init error cannot leave this unset).
+ */
+window.__openCampaignAgentModal = function __openCampaignAgentModal(ev) {
+  if (ev && typeof ev.preventDefault === "function") {
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+  openAgentModal(null, {});
+};
 
 /** Read-only details (R in CRUD). */
 function openAgentViewModal(agent) {
@@ -1013,7 +1261,7 @@ function openAgentViewModal(agent) {
   const scopeLabel = cid ? candidateLabelById(cid) : "All campaigns (visible to staff & all candidates)";
 
   const body = document.createElement("div");
-  body.className = "form-grid agent-view-readonly";
+  body.className = "form-grid form-grid--agent-modal agent-view-readonly";
   body.innerHTML = `
     <div class="form-group">
       <div class="detail-item-label">Agent ID</div>
@@ -1067,7 +1315,7 @@ function openAgentViewModal(agent) {
     footer.appendChild(editBtn);
   }
 
-  openModal({ title: "View agent", body, footer });
+  openModal({ title: "View agent", body, footer, dialogClass: "modal--wide" });
 }
 
 /** Read-only assigned voters list for an agent (global + per-candidate assignments). */
@@ -2072,11 +2320,6 @@ function initCampaignTab() {
 function initAgentsTab() {
   loadAgentsFromStorage();
 
-  const addBtn = document.getElementById("settingsAgentAddButton");
-  if (addBtn) {
-    addBtn.addEventListener("click", () => openAgentModal(null, {}));
-  }
-
   initAgentsToolbarListeners();
   renderAgentsTable();
 }
@@ -2412,7 +2655,7 @@ export function initSettingsModule() {
       if (api.ready && api.getAllAgentsFs && api.onAgentsSnapshotFs) {
         const initial = await api.getAllAgentsFs();
         if (Array.isArray(initial)) {
-          agents = initial;
+          agents = mergeAgentsSnapshotWithLocal(initial, agents.slice());
           saveAgentsToStorage();
           renderAgentsTable();
           try {
@@ -2430,7 +2673,7 @@ export function initSettingsModule() {
 
         unsubscribeAgentsFs = api.onAgentsSnapshotFs((items) => {
           if (!Array.isArray(items)) return;
-          agents = items;
+          agents = mergeAgentsSnapshotWithLocal(items, agents);
           saveAgentsToStorage();
           renderAgentsTable();
           try {
@@ -2453,19 +2696,23 @@ export function initSettingsModule() {
     }
   })();
 
-  addCandidateButton.addEventListener("click", () => {
-    openCandidateForm(null);
-  });
+  if (addCandidateButton) {
+    addCandidateButton.addEventListener("click", () => {
+      openCandidateForm(null);
+    });
+  }
 
-  candidatesTableBody.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-edit-candidate]");
-    if (!btn) return;
-    const id = Number(btn.getAttribute("data-edit-candidate"));
-    const existing = candidates.find((c) => c.id === id);
-    if (existing) {
-      openCandidateForm(existing);
-    }
-  });
+  if (candidatesTableBody) {
+    candidatesTableBody.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-edit-candidate]");
+      if (!btn) return;
+      const id = Number(btn.getAttribute("data-edit-candidate"));
+      const existing = candidates.find((c) => c.id === id);
+      if (existing) {
+        openCandidateForm(existing);
+      }
+    });
+  }
 
   if (votersUploadFileInput) {
     votersUploadFileInput.addEventListener("change", () => {

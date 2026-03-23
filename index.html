@@ -1444,7 +1444,14 @@
                   <div class="card-body">
                     <p class="helper-text" style="margin-bottom: 12px;"><strong>CRUD:</strong> <strong>C</strong>reate (button below), <strong>R</strong>ead (View on each row), <strong>U</strong>pdate (Edit), <strong>D</strong>elete (Delete). Use voter lookup and title-case full names; admins may scope an agent to one candidate.</p>
                     <div class="form-actions" style="margin-top: 0;">
-                      <button type="button" class="primary-button" id="settingsAgentAddButton">Create agent</button>
+                      <button
+                        type="button"
+                        class="primary-button"
+                        id="settingsAgentAddButton"
+                        onclick="window.__openCampaignAgentModal&amp;&amp;window.__openCampaignAgentModal(event)"
+                      >
+                        Create agent
+                      </button>
                     </div>
 
                     <div class="voters-toolbar list-toolbar settings-agents-toolbar" style="margin-top: 16px;">
@@ -1588,6 +1595,9 @@
       </footer>
     </div>
   </div>
+
+  <!-- Ephemeral toasts (bottom-left, branded) — see showAppToast in main.js -->
+  <div id="appToastRegion" class="app-toast-region" aria-live="polite" aria-atomic="true"></div>
 
   <script type="module" src="main.js"></script>
 </body>

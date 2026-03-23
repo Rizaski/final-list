@@ -4,14 +4,33 @@ const modalBody = document.getElementById("modalBody");
 const modalFooter = document.getElementById("modalFooter");
 const modalCloseButton = document.getElementById("modalCloseButton");
 
-export function openModal({ title, body, footer, startMaximized }) {
+/** Cleared on each open so the previous dialog’s width variant does not stick. */
+const MODAL_VARIANT_CLASSES = ["modal--wide"];
+
+export function openModal({ title, body, footer, startMaximized, dialogClass }) {
+  if (!modalBackdrop || !modalTitle || !modalBody || !modalFooter) {
+    console.error("[Modal] Missing modal DOM nodes (modalBackdrop / modalTitle / modalBody / modalFooter).");
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Dialog unavailable",
+        meta: "Reload the page. If this persists, the layout may be incomplete.",
+      });
+    }
+    return;
+  }
   modalTitle.textContent = title || "";
   modalBody.innerHTML = "";
   modalFooter.innerHTML = "";
-  const modalDialog = modalBackdrop ? modalBackdrop.querySelector(".modal") : null;
+  const modalDialog = modalBackdrop.querySelector(".modal");
   if (modalDialog) {
-    modalDialog.classList.remove("modal--maximized");
+    modalDialog.classList.remove("modal--maximized", ...MODAL_VARIANT_CLASSES);
     if (startMaximized) modalDialog.classList.add("modal--maximized");
+    if (dialogClass && typeof dialogClass === "string") {
+      dialogClass
+        .split(/\s+/)
+        .filter(Boolean)
+        .forEach((c) => modalDialog.classList.add(c));
+    }
   }
   const maxBtn = document.getElementById("modalMaximizeButton");
   if (maxBtn) {
@@ -44,7 +63,7 @@ function toggleModalMaximized() {
 }
 
 export function closeModal() {
-  modalBackdrop.hidden = true;
+  if (modalBackdrop) modalBackdrop.hidden = true;
 }
 
 /**
@@ -124,7 +143,7 @@ if (modalBackdrop) {
 
 // Close modal with Escape key as an additional safety
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !modalBackdrop.hidden) {
+  if (e.key === "Escape" && modalBackdrop && !modalBackdrop.hidden) {
     closeModal();
   }
 });

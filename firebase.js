@@ -113,7 +113,12 @@ export const firebaseInitPromise = (async () => {
 
     try {
       const firestoreMod = await import(`${SDK_BASE}/firebase-firestore.js`);
-      db = firestoreMod.getFirestore(app);
+      // Prefer long-polling over WebChannel when QUIC/WebChannel fails (e.g. net::ERR_QUIC_PROTOCOL_ERROR,
+      // Listen 400) on some networks, VPNs, or proxies. Must use initializeFirestore (not getFirestore)
+      // so this runs before any Firestore use.
+      db = firestoreMod.initializeFirestore(app, {
+        experimentalForceLongPolling: true,
+      });
       /** Avoid "Uncaught Error in snapshot listener" when rules/auth deny; log once per path. */
       const onSnapshotSafe = (ref, onNext, label) =>
         firestoreMod.onSnapshot(ref, onNext, (err) => {
@@ -256,7 +261,11 @@ export const firebaseInitPromise = (async () => {
         const docId = String(agent.id).trim();
         const ref = firestoreMod.doc(db, AGENTS_COLLECTION, docId);
         // Do not store `id` in document body — only the path id is canonical (avoids mismatch with delete/read).
-        const { id: _drop, ...payload } = agent;
+        const { id: _drop, ...rest } = agent;
+        const payload = {};
+        for (const [key, value] of Object.entries(rest)) {
+          if (value !== undefined) payload[key] = value;
+        }
         await firestoreMod.setDoc(ref, payload, { merge: true });
       };
 
