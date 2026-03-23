@@ -860,17 +860,36 @@ function renderVoterDetails(voter) {
           if (p && typeof p === "object") assignedByVoterId = p;
         }
       } catch (_) {}
-      const assignedName = assignedByVoterId[String(voter.id)] || "";
+      const rawMapValue = assignedByVoterId[String(voter.id)];
+      const mapAssignedName =
+        typeof rawMapValue === "string"
+          ? rawMapValue
+          : rawMapValue && typeof rawMapValue === "object"
+            ? String(rawMapValue.name || "")
+            : "";
+      const voterDocAssignedName =
+        voter?.candidateAgentAssignments &&
+        typeof voter.candidateAgentAssignments === "object"
+          ? String(voter.candidateAgentAssignments[String(candCtx.candidateId)] || "")
+          : "";
+      const assignedName = (mapAssignedName || voterDocAssignedName || "").trim();
+      const candidateAgents = getCandidateAssignableAgents(candCtx.candidateId);
       const agentOptions =
         '<option value="">Unassigned</option>' +
-        getCandidateAssignableAgents(candCtx.candidateId)
+        candidateAgents
           .map(
             (a) =>
               `<option value="${escapeHtml(a.name)}"${
                 a.name === assignedName ? " selected" : ""
               }>${escapeHtml(a.name)}</option>`
           )
-          .join("");
+          .join("") +
+        (assignedName &&
+        !candidateAgents.some(
+          (a) => String(a?.name || "").trim().toLowerCase() === assignedName.toLowerCase()
+        )
+          ? `<option value="${escapeHtml(assignedName)}" selected>${escapeHtml(assignedName)}</option>`
+          : "");
       return `
       <section class="voter-details-section voter-details-section--full voter-details-section--agent">
         <h3 class="voter-details-section__title">Assigned agent — All Campaign</h3>
