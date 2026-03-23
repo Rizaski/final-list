@@ -1148,9 +1148,15 @@ async function openAgentAssignedVotersModal(agent) {
 
   const body = document.createElement("div");
   body.className = "modal-body-inner";
+  function reportBallotBoxLabel(v) {
+    const box = String(v && v.ballotBox != null ? v.ballotBox : "").trim();
+    const loc = String(v && v.currentLocation != null ? v.currentLocation : "").trim();
+    if (box.toLowerCase() === "others" && loc) return `Others - ${loc}`;
+    return box || "—";
+  }
   const toolbar = document.createElement("div");
   toolbar.className = "modal-list-toolbar list-toolbar";
-  const boxes = [...new Set(assigned.map((x) => String(x.voter.ballotBox || "").trim()).filter(Boolean))].sort();
+  const boxes = [...new Set(assigned.map((x) => reportBallotBoxLabel(x.voter)).filter(Boolean))].sort();
   toolbar.innerHTML = `
     <div class="list-toolbar__search">
       <label for="agentAssignedSearch" class="sr-only">Search</label>
@@ -1198,6 +1204,7 @@ async function openAgentAssignedVotersModal(agent) {
   const tableWrap = document.createElement("div");
   tableWrap.className = "table-wrapper";
   body.appendChild(tableWrap);
+  let lastRenderedRows = [];
 
   function sortRows(list, sortBy) {
     const rows = [...list];
@@ -1242,7 +1249,7 @@ async function openAgentAssignedVotersModal(agent) {
     let list = assigned.filter((x) => {
       const v = x.voter || {};
       if (filterPledge !== "all" && String(v.pledgeStatus || "undecided") !== filterPledge) return false;
-      if (filterBox !== "all" && String(v.ballotBox || "").trim() !== filterBox) return false;
+      if (filterBox !== "all" && reportBallotBoxLabel(v) !== filterBox) return false;
       if (!q) return true;
       const hay = [
         v.fullName,
@@ -1250,7 +1257,7 @@ async function openAgentAssignedVotersModal(agent) {
         v.id,
         v.phone,
         v.permanentAddress,
-        v.ballotBox,
+        reportBallotBoxLabel(v),
         v.notes,
         v.callComments,
         x.assignmentScope,
@@ -1261,6 +1268,7 @@ async function openAgentAssignedVotersModal(agent) {
       return hay.includes(q);
     });
     list = sortRows(list, sortBy);
+    lastRenderedRows = list;
 
     if (!list.length) {
       tableWrap.innerHTML = `<p class="helper-text" style="padding: 12px 0;">No assigned voters match your filters.</p>`;
@@ -1290,7 +1298,7 @@ async function openAgentAssignedVotersModal(agent) {
             <td>${escapeHtml(v.nationalId || v.id || "—")}</td>
             <td>${escapeHtml(v.phone || "—")}</td>
             <td>${escapeHtml(v.permanentAddress || "—")}</td>
-            <td>${escapeHtml(v.ballotBox || "—")}</td>
+            <td>${escapeHtml(reportBallotBoxLabel(v))}</td>
             <td>${escapeHtml(v.pledgeStatus || "undecided")}</td>
             <td>${escapeHtml(v.supportStatus || "—")}</td>
             <td>${escapeHtml(v.metStatus || "—")}</td>
@@ -1330,6 +1338,208 @@ async function openAgentAssignedVotersModal(agent) {
     `;
   }
 
+  function csvEscape(val) {
+    const s = String(val == null ? "" : val);
+    if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function downloadAssignedVotersCsv() {
+    if (!lastRenderedRows.length) return;
+    const headers = [
+      "Seq",
+      "Name",
+      "ID Number",
+      "Phone",
+      "Permanent Address",
+      "Ballot box",
+      "Pledge",
+      "Support",
+      "Met",
+      "Persuadable",
+      "Date pledged",
+      "Voted at",
+      "Assigned in",
+      "Notes",
+    ];
+    const lines = [headers.map(csvEscape).join(",")];
+    lastRenderedRows.forEach((row) => {
+      const v = row.voter || {};
+      const cols = [
+        v.sequence != null ? String(v.sequence) : "",
+        v.fullName || "",
+        v.nationalId || v.id || "",
+        v.phone || "",
+        v.permanentAddress || "",
+        reportBallotBoxLabel(v),
+        v.pledgeStatus || "undecided",
+        v.supportStatus || "",
+        v.metStatus || "",
+        v.persuadable || "",
+        v.pledgedAt || "",
+        v.votedAt || "",
+        row.assignmentScope || "",
+        v.notes || v.callComments || "",
+      ];
+      lines.push(cols.map(csvEscape).join(","));
+    });
+    const csv = lines.join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const safeAgent = String(agent.name || "agent").trim().replace(/[^\w\-]+/g, "_");
+    a.download = `assigned-voters-${safeAgent}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function printAssignedVotersReport() {
+    if (!lastRenderedRows.length) return;
+    // Print is always ballot-box wise (box ASC, then sequence ASC, then name ASC).
+    const printRows = [...lastRenderedRows].sort((a, b) => {
+      const va = a.voter || {};
+      const vb = b.voter || {};
+      const boxA = reportBallotBoxLabel(va);
+      const boxB = reportBallotBoxLabel(vb);
+      const boxCmp = boxA.localeCompare(boxB, "en");
+      if (boxCmp !== 0) return boxCmp;
+      const sa = Number(va.sequence != null ? va.sequence : NaN);
+      const sb = Number(vb.sequence != null ? vb.sequence : NaN);
+      const aHas = Number.isFinite(sa);
+      const bHas = Number.isFinite(sb);
+      if (aHas && bHas && sa !== sb) return sa - sb;
+      if (aHas && !bHas) return -1;
+      if (!aHas && bHas) return 1;
+      return String(va.fullName || "").localeCompare(String(vb.fullName || ""), "en");
+    });
+    const rowsHtml = printRows
+      .map((row) => {
+        const v = row.voter || {};
+        return `
+          <tr>
+            <td>${escapeHtml(v.sequence != null ? String(v.sequence) : "")}</td>
+            <td>${escapeHtml(v.fullName || "")}</td>
+            <td>${escapeHtml(v.nationalId || v.id || "")}</td>
+            <td>${escapeHtml(v.phone || "")}</td>
+            <td>${escapeHtml(v.permanentAddress || "")}</td>
+            <td>${escapeHtml(reportBallotBoxLabel(v))}</td>
+            <td>${escapeHtml(v.pledgeStatus || "undecided")}</td>
+            <td>${escapeHtml(v.votedAt || "")}</td>
+            <td>${escapeHtml(row.assignmentScope || "")}</td>
+          </tr>
+        `;
+      })
+      .join("");
+    const w = window.open("about:blank", "_blank");
+    if (!w) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Popup blocked",
+          meta: "Allow popups for this site to open Print Preview.",
+        });
+      } else {
+        alert("Allow popups for this site to open Print Preview.");
+      }
+      return;
+    }
+    try {
+      w.opener = null;
+    } catch (_) {}
+    w.document.open();
+    w.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Assigned voters report</title>
+        <style>
+          :root { color-scheme: light; }
+          body { font-family: Arial, sans-serif; margin: 0; color: #111; background: #f5f7fb; }
+          .page { max-width: 1200px; margin: 20px auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.06); overflow: hidden; }
+          .report-head { padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+          .report-title { margin: 0; font-size: 20px; line-height: 1.2; }
+          .report-meta { margin: 4px 0 0; color: #4b5563; font-size: 13px; }
+          .report-actions { display: flex; gap: 8px; }
+          .btn { border: 1px solid #d1d5db; background: #fff; color: #111; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+          .btn--primary { border-color: #2563eb; background: #2563eb; color: #fff; }
+          .table-wrap { padding: 10px; overflow: auto; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; min-width: 980px; }
+          th, td {
+            border: 1px solid #e5e7eb;
+            padding: 4px 6px;
+            text-align: left;
+            vertical-align: top;
+            line-height: 1.2;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            hyphens: auto;
+          }
+          th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+          tbody tr:nth-child(odd) { background: #fcfcfd; }
+          .col-seq { width: 4%; }
+          .col-name { width: 15%; }
+          .col-id { width: 11%; }
+          .col-phone { width: 10%; }
+          .col-address { width: 24%; }
+          .col-box { width: 9%; }
+          .col-pledge { width: 6%; }
+          .col-voted { width: 10%; }
+          .col-scope { width: 11%; }
+          @media print {
+            @page { size: A4 landscape; margin: 9mm; }
+            body { background: #fff; }
+            .page { margin: 0; border: none; box-shadow: none; border-radius: 0; max-width: none; }
+            .report-actions { display: none !important; }
+            .table-wrap { padding: 0; overflow: visible; }
+            table { min-width: 0; width: 100%; font-size: 9.5px; table-layout: fixed; }
+            th, td { padding: 2px 4px; line-height: 1.15; }
+            th { position: static; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page">
+          <header class="report-head">
+            <div>
+              <h1 class="report-title">Assigned voters report</h1>
+              <p class="report-meta">Agent: ${escapeHtml(agent.name || "—")} | Total: ${printRows.length} | Sorted: Ballot box | Generated: ${escapeHtml(
+                new Date().toLocaleString("en-MV")
+              )}</p>
+            </div>
+            <div class="report-actions">
+              <button type="button" class="btn" onclick="window.close()">Close</button>
+              <button type="button" class="btn btn--primary" onclick="window.print()">Print</button>
+            </div>
+          </header>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="col-seq">Seq</th>
+                  <th class="col-name">Name</th>
+                  <th class="col-id">ID Number</th>
+                  <th class="col-phone">Phone</th>
+                  <th class="col-address">Permanent Address</th>
+                  <th class="col-box">Ballot box</th>
+                  <th class="col-pledge">Pledge</th>
+                  <th class="col-voted">Voted at</th>
+                  <th class="col-scope">Assigned in</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    w.document.close();
+    w.focus();
+  }
+
   body.querySelector("#agentAssignedSearch")?.addEventListener("input", render);
   body.querySelector("#agentAssignedFilterPledge")?.addEventListener("change", render);
   body.querySelector("#agentAssignedFilterBox")?.addEventListener("change", render);
@@ -1338,13 +1548,26 @@ async function openAgentAssignedVotersModal(agent) {
 
   const footer = document.createElement("div");
   footer.style.display = "flex";
+  footer.style.flexWrap = "wrap";
   footer.style.gap = "8px";
   footer.style.justifyContent = "flex-end";
+  const downloadBtn = document.createElement("button");
+  downloadBtn.type = "button";
+  downloadBtn.className = "ghost-button";
+  downloadBtn.textContent = "Download CSV";
+  downloadBtn.addEventListener("click", downloadAssignedVotersCsv);
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "ghost-button";
+  printBtn.textContent = "Print";
+  printBtn.addEventListener("click", printAssignedVotersReport);
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "ghost-button";
   closeBtn.textContent = "Close";
   closeBtn.addEventListener("click", () => closeModal());
+  footer.appendChild(downloadBtn);
+  footer.appendChild(printBtn);
   footer.appendChild(closeBtn);
 
   openModal({ title: "Assigned voters", body, footer });
