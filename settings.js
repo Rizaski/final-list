@@ -1017,6 +1017,11 @@ function openAgentModalCore(existing = null, options = {}) {
       if (candEl.tagName === "SELECT") candidateId = (candEl.value || "").trim();
       else candidateId = (candEl.value || "").trim();
     }
+    // Candidate login / door-knock flows pass lockCandidateId — always persist that scope even if
+    // the hidden input was cleared or not yet in the DOM (avoids unscoped saves + wrong duplicate checks).
+    if (effectiveLockCandidate) {
+      candidateId = String(effectiveLockCandidate).trim();
+    }
 
     function resetSaveButton() {
       if (!saveBtn.isConnected) return;
