@@ -65,6 +65,7 @@ function renderRows() {
       if (!row || !api?.setEventParticipantRowFs) return;
       row[field] = input.value || "";
       await api.setEventParticipantRowFs(token, rowId, {
+        ...row,
         name: row.name || "",
         nationalId: row.nationalId || "",
         phone: row.phone || "",
@@ -94,7 +95,23 @@ async function refreshFromServer() {
 async function addRow() {
   if (!api?.setEventParticipantRowFs) return;
   const rowId = "p-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
-  const row = { id: rowId, name: "", nationalId: "", phone: "", address: "", notes: "" };
+  const row = {
+    id: rowId,
+    sourceVoterId: "",
+    sequence: "",
+    photoUrl: "",
+    name: "",
+    nationalId: "",
+    phone: "",
+    address: "",
+    currentLocation: "",
+    ballotBox: "",
+    island: "",
+    pledgeStatus: "undecided",
+    supportStatus: "unknown",
+    votedAt: "",
+    notes: "",
+  };
   rows.push(row);
   renderRows();
   await api.setEventParticipantRowFs(token, rowId, row);

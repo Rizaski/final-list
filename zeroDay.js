@@ -1796,17 +1796,28 @@ function renderZeroDayVoteTable() {
     pageBoxes.forEach((box) => {
       const card = document.createElement("div");
       card.className = "vote-box-card";
+      const boxKey = (box.box || "").trim();
+      const boxVoters = votersContext
+        ? votersContext
+            .getAllVoters()
+            .filter((v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey)
+        : [];
       const percentage =
         box.total === 0 ? 0 : Math.round((box.voted / box.total) * 100);
       const notYet = Math.max(0, box.total - box.voted);
       const votedPct = box.total === 0 ? 0 : (box.voted / box.total) * 100;
+      const pledgeYes = boxVoters.filter((v) => (v.pledgeStatus || "undecided") === "yes").length;
+      const pledgeNo = boxVoters.filter((v) => (v.pledgeStatus || "undecided") === "no").length;
+      const pledgeUndecided = Math.max(0, box.total - pledgeYes - pledgeNo);
+      const pledgeYesPct = box.total === 0 ? 0 : (pledgeYes / box.total) * 100;
+      const pledgeNoPct = box.total === 0 ? 0 : (pledgeNo / box.total) * 100;
+      const pledgeUndecidedPct = Math.max(0, 100 - pledgeYesPct - pledgeNoPct);
       const badgeClass =
         percentage >= 100
           ? "vote-box-card__badge--full"
           : percentage > 0
             ? "vote-box-card__badge--partial"
             : "vote-box-card__badge--none";
-      const boxKey = (box.box || "").trim();
       const monitorForBox = zeroDayMonitors.find((m) => (m.ballotBox || "").trim() === boxKey);
       const mid = monitorForBox ? String(monitorForBox.id) : "";
       const codeDisplay = monitorForBox ? getMonitorShareUrls(monitorForBox).accessCode : "";
@@ -1836,10 +1847,25 @@ function renderZeroDayVoteTable() {
           <span class="vote-box-card__progress-seg vote-box-card__progress-seg--voted" style="width:${votedPct}%"></span>
           <span class="vote-box-card__progress-seg vote-box-card__progress-seg--not-yet" style="width:${100 - votedPct}%"></span>
         </div>
+        <div class="vote-box-card__legend">
+          <span class="vote-box-card__legend-item"><i class="vote-box-card__dot vote-box-card__dot--voted"></i>Turnout</span>
+          <span class="vote-box-card__legend-item"><i class="vote-box-card__dot vote-box-card__dot--not-yet"></i>Not yet</span>
+        </div>
         <div class="vote-box-card__stats">
           <span><strong>Total:</strong> ${box.total}</span>
           <span><strong>Voted:</strong> ${box.voted}</span>
           <span><strong>Not yet:</strong> ${notYet}</span>
+        </div>
+        <div class="vote-box-card__subhead">Pledge graph</div>
+        <div class="vote-box-card__progress vote-box-card__progress--pledge" role="img" aria-label="Pledge distribution: Yes ${pledgeYes}, No ${pledgeNo}, Undecided ${pledgeUndecided}">
+          <span class="vote-box-card__progress-seg vote-box-card__progress-seg--pledge-yes" style="width:${pledgeYesPct}%"></span>
+          <span class="vote-box-card__progress-seg vote-box-card__progress-seg--pledge-no" style="width:${pledgeNoPct}%"></span>
+          <span class="vote-box-card__progress-seg vote-box-card__progress-seg--pledge-undecided" style="width:${pledgeUndecidedPct}%"></span>
+        </div>
+        <div class="vote-box-card__stats vote-box-card__stats--compact">
+          <span><strong>Yes:</strong> ${pledgeYes}</span>
+          <span><strong>No:</strong> ${pledgeNo}</span>
+          <span><strong>Undecided:</strong> ${pledgeUndecided}</span>
         </div>
         <div class="vote-box-card__actions">
           <button type="button" class="ghost-button ghost-button--small" data-view-voted="${escapeHtml(
@@ -1848,12 +1874,6 @@ function renderZeroDayVoteTable() {
           <button type="button" class="ghost-button ghost-button--small" data-view-not-yet="${escapeHtml(
             box.box
           )}">View not yet</button>
-          <button type="button" class="ghost-button ghost-button--small" data-open-box="${escapeHtml(
-            box.box
-          )}">Open list</button>
-          <button type="button" class="ghost-button ghost-button--small" data-share-box="${escapeHtml(
-            box.box
-          )}">Share monitor link</button>
         </div>
       `;
       zeroDayVoteCardsContainer.appendChild(card);
@@ -2206,8 +2226,6 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       const copyLinkBtn = e.target.closest("[data-copy-monitor-link], [data-copy-monitor-link-for-box]");
       const viewVotedBtn = e.target.closest("[data-view-voted]");
       const viewNotYetBtn = e.target.closest("[data-view-not-yet]");
-      const openBtn = e.target.closest("[data-open-box]");
-      const shareBtn = e.target.closest("[data-share-box]");
 
       if (copyCodeBtn) {
         const idAttr = copyCodeBtn.getAttribute("data-copy-monitor-code");
@@ -2240,23 +2258,6 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         const box = viewNotYetBtn.getAttribute("data-view-not-yet");
         if (box) openBoxVoterListModal(box, "not-yet");
         return;
-      }
-      if (openBtn) {
-        const box = openBtn.getAttribute("data-open-box");
-        if (box && votersContext) {
-          const monitor = getOrEnsureMonitorForBallotBox(box);
-          const path = window.location.pathname || "/";
-          const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
-          const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
-          const url = `${ballotBoxUrl}?monitor=${encodeURIComponent(monitor.shareToken)}`;
-          window.open(url, "_blank", "noopener,noreferrer");
-          if (typeof window.showToast === "function") {
-            window.showToast("List opened in new tab. Share that tab’s URL to view from another browser.");
-          }
-        }
-      } else if (shareBtn) {
-        const box = shareBtn.getAttribute("data-share-box");
-        if (box) ensureMonitorForBallotBox(box);
       }
     });
   }

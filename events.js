@@ -137,12 +137,20 @@ async function openEventParticipantsModal(event) {
     }
     return;
   }
+  if (api.setEventParticipantShareFs) {
+    try {
+      await api.setEventParticipantShareFs(token, {
+        token,
+        eventId: String(event.id),
+        eventName: event.name || "Event participants",
+      });
+    } catch (_) {}
+  }
 
   const title = `Participants – ${event.name || "Event"}`;
   const body = document.createElement("div");
   body.className = "modal-body-inner";
   const shareUrl = buildEventParticipantsShareUrl(token);
-  const pickerId = `eventParticipantPicker_${String(event.id)}`;
   const voters = getVotersForEventParticipantPicker();
 
   body.innerHTML = `
@@ -174,6 +182,7 @@ async function openEventParticipantsModal(event) {
             <option value="name-asc">Name A-Z</option>
             <option value="name-desc">Name Z-A</option>
             <option value="id">ID Number</option>
+            <option value="support">Support</option>
             <option value="box">Ballot box</option>
             <option value="island">Island</option>
             <option value="pledge">Pledge</option>
@@ -196,22 +205,12 @@ async function openEventParticipantsModal(event) {
     <div class="form-group" style="margin-bottom:8px;">
       <label for="eventParticipantFromVoter">Add from voters</label>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <input type="text" id="eventParticipantFromVoter" class="input" list="${pickerId}" placeholder="Type name or ID and pick a voter…">
+        <div class="event-participant-picker" id="eventParticipantPicker">
+          <input type="text" id="eventParticipantFromVoter" class="input event-participant-picker__input" placeholder="Type name, ID, phone or address…">
+          <div class="event-participant-picker__menu" id="eventParticipantPickerMenu" role="listbox" aria-label="Voter search results"></div>
+        </div>
         <button type="button" class="ghost-button ghost-button--small" id="eventParticipantsAddFromVoterBtn">Add from voter</button>
       </div>
-      <datalist id="${pickerId}">
-        ${voters
-          .map((v) => {
-            const id = String(v.id || "").trim();
-            const name = String(v.fullName || "").trim();
-            const nid = String(v.nationalId || "").trim();
-            const addr = String(v.permanentAddress || "").trim();
-            const val = `${name} | ${nid || id}`.trim();
-            const label = addr ? `${addr}` : "";
-            return `<option value="${escapeHtml(val)}" label="${escapeHtml(label)}"></option>`;
-          })
-          .join("")}
-      </datalist>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
         <label for="eventParticipantsShareLink" class="sr-only">Share link</label>
         <input type="text" id="eventParticipantsShareLink" class="input" readonly value="${escapeHtml(shareUrl)}" style="min-width:320px; flex:1;">
@@ -223,16 +222,13 @@ async function openEventParticipantsModal(event) {
       <table class="data-table" id="eventParticipantsTable">
         <thead>
           <tr>
-            <th class="data-table-col--seq">Seq</th>
-            <th class="data-table-col--name">Name</th>
+            <th>Image</th>
+            <th class="data-table-col--name">Full Name</th>
             <th>ID Number</th>
-            <th>Phone</th>
-            <th>Address</th>
+            <th>Permanent Address</th>
+            <th>Phone Number</th>
             <th>Ballot box</th>
-            <th>Island</th>
             <th>Pledge</th>
-            <th>Voted at</th>
-            <th>Notes</th>
             <th class="settings-agents-actions-col">Actions</th>
           </tr>
         </thead>
@@ -247,8 +243,51 @@ async function openEventParticipantsModal(event) {
   const filterBoxEl = body.querySelector("#eventParticipantsFilterBox");
   const sortEl = body.querySelector("#eventParticipantsSort");
   const groupByEl = body.querySelector("#eventParticipantsGroupBy");
+  const fromVoterInput = body.querySelector("#eventParticipantFromVoter");
+  const fromVoterMenu = body.querySelector("#eventParticipantPickerMenu");
   let rows = await api.getEventParticipantRowsFs(token);
   if (!Array.isArray(rows)) rows = [];
+
+  function buildVoterIndex() {
+    const byId = new Map();
+    const byNationalId = new Map();
+    voters.forEach((v) => {
+      const id = String(v.id || "").trim();
+      const nid = String(v.nationalId || "").trim();
+      if (id) byId.set(id, v);
+      if (nid) byNationalId.set(nid, v);
+    });
+    return { byId, byNationalId };
+  }
+
+  function normalizeRowsWithVoters(sourceRows) {
+    const { byId, byNationalId } = buildVoterIndex();
+    return (Array.isArray(sourceRows) ? sourceRows : []).map((r) => {
+      const id = String(r.id || "").trim();
+      const sourceVoterId = String(r.sourceVoterId || "").trim();
+      const nationalId = String(r.nationalId || "").trim();
+      const voter =
+        (sourceVoterId && byId.get(sourceVoterId)) ||
+        (nationalId && byNationalId.get(nationalId)) ||
+        null;
+      if (!voter) return r;
+      return {
+        ...r,
+        sequence: r.sequence != null && r.sequence !== "" ? r.sequence : voter.sequence || "",
+        name: r.name || voter.fullName || "",
+        nationalId: r.nationalId || voter.nationalId || voter.id || "",
+        phone: r.phone || voter.phone || "",
+        address: r.address || voter.permanentAddress || "",
+        currentLocation: r.currentLocation || voter.currentLocation || "",
+        ballotBox: r.ballotBox || voter.ballotBox || "",
+        island: r.island || voter.island || "",
+        pledgeStatus: r.pledgeStatus || voter.pledgeStatus || "undecided",
+        supportStatus: r.supportStatus || voter.supportStatus || "unknown",
+        votedAt: r.votedAt || voter.votedAt || "",
+      };
+    });
+  }
+  rows = normalizeRowsWithVoters(rows);
 
   async function syncParticipantCountToEvent(count) {
     const num = Number(count || 0);
@@ -270,6 +309,86 @@ async function openEventParticipantsModal(event) {
     if (status === "yes") return "Yes";
     if (status === "no") return "No";
     return "Undecided";
+  }
+
+  function findVoterFromSearchInput(raw) {
+    const q = String(raw || "").trim().toLowerCase();
+    if (!q) return null;
+    const exact = voters.find((v) => {
+      const name = String(v.fullName || "").trim().toLowerCase();
+      const nid = String(v.nationalId || "").trim().toLowerCase();
+      const id = String(v.id || "").trim().toLowerCase();
+      return name === q || nid === q || id === q;
+    });
+    if (exact) return exact;
+    const list = voters.filter((v) => {
+      const name = String(v.fullName || "").toLowerCase();
+      const nid = String(v.nationalId || "").toLowerCase();
+      const id = String(v.id || "").toLowerCase();
+      const phone = String(v.phone || "").toLowerCase();
+      const addr = String(v.permanentAddress || "").toLowerCase();
+      return (
+        name.includes(q) ||
+        nid.includes(q) ||
+        id.includes(q) ||
+        phone.includes(q) ||
+        addr.includes(q)
+      );
+    });
+    return list.length === 1 ? list[0] : null;
+  }
+
+  function renderVoterPickerMenu() {
+    if (!fromVoterInput || !fromVoterMenu) return;
+    const q = String(fromVoterInput.value || "").trim().toLowerCase();
+    const list = voters
+      .filter((v) => {
+        if (!q) return true;
+        const name = String(v.fullName || "").toLowerCase();
+        const nid = String(v.nationalId || "").toLowerCase();
+        const id = String(v.id || "").toLowerCase();
+        const phone = String(v.phone || "").toLowerCase();
+        const addr = String(v.permanentAddress || "").toLowerCase();
+        return (
+          name.includes(q) ||
+          nid.includes(q) ||
+          id.includes(q) ||
+          phone.includes(q) ||
+          addr.includes(q)
+        );
+      })
+      .slice(0, 25);
+    if (!list.length) {
+      fromVoterMenu.innerHTML = '<div class="voter-agent-dropdown__empty">No matching voters.</div>';
+      fromVoterMenu.style.display = "block";
+      return;
+    }
+    fromVoterMenu.innerHTML = list
+      .map((v) => {
+        const fullName = String(v.fullName || "");
+        const nid = String(v.nationalId || v.id || "");
+        const phone = String(v.phone || "—");
+        const addr = String(v.permanentAddress || "—");
+        const rawId = String(v.nationalId || v.id || "").replace(/\s+/g, "");
+        const photoSrc = rawId ? `photos/${rawId}.jpg` : "";
+        const initials =
+          fullName
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((p) => p[0]?.toUpperCase() || "")
+            .join("") || "?";
+        const photoHtml = photoSrc
+          ? `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+          : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+        return `<button type="button" class="voter-agent-dropdown__item" data-voter-id="${escapeHtml(String(v.id || ""))}">
+          ${photoHtml}
+          <span class="voter-agent-dropdown__main">${escapeHtml(fullName)}</span>
+          <span class="voter-agent-dropdown__meta">ID: ${escapeHtml(nid)} | ${escapeHtml(phone)} | ${escapeHtml(addr)}</span>
+        </button>`;
+      })
+      .join("");
+    fromVoterMenu.style.display = "block";
   }
 
   function syncFilterBoxOptions() {
@@ -301,9 +420,11 @@ async function openEventParticipantsModal(event) {
         r.nationalId,
         r.phone,
         r.address,
+        r.currentLocation,
         r.ballotBox,
         r.island,
         r.pledgeStatus,
+        r.supportStatus,
         r.votedAt,
         r.notes,
       ]
@@ -321,6 +442,8 @@ async function openEventParticipantsModal(event) {
           return String(a.name || "").localeCompare(String(b.name || ""), "en");
         case "id":
           return String(a.nationalId || "").localeCompare(String(b.nationalId || ""), "en");
+        case "support":
+          return String(a.supportStatus || "unknown").localeCompare(String(b.supportStatus || "unknown"), "en");
         case "box":
           return String(a.ballotBox || "").localeCompare(String(b.ballotBox || ""), "en");
         case "island":
@@ -369,31 +492,57 @@ async function openEventParticipantsModal(event) {
 
     tbody.innerHTML = "";
     if (!onlyRows.length) {
-      tbody.innerHTML = `<tr><td colspan="11" class="text-muted" style="text-align:center;padding:16px;">No participants match filters.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-muted" style="text-align:center;padding:16px;">No participants match filters.</td></tr>`;
       return;
     }
     displayList.forEach((item) => {
       if (item.type === "group") {
         const tr = document.createElement("tr");
         tr.className = "list-toolbar__group-header";
-        tr.innerHTML = `<td colspan="11">${escapeHtml(item.label)}</td>`;
+        tr.innerHTML = `<td colspan="9">${escapeHtml(item.label)}</td>`;
         tbody.appendChild(tr);
         return;
       }
       const row = item.row;
       const id = String(row.id || "");
+      const rawId = String(row.nationalId || "").trim().replace(/\s+/g, "");
+      const photoSrc = rawId ? `photos/${rawId}.jpg` : "";
+      const initials =
+        String(row.name || "")
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((p) => p[0]?.toUpperCase() || "")
+          .join("") || "?";
+      const imageCell = photoSrc
+        ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+        : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+      const support = String(row.supportStatus || "unknown");
+      const supportLabel =
+        support === "supporting"
+          ? "Supporting"
+          : support === "leaning"
+            ? "Leaning"
+            : support === "opposed"
+              ? "Opposed"
+              : "Unknown";
+      const pledge = String(row.pledgeStatus || "undecided");
+      const pledgeClass =
+        pledge === "yes"
+          ? "pledge-pill pledge-pill--pledged"
+          : pledge === "no"
+            ? "pledge-pill pledge-pill--not-pledged"
+            : "pledge-pill pledge-pill--undecided";
+      const pledgeText = pledgeLabel(pledge);
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${escapeHtml(row.sequence != null && row.sequence !== "" ? String(row.sequence) : "—")}</td>
+        <td>${imageCell}</td>
         <td class="data-table-col--name">${escapeHtml(row.name || "—")}</td>
         <td>${escapeHtml(row.nationalId || "—")}</td>
-        <td>${escapeHtml(row.phone || "—")}</td>
         <td>${escapeHtml(row.address || "—")}</td>
+        <td>${escapeHtml(row.phone || "—")}</td>
         <td>${escapeHtml(row.ballotBox || "—")}</td>
-        <td>${escapeHtml(row.island || "—")}</td>
-        <td>${escapeHtml(pledgeLabel(row.pledgeStatus || "undecided"))}</td>
-        <td>${escapeHtml(row.votedAt || "—")}</td>
-        <td>${escapeHtml(row.notes || "—")}</td>
+        <td><span class="${escapeHtml(pledgeClass)}">${escapeHtml(pledgeText)}</span></td>
         <td class="settings-agents-actions-col">
           <div class="settings-agents-crud" role="group" aria-label="Participant actions">
             <button type="button" class="ghost-button ghost-button--small" data-edit-row="${id}">Edit</button>
@@ -447,6 +596,10 @@ async function openEventParticipantsModal(event) {
         <label for="epAddress">Address</label>
         <input id="epAddress" class="input" value="${escapeHtml(seed.address || "")}" placeholder="Permanent address">
       </div>
+      <div class="form-group">
+        <label for="epCurrentLocation">Current location</label>
+        <input id="epCurrentLocation" class="input" value="${escapeHtml(seed.currentLocation || "")}" placeholder="Current location">
+      </div>
         <div class="form-group">
           <label for="epBallotBox">Ballot box</label>
           <input id="epBallotBox" class="input" value="${escapeHtml(seed.ballotBox || "")}" placeholder="Ballot box">
@@ -461,6 +614,15 @@ async function openEventParticipantsModal(event) {
             <option value="undecided"${(seed.pledgeStatus || "undecided") === "undecided" ? " selected" : ""}>Undecided</option>
             <option value="yes"${seed.pledgeStatus === "yes" ? " selected" : ""}>Yes</option>
             <option value="no"${seed.pledgeStatus === "no" ? " selected" : ""}>No</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="epSupport">Support</label>
+          <select id="epSupport" class="input agent-dropdown-select agent-dropdown-select--modal">
+            <option value="unknown"${(seed.supportStatus || "unknown") === "unknown" ? " selected" : ""}>Unknown</option>
+            <option value="supporting"${seed.supportStatus === "supporting" ? " selected" : ""}>Supporting</option>
+            <option value="leaning"${seed.supportStatus === "leaning" ? " selected" : ""}>Leaning</option>
+            <option value="opposed"${seed.supportStatus === "opposed" ? " selected" : ""}>Opposed</option>
           </select>
         </div>
         <div class="form-group">
@@ -495,9 +657,11 @@ async function openEventParticipantsModal(event) {
       const phone = formBody.querySelector("#epPhone").value.trim();
       const sequenceRaw = formBody.querySelector("#epSequence").value.trim();
       const address = formBody.querySelector("#epAddress").value.trim();
+      const currentLocation = formBody.querySelector("#epCurrentLocation").value.trim();
       const ballotBox = formBody.querySelector("#epBallotBox").value.trim();
       const island = formBody.querySelector("#epIsland").value.trim();
       const pledgeStatus = formBody.querySelector("#epPledge").value.trim() || "undecided";
+      const supportStatus = formBody.querySelector("#epSupport").value.trim() || "unknown";
       const votedAt = formBody.querySelector("#epVotedAt").value.trim();
       const notes = formBody.querySelector("#epNotes").value.trim();
       if (!name) return;
@@ -510,9 +674,11 @@ async function openEventParticipantsModal(event) {
         nationalId,
         phone,
         address,
+        currentLocation,
         ballotBox,
         island,
         pledgeStatus,
+        supportStatus,
         votedAt,
         notes,
       };
@@ -538,13 +704,33 @@ async function openEventParticipantsModal(event) {
   body.querySelector("#eventParticipantsAddManualBtn").addEventListener("click", () => {
     openAddManualParticipantForm();
   });
+  fromVoterInput?.addEventListener("focus", renderVoterPickerMenu);
+  fromVoterInput?.addEventListener("input", renderVoterPickerMenu);
+  fromVoterMenu?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-voter-id]");
+    if (!btn || !fromVoterInput) return;
+    const voterId = String(btn.getAttribute("data-voter-id") || "");
+    const voter = voters.find((v) => String(v.id) === voterId);
+    if (!voter) return;
+    fromVoterInput.value = String(voter.fullName || "");
+    fromVoterInput.setAttribute("data-selected-voter-id", voterId);
+    fromVoterMenu.style.display = "none";
+  });
+  body.querySelector("#eventParticipantPicker")?.addEventListener("focusout", () => {
+    window.setTimeout(() => {
+      const root = body.querySelector("#eventParticipantPicker");
+      const active = document.activeElement;
+      if (root && !root.contains(active) && fromVoterMenu) {
+        fromVoterMenu.style.display = "none";
+      }
+    }, 0);
+  });
   body.querySelector("#eventParticipantsAddFromVoterBtn").addEventListener("click", () => {
-    const val = String(body.querySelector("#eventParticipantFromVoter").value || "").trim();
-    if (!val) return;
-    const nid = val.split("|")[1] ? val.split("|")[1].trim() : val;
-    const voter = voters.find(
-      (v) => String(v.nationalId || "").trim() === nid || String(v.id || "").trim() === nid
-    );
+    const selectedId = String(fromVoterInput?.getAttribute("data-selected-voter-id") || "").trim();
+    const typed = String(fromVoterInput?.value || "").trim();
+    const voter =
+      (selectedId && voters.find((v) => String(v.id) === selectedId)) ||
+      findVoterFromSearchInput(typed);
     if (!voter) return;
     openAddManualParticipantForm({
       sequence: voter.sequence != null ? voter.sequence : "",
@@ -552,16 +738,20 @@ async function openEventParticipantsModal(event) {
       nationalId: voter.nationalId || voter.id || "",
       phone: voter.phone || "",
       address: voter.permanentAddress || "",
+      currentLocation: voter.currentLocation || "",
       ballotBox: voter.ballotBox || "",
       island: voter.island || "",
       pledgeStatus: voter.pledgeStatus || "undecided",
+      supportStatus: voter.supportStatus || "unknown",
       votedAt: voter.votedAt || "",
       notes: "",
     });
+    if (fromVoterInput) fromVoterInput.setAttribute("data-selected-voter-id", String(voter.id || ""));
   });
   body.querySelector("#eventParticipantsRefreshBtn").addEventListener("click", async () => {
     if (api.getEventParticipantRowsFromServerFs) {
       rows = await api.getEventParticipantRowsFromServerFs(token);
+      rows = normalizeRowsWithVoters(rows);
       renderRows();
       if (window.appNotifications) {
         window.appNotifications.push({ title: "Participants refreshed", meta: event.name || "Event" });
@@ -586,6 +776,7 @@ async function openEventParticipantsModal(event) {
   if (api.onEventParticipantRowsSnapshotFs) {
     unsubscribeRows = api.onEventParticipantRowsSnapshotFs(token, (items) => {
       rows = Array.isArray(items) ? items : [];
+      rows = normalizeRowsWithVoters(rows);
       syncParticipantCountToEvent(rows.length);
       renderRows();
     });

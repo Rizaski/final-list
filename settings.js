@@ -549,7 +549,6 @@ export function openAgentModal(existing = null, options = {}) {
   const votersList = getVotersForAgentModalSearch();
   const islands = getIslandsFromVotersStorage();
   const candList = getCandidates();
-  const datalistId = "agentModalVoterDatalist";
 
   const body = document.createElement("div");
   body.className = "form-grid";
@@ -584,9 +583,11 @@ export function openAgentModal(existing = null, options = {}) {
     <div class="form-group agent-modal-voter-search-group" style="grid-column: 1 / -1;">
       <label for="agentModalVoterSearch">Search voter</label>
       <div class="agent-modal-voter-search-wrap">
-        <input type="text" id="agentModalVoterSearch" class="input agent-modal-voter-search-input" list="${datalistId}" placeholder="Name, national ID, address, or pick a match…" autocomplete="off" spellcheck="false">
+        <div class="event-participant-picker" id="agentModalVoterPicker">
+          <input type="text" id="agentModalVoterSearch" class="input agent-modal-voter-search-input event-participant-picker__input" placeholder="Name, national ID, phone, address, or pick a match…" autocomplete="off" spellcheck="false">
+          <div id="agentModalVoterSearchMenu" class="event-participant-picker__menu" role="listbox" aria-label="Voter search results"></div>
+        </div>
       </div>
-      <datalist id="${datalistId}"></datalist>
       <p class="helper-text agent-modal-voter-search-hint">Match on name, national ID, permanent address, or ID-based photo filename (e.g. <span class="agent-modal-voter-search-hint__kbd">photos/…</span>). When exactly one voter matches, their details appear below.</p>
       <div id="agentModalVoterPreview" class="agent-modal-voter-preview" hidden aria-live="polite"></div>
     </div>
@@ -610,22 +611,6 @@ export function openAgentModal(existing = null, options = {}) {
     <p class="helper-text" style="grid-column: 1 / -1;">${escapeHtml(formatAgentNameHint())}</p>
   `;
 
-  const datalistEl = body.querySelector(`#${datalistId}`);
-  if (datalistEl) {
-    datalistEl.innerHTML = votersList
-      .map((v) => {
-        const name = (v.fullName || "").trim();
-        const nid = (v.nationalId || v.id || "").trim();
-        const val = `${name} | ${nid}`;
-        const addr = (v.permanentAddress || "").trim();
-        // Only address in label — file paths in datalist labels look like links in some browsers.
-        return addr
-          ? `<option value="${escapeHtml(val)}" label="${escapeHtml(addr)}"></option>`
-          : `<option value="${escapeHtml(val)}"></option>`;
-      })
-      .join("");
-  }
-
   const islandSelect = body.querySelector("#agentModalIsland");
   const curIsland = (existing?.island || "").trim();
   if (islandSelect) {
@@ -647,6 +632,7 @@ export function openAgentModal(existing = null, options = {}) {
   }
 
   const searchInput = body.querySelector("#agentModalVoterSearch");
+  const searchMenu = body.querySelector("#agentModalVoterSearchMenu");
 
   function voterInitials(voter) {
     const n = (voter && voter.fullName) || "";
@@ -794,13 +780,71 @@ export function openAgentModal(existing = null, options = {}) {
     else clearAgentModalVoterPreviewOnly();
   }
 
+  function renderAgentVoterSearchMenu() {
+    if (!searchInput || !searchMenu) return;
+    const q = (searchInput.value || "").trim().toLowerCase();
+    const list = votersList
+      .filter((v) => {
+        if (!q) return true;
+        return voterMatchesAgentSearchQuery(v, q);
+      })
+      .slice(0, 25);
+    if (!list.length) {
+      searchMenu.innerHTML = '<div class="voter-agent-dropdown__empty">No matching voters.</div>';
+      searchMenu.style.display = "block";
+      return;
+    }
+    searchMenu.innerHTML = list
+      .map((v) => {
+        const name = (v.fullName || "").trim();
+        const nid = String(v.nationalId || v.id || "").trim();
+        const phone = String(v.phone || "—").trim() || "—";
+        const addr = String(v.permanentAddress || "—").trim() || "—";
+        const photoSrc = getVoterImageSrc(v);
+        const initials = voterInitials(v);
+        const imgOnError =
+          "var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
+        const photoHtml = photoSrc
+          ? `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="${imgOnError}"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+          : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+        return `<button type="button" class="voter-agent-dropdown__item" data-voter-id="${escapeHtml(String(v.id || ""))}">
+          ${photoHtml}
+          <span class="voter-agent-dropdown__main">${escapeHtml(name)}</span>
+          <span class="voter-agent-dropdown__meta">ID: ${escapeHtml(nid)} | ${escapeHtml(phone)} | ${escapeHtml(addr)}</span>
+        </button>`;
+      })
+      .join("");
+    searchMenu.style.display = "block";
+  }
+
   let searchDebounceId = null;
   searchInput?.addEventListener("input", () => {
     window.clearTimeout(searchDebounceId);
+    renderAgentVoterSearchMenu();
     searchDebounceId = window.setTimeout(() => tryMatchVoterSearch(), 280);
   });
+  searchInput?.addEventListener("focus", renderAgentVoterSearchMenu);
   searchInput?.addEventListener("change", tryMatchVoterSearch);
   searchInput?.addEventListener("blur", tryMatchVoterSearch);
+  searchMenu?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-voter-id]");
+    if (!btn || !searchInput) return;
+    const voterId = String(btn.getAttribute("data-voter-id") || "");
+    const voter = votersList.find((v) => String(v.id) === voterId);
+    if (!voter) return;
+    searchInput.value = `${(voter.fullName || "").trim()} | ${(voter.nationalId || voter.id || "").trim()}`;
+    applyVoterMatch(voter);
+    searchMenu.style.display = "none";
+  });
+  body.querySelector("#agentModalVoterPicker")?.addEventListener("focusout", () => {
+    window.setTimeout(() => {
+      const root = body.querySelector("#agentModalVoterPicker");
+      const active = document.activeElement;
+      if (root && !root.contains(active) && searchMenu) {
+        searchMenu.style.display = "none";
+      }
+    }, 0);
+  });
 
   if (isEdit && existing && (existing.nationalId || existing.name)) {
     const nidKey = String(existing.nationalId || "").trim();

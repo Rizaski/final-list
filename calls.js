@@ -40,8 +40,23 @@ function seedCalls(votersContext) {
     status: "pending",
     outcome: "not-reached",
     persuadable: "unknown",
-    notes: "",
+    // Keep in sync with Door to Door notes (stored on voter record).
+    notes: v.notes || "",
   }));
+}
+
+function syncCallNotesFromVoters(votersContext) {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const notesByVoterId = new Map(
+    voters.map((v) => [String(v.id), String(v.notes || "")])
+  );
+  calls.forEach((call) => {
+    const voterId = String(call.voterId || "");
+    if (!voterId) return;
+    if (notesByVoterId.has(voterId)) {
+      call.notes = notesByVoterId.get(voterId) || "";
+    }
+  });
 }
 
 function callStatusLabel(status) {
@@ -310,8 +325,14 @@ function bindCallsToolbar() {
 
 export function initCallsModule(votersContext) {
   seedCalls(votersContext);
+  syncCallNotesFromVoters(votersContext);
   bindCallsToolbar();
   renderCallsTable();
+
+  document.addEventListener("voters-updated", () => {
+    syncCallNotesFromVoters(votersContext);
+    renderCallsTable();
+  });
 
   // Inline editing: update call record when dropdowns / inputs change.
   callsTableBody.addEventListener("change", (e) => {

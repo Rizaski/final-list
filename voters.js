@@ -137,6 +137,7 @@ function getCandidatesListFromStorage() {
 }
 
 const VOTER_DETAIL_AGENT_SCOPE_KEY = "voterDetailAgentCandidateScope";
+const ALL_CAMPAIGN_SCOPE_KEY = "__all_campaign__";
 
 function getViewerIsAdmin() {
   try {
@@ -794,8 +795,25 @@ function renderVoterDetails(voter) {
     const showForAdmin = !candCtx && getViewerIsAdmin();
     if (!showForCandidate && !showForAdmin) return "";
 
-    const buildAgentOptions = (assignedName) => {
-      const agentOptionsList = filterAgentsForViewer(getAgentsFromStorage());
+    const agentScopeId = (a) => {
+      const raw = a && a.candidateId;
+      if (raw === null || raw === undefined || raw === "") return "";
+      const s = String(raw).trim();
+      return s && s !== "undefined" && s !== "null" ? s : "";
+    };
+    const getAgentsForScope = (scopeId) => {
+      const allAgents = getAgentsFromStorage();
+      if (scopeId === ALL_CAMPAIGN_SCOPE_KEY) {
+        return allAgents.filter((a) => !agentScopeId(a));
+      }
+      if (!scopeId) return [];
+      return allAgents.filter((a) => agentScopeId(a) === String(scopeId));
+    };
+    const buildAgentOptions = (assignedName, scopeId = null) => {
+      const agentOptionsList =
+        scopeId == null
+          ? filterAgentsForViewer(getAgentsFromStorage())
+          : getAgentsForScope(scopeId);
       return (
         '<option value="">Unassigned</option>' +
         agentOptionsList
@@ -808,13 +826,6 @@ function renderVoterDetails(voter) {
           .join("")
       );
     };
-    const buildAgentDatalistOptions = () => {
-      const agentOptionsList = filterAgentsForViewer(getAgentsFromStorage());
-      return agentOptionsList
-        .map((a) => `<option value="${escapeHtml(a.name)}"></option>`)
-        .join("");
-    };
-
     if (showForCandidate) {
       const key = candidatePledgedAgentStorageKey(candCtx.candidateId);
       let assignedByVoterId = {};
@@ -827,7 +838,6 @@ function renderVoterDetails(voter) {
       } catch (_) {}
       const assignedName = assignedByVoterId[String(voter.id)] || "";
       const agentOptions = buildAgentOptions(assignedName);
-      const agentDatalistOptions = buildAgentDatalistOptions();
       return `
       <section class="voter-details-section voter-details-section--full voter-details-section--agent">
         <h3 class="voter-details-section__title">Assigned agent — All Campaign</h3>
@@ -837,16 +847,14 @@ function renderVoterDetails(voter) {
             <div class="detail-item-value detail-item-value--agent-stack">
               <div class="field-group">
                 <label for="candidateVoterAgentSearch" class="sr-only">Search agent</label>
-                <input id="candidateVoterAgentSearch" class="input" list="candidateVoterAgentList" placeholder="Search and pick agent…" value="${escapeHtml(assignedName)}" aria-label="Search agent from list">
-                <datalist id="candidateVoterAgentList">${agentDatalistOptions}</datalist>
+                <div class="voter-agent-dropdown" id="candidateVoterAgentDropdown">
+                  <input id="candidateVoterAgentSearch" class="input agent-modal-voter-search-input voter-agent-dropdown__search" placeholder="Search and pick agent…" value="${escapeHtml(assignedName)}" aria-label="Search agent from list" autocomplete="off" spellcheck="false">
+                  <div class="voter-agent-dropdown__menu" id="candidateVoterAgentMenu" role="listbox" aria-label="Agents"></div>
+                </div>
               </div>
-              <div class="field-group">
-                <label for="candidateVoterAgentSelect" class="sr-only">Assign agent (All Campaign)</label>
-                <select id="candidateVoterAgentSelect" class="input" aria-label="Assign agent for All Campaign">
-                  ${agentOptions}
-                </select>
-              </div>
-              <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAgentApplyBtn">Use selected agent</button>
+              <select id="candidateVoterAgentSelect" style="display:none" aria-hidden="true" tabindex="-1">
+                ${agentOptions}
+              </select>
               <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAddAgentBtn">Add new agent…</button>
               <p class="helper-text voter-details-agent-hint">Assign follow-up for the wider campaign. New agents must use a proper full name (first and last).</p>
             </div>
@@ -855,31 +863,25 @@ function renderVoterDetails(voter) {
       </section>`;
     }
 
-    // Admin: same assignments as Reports → pledged voters (per candidate scope)
+    // Admin: same assignments as Reports → pledged voters, plus all-campaign global agent.
     const candidatesList = getCandidatesListFromStorage();
-    if (!candidatesList.length) {
-      return `
-      <section class="voter-details-section voter-details-section--full voter-details-section--agent">
-        <h3 class="voter-details-section__title">Assigned agent — All Campaign</h3>
-        <p class="helper-text voter-details-agent-hint">Add at least one candidate in Settings to assign agents (same list as Reports → Candidate pledge summary).</p>
-      </section>`;
-    }
 
     let scopeSession = "";
     try {
       scopeSession = sessionStorage.getItem(VOTER_DETAIL_AGENT_SCOPE_KEY) || "";
     } catch (_) {}
     let selectedScope = scopeSession;
-    if (
-      !selectedScope ||
-      !candidatesList.some((c) => String(c.id) === String(selectedScope))
-    ) {
-      selectedScope =
-        candidatesList.length === 1 ? String(candidatesList[0].id) : "";
+    const scopeIsCandidate = candidatesList.some(
+      (c) => String(c.id) === String(selectedScope)
+    );
+    if (!selectedScope || (selectedScope !== ALL_CAMPAIGN_SCOPE_KEY && !scopeIsCandidate)) {
+      selectedScope = ALL_CAMPAIGN_SCOPE_KEY;
     }
 
     const scopeOptions =
-      '<option value="">Select candidate…</option>' +
+      `<option value="${ALL_CAMPAIGN_SCOPE_KEY}"${
+        selectedScope === ALL_CAMPAIGN_SCOPE_KEY ? " selected" : ""
+      }>All campaign (general agents)</option>` +
       candidatesList
         .map((c) => {
           const id = String(c.id);
@@ -890,7 +892,12 @@ function renderVoterDetails(voter) {
         .join("");
 
     let assignedName = "";
-    if (selectedScope) {
+    if (selectedScope === ALL_CAMPAIGN_SCOPE_KEY) {
+      assignedName =
+        typeof voter.volunteer === "string"
+          ? voter.volunteer
+          : voter?.volunteer?.name || "";
+    } else if (selectedScope) {
       const key = candidatePledgedAgentStorageKey(selectedScope);
       try {
         const raw = localStorage.getItem(key);
@@ -903,8 +910,7 @@ function renderVoterDetails(voter) {
       } catch (_) {}
     }
 
-    const agentOptions = buildAgentOptions(assignedName);
-    const agentDatalistOptions = buildAgentDatalistOptions();
+    const agentOptions = buildAgentOptions(assignedName, selectedScope);
 
     return `
       <section class="voter-details-section voter-details-section--full voter-details-section--agent">
@@ -927,26 +933,16 @@ function renderVoterDetails(voter) {
             <div class="detail-item-value detail-item-value--agent-stack">
               <div class="field-group">
                 <label for="candidateVoterAgentSearch" class="sr-only">Search agent</label>
-                <input id="candidateVoterAgentSearch" class="input" list="candidateVoterAgentList" placeholder="Search and pick agent…" value="${escapeHtml(assignedName)}"${
-                  !selectedScope ? " disabled" : ""
-                } aria-label="Search agent from list">
-                <datalist id="candidateVoterAgentList">${agentDatalistOptions}</datalist>
+                <div class="voter-agent-dropdown" id="candidateVoterAgentDropdown">
+                  <input id="candidateVoterAgentSearch" class="input agent-modal-voter-search-input voter-agent-dropdown__search" placeholder="Search and pick agent…" value="${escapeHtml(assignedName)}" aria-label="Search agent from list" autocomplete="off" spellcheck="false">
+                  <div class="voter-agent-dropdown__menu" id="candidateVoterAgentMenu" role="listbox" aria-label="Agents"></div>
+                </div>
               </div>
-              <div class="field-group">
-                <label for="candidateVoterAgentSelect" class="sr-only">Assign agent</label>
-                <select id="candidateVoterAgentSelect" class="input"${
-                  !selectedScope ? " disabled" : ""
-                } aria-label="Assign agent for selected candidate">
-                  ${agentOptions}
-                </select>
-              </div>
-              <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAgentApplyBtn"${
-                !selectedScope ? " disabled" : ""
-              }>Use selected agent</button>
-              <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAddAgentBtn"${
-                !selectedScope ? " disabled" : ""
-              }>Add new agent…</button>
-              <p class="helper-text voter-details-agent-hint">Pick a candidate first, then assign an agent. New agents must use a proper full name (first and last).</p>
+              <select id="candidateVoterAgentSelect" style="display:none" aria-hidden="true" tabindex="-1">
+                ${agentOptions}
+              </select>
+              <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAddAgentBtn">Add new agent…</button>
+              <p class="helper-text voter-details-agent-hint">Choose scope: All campaign shows general agents only. Candidate scope shows agents for that candidate.</p>
             </div>
           </div>
         </div>
@@ -1122,10 +1118,96 @@ function renderVoterDetails(voter) {
     });
   }
 
+  function setupCandidateAgentDropdown({ agentSel, agentSearchInput, menuEl, getAgents }) {
+    if (!agentSel || !agentSearchInput || !menuEl) return;
+    const toNorm = (s) => String(s || "").trim().toLowerCase();
+    const initialsFromName = (name) => {
+      const out = String(name || "")
+        .split(" ")
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() || "")
+        .join("");
+      return out || "?";
+    };
+    const imgOnError =
+      "var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
+
+    const renderMenu = () => {
+      if (agentSearchInput.disabled) {
+        menuEl.style.display = "none";
+        return;
+      }
+      const q = toNorm(agentSearchInput.value);
+      const list = (typeof getAgents === "function" ? getAgents() : [])
+        .filter((a) => {
+          if (!q) return true;
+          const name = toNorm(a?.name);
+          const nationalId = toNorm(a?.nationalId);
+          const phone = toNorm(a?.phone);
+          return name.includes(q) || nationalId.includes(q) || phone.includes(q);
+        })
+        .slice(0, 40);
+      if (!list.length) {
+        menuEl.innerHTML =
+          '<div class="voter-agent-dropdown__empty">No matching agents.</div>';
+        menuEl.style.display = "block";
+        return;
+      }
+      menuEl.innerHTML = list
+        .map((a) => {
+          const photoSrc = getVoterImageSrc({ nationalId: a?.nationalId || a?.id || "" });
+          const name = String(a?.name || "");
+          const nationalId = String(a?.nationalId || "—");
+          const phone = String(a?.phone || "—");
+          const initials = initialsFromName(name);
+          const photoHtml = photoSrc
+            ? `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="${imgOnError}"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+            : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+          return `<button type="button" class="voter-agent-dropdown__item" data-agent-name="${escapeHtml(name)}">
+            ${photoHtml}
+            <span class="voter-agent-dropdown__main">${escapeHtml(name)}</span>
+            <span class="voter-agent-dropdown__meta">ID: ${escapeHtml(nationalId)} | ${escapeHtml(phone)}</span>
+          </button>`;
+        })
+        .join("");
+      menuEl.style.display = "block";
+    };
+
+    const root = document.getElementById("candidateVoterAgentDropdown");
+    const hideMenu = () => {
+      menuEl.style.display = "none";
+    };
+
+    agentSearchInput.addEventListener("focus", renderMenu);
+    agentSearchInput.addEventListener("input", renderMenu);
+    root?.addEventListener("focusout", () => {
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (!root.contains(active)) hideMenu();
+      }, 0);
+    });
+    menuEl.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-agent-name]");
+      if (!btn) return;
+      const selected = String(btn.getAttribute("data-agent-name") || "");
+      agentSearchInput.value = selected;
+      agentSel.value = selected;
+      agentSel.dispatchEvent(new Event("change"));
+      hideMenu();
+    });
+  }
+
   if (candCtx) {
     const agentSel = document.getElementById("candidateVoterAgentSelect");
     const agentSearchInput = document.getElementById("candidateVoterAgentSearch");
-    const agentApplyBtn = document.getElementById("candidateVoterAgentApplyBtn");
+    const agentMenu = document.getElementById("candidateVoterAgentMenu");
+    setupCandidateAgentDropdown({
+      agentSel,
+      agentSearchInput,
+      menuEl: agentMenu,
+      getAgents: () => filterAgentsForViewer(getAgentsFromStorage()),
+    });
     function applyAgentFromSearch() {
       if (!agentSel || !agentSearchInput) return;
       const q = String(agentSearchInput.value || "").trim();
@@ -1148,8 +1230,18 @@ function renderVoterDetails(voter) {
       agentSel.value = exact.name || "";
       agentSel.dispatchEvent(new Event("change"));
     }
+    agentSearchInput?.addEventListener("input", () => {
+      if (!agentSearchInput || !agentSel) return;
+      const q = String(agentSearchInput.value || "").trim().toLowerCase();
+      if (!q) return;
+      const list = filterAgentsForViewer(getAgentsFromStorage());
+      const exact = list.find((a) => String(a.name || "").trim().toLowerCase() === q);
+      if (exact) {
+        agentSel.value = exact.name || "";
+        agentSel.dispatchEvent(new Event("change"));
+      }
+    });
     agentSearchInput?.addEventListener("change", applyAgentFromSearch);
-    agentApplyBtn?.addEventListener("click", applyAgentFromSearch);
     if (agentSel) {
       agentSel.addEventListener("change", () => {
         const key = candidatePledgedAgentStorageKey(candCtx.candidateId);
@@ -1212,7 +1304,25 @@ function renderVoterDetails(voter) {
     }
     const agentSel = document.getElementById("candidateVoterAgentSelect");
     const agentSearchInput = document.getElementById("candidateVoterAgentSearch");
-    const agentApplyBtn = document.getElementById("candidateVoterAgentApplyBtn");
+    const agentMenu = document.getElementById("candidateVoterAgentMenu");
+    const adminAgentsForScope = () => {
+      const scopeId = scopeSel?.value?.trim() || "";
+      const allAgents = getAgentsFromStorage();
+      const scopeOf = (a) => {
+        const raw = a && a.candidateId;
+        if (raw === null || raw === undefined || raw === "") return "";
+        const s = String(raw).trim();
+        return s && s !== "undefined" && s !== "null" ? s : "";
+      };
+      if (scopeId === ALL_CAMPAIGN_SCOPE_KEY) return allAgents.filter((a) => !scopeOf(a));
+      return allAgents.filter((a) => scopeOf(a) === scopeId);
+    };
+    setupCandidateAgentDropdown({
+      agentSel,
+      agentSearchInput,
+      menuEl: agentMenu,
+      getAgents: adminAgentsForScope,
+    });
     function applyAgentFromSearch() {
       if (!agentSel || !agentSearchInput || agentSel.disabled) return;
       const q = String(agentSearchInput.value || "").trim();
@@ -1221,7 +1331,7 @@ function renderVoterDetails(voter) {
         agentSel.dispatchEvent(new Event("change"));
         return;
       }
-      const list = filterAgentsForViewer(getAgentsFromStorage());
+      const list = adminAgentsForScope();
       const exact =
         list.find((a) => String(a.name || "").trim().toLowerCase() === q.toLowerCase()) ||
         list.find((a) => String(a.name || "").trim().toLowerCase().includes(q.toLowerCase()));
@@ -1235,25 +1345,21 @@ function renderVoterDetails(voter) {
       agentSel.value = exact.name || "";
       agentSel.dispatchEvent(new Event("change"));
     }
+    agentSearchInput?.addEventListener("input", () => {
+      if (!agentSearchInput || !agentSel || agentSel.disabled) return;
+      const q = String(agentSearchInput.value || "").trim().toLowerCase();
+      if (!q) return;
+      const list = adminAgentsForScope();
+      const exact = list.find((a) => String(a.name || "").trim().toLowerCase() === q);
+      if (exact) {
+        agentSel.value = exact.name || "";
+        agentSel.dispatchEvent(new Event("change"));
+      }
+    });
     agentSearchInput?.addEventListener("change", applyAgentFromSearch);
-    agentApplyBtn?.addEventListener("click", applyAgentFromSearch);
     if (agentSel) {
       agentSel.addEventListener("change", () => {
         const scopeId = scopeSel?.value?.trim() || "";
-        if (!scopeId) return;
-        const key = candidatePledgedAgentStorageKey(scopeId);
-        let map = {};
-        try {
-          const raw = localStorage.getItem(key);
-          if (raw) {
-            const p = JSON.parse(raw);
-            if (p && typeof p === "object") map = p;
-          }
-        } catch (_) {}
-        map[String(voter.id)] = agentSel.value || "";
-        try {
-          localStorage.setItem(key, JSON.stringify(map));
-        } catch (_) {}
         const v = currentVoters.find((x) => x.id === voter.id);
         if (v) {
           if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
@@ -1264,12 +1370,29 @@ function renderVoterDetails(voter) {
           }
           const selectedName = agentSel.value || "";
           const selectedAgent =
-            filterAgentsForViewer(getAgentsFromStorage()).find(
+            adminAgentsForScope().find(
               (a) => String(a?.name || "").trim() === String(selectedName).trim()
             ) || null;
-          v.candidateAgentAssignments[String(scopeId)] = agentSel.value || "";
-          v.candidateAgentAssignmentIds[String(scopeId)] =
-            selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+          if (scopeId === ALL_CAMPAIGN_SCOPE_KEY) {
+            v.volunteer = selectedName || "";
+          } else if (scopeId) {
+            const key = candidatePledgedAgentStorageKey(scopeId);
+            let map = {};
+            try {
+              const raw = localStorage.getItem(key);
+              if (raw) {
+                const p = JSON.parse(raw);
+                if (p && typeof p === "object") map = p;
+              }
+            } catch (_) {}
+            map[String(voter.id)] = selectedName || "";
+            try {
+              localStorage.setItem(key, JSON.stringify(map));
+            } catch (_) {}
+            v.candidateAgentAssignments[String(scopeId)] = selectedName || "";
+            v.candidateAgentAssignmentIds[String(scopeId)] =
+              selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+          }
           (async () => {
             try {
               const api = await firebaseInitPromise;
@@ -1286,16 +1409,8 @@ function renderVoterDetails(voter) {
     if (addAgentBtn) {
       addAgentBtn.addEventListener("click", () => {
         const scopeId = scopeSel?.value?.trim() || "";
-        if (!scopeId) {
-          if (window.appNotifications) {
-            window.appNotifications.push({
-              title: "Select a candidate",
-              meta: "Choose candidate scope before adding an agent.",
-            });
-          }
-          return;
-        }
-        callOpenAddAgentModal({ lockCandidateId: scopeId });
+        if (scopeId === ALL_CAMPAIGN_SCOPE_KEY) callOpenAddAgentModal({});
+        else callOpenAddAgentModal({ lockCandidateId: scopeId });
       });
     }
   }
