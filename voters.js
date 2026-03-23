@@ -1115,6 +1115,31 @@ function renderVoterDetails(voter) {
         try {
           localStorage.setItem(key, JSON.stringify(map));
         } catch (_) {}
+        const v = currentVoters.find((x) => x.id === voter.id);
+        if (v) {
+          if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
+            v.candidateAgentAssignments = {};
+          }
+          if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
+            v.candidateAgentAssignmentIds = {};
+          }
+          const selectedName = agentSel.value || "";
+          const selectedAgent =
+            filterAgentsForViewer(getAgentsFromStorage()).find(
+              (a) => String(a?.name || "").trim() === String(selectedName).trim()
+            ) || null;
+          v.candidateAgentAssignments[String(candCtx.candidateId)] = agentSel.value || "";
+          v.candidateAgentAssignmentIds[String(candCtx.candidateId)] =
+            selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+          (async () => {
+            try {
+              const api = await firebaseInitPromise;
+              if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+              saveVotersToStorage();
+              document.dispatchEvent(new CustomEvent("voters-updated"));
+            } catch (_) {}
+          })();
+        }
         document.dispatchEvent(new CustomEvent("pledges-updated"));
       });
     }
@@ -1153,6 +1178,31 @@ function renderVoterDetails(voter) {
         try {
           localStorage.setItem(key, JSON.stringify(map));
         } catch (_) {}
+        const v = currentVoters.find((x) => x.id === voter.id);
+        if (v) {
+          if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
+            v.candidateAgentAssignments = {};
+          }
+          if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
+            v.candidateAgentAssignmentIds = {};
+          }
+          const selectedName = agentSel.value || "";
+          const selectedAgent =
+            filterAgentsForViewer(getAgentsFromStorage()).find(
+              (a) => String(a?.name || "").trim() === String(selectedName).trim()
+            ) || null;
+          v.candidateAgentAssignments[String(scopeId)] = agentSel.value || "";
+          v.candidateAgentAssignmentIds[String(scopeId)] =
+            selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+          (async () => {
+            try {
+              const api = await firebaseInitPromise;
+              if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+              saveVotersToStorage();
+              document.dispatchEvent(new CustomEvent("voters-updated"));
+            } catch (_) {}
+          })();
+        }
         document.dispatchEvent(new CustomEvent("pledges-updated"));
       });
     }
@@ -2007,6 +2057,9 @@ export async function initVotersModule(getCurrentUser, options = {}) {
 
   if (votersTableLoader) votersTableLoader.hidden = true;
 
+  // Backfill legacy candidate-local assignment maps into voter docs for cross-login visibility.
+  syncCandidateAgentAssignmentsFromLocalMaps().catch(() => {});
+
   return {
     getAllVoters: () => [...currentVoters],
   };
@@ -2059,6 +2112,84 @@ export function getPledgeByBallotBox() {
 export function getVotersContextForStandalone() {
   loadVotersFromStorage();
   return { getAllVoters: () => [...currentVoters] };
+}
+
+/** Backfill legacy candidate-local agent assignment maps into voter docs (shared for admin/candidates). */
+async function syncCandidateAgentAssignmentsFromLocalMaps() {
+  const CAND_ASSIGN_PREFIX = "candidatePledgedAgentAssignments:v2:";
+  const normalizeName = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const agentsByNormName = new Map(
+    filterAgentsForViewer(getAgentsFromStorage()).map((a) => [normalizeName(a?.name), String(a?.id ?? "")])
+  );
+  const updatesByVoterId = new Map(); // voterId -> { [candidateId]: agentName }
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i) || "";
+    if (!key.startsWith(CAND_ASSIGN_PREFIX)) continue;
+    const candidateId = key.slice(CAND_ASSIGN_PREFIX.length);
+    if (!candidateId) continue;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const map = JSON.parse(raw);
+      if (!map || typeof map !== "object") continue;
+      Object.entries(map).forEach(([voterId, assignedName]) => {
+        const vid = String(voterId || "").trim();
+        if (!vid) return;
+        const name = String(assignedName || "");
+        if (!updatesByVoterId.has(vid)) updatesByVoterId.set(vid, {});
+        updatesByVoterId.get(vid)[String(candidateId)] = name;
+      });
+    } catch (_) {}
+  }
+  if (updatesByVoterId.size === 0) return 0;
+
+  const changed = [];
+  updatesByVoterId.forEach((candidateMap, voterId) => {
+    const voter = currentVoters.find((x) => String(x.id) === String(voterId));
+    if (!voter) return;
+    const existing =
+      voter.candidateAgentAssignments && typeof voter.candidateAgentAssignments === "object"
+        ? { ...voter.candidateAgentAssignments }
+        : {};
+    const existingIds =
+      voter.candidateAgentAssignmentIds && typeof voter.candidateAgentAssignmentIds === "object"
+        ? { ...voter.candidateAgentAssignmentIds }
+        : {};
+    let touched = false;
+    Object.entries(candidateMap).forEach(([cid, name]) => {
+      const next = String(name || "");
+      if (String(existing[cid] || "") !== next) {
+        existing[cid] = next;
+        touched = true;
+      }
+      const resolvedId = agentsByNormName.get(normalizeName(next)) || "";
+      if (resolvedId && String(existingIds[cid] || "") !== String(resolvedId)) {
+        existingIds[cid] = String(resolvedId);
+        touched = true;
+      }
+    });
+    if (!touched) return;
+    voter.candidateAgentAssignments = existing;
+    voter.candidateAgentAssignmentIds = existingIds;
+    changed.push(voter);
+  });
+  if (!changed.length) return 0;
+
+  saveVotersToStorage();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setVoterFs) {
+      await Promise.all(changed.map((v) => api.setVoterFs(v)));
+    }
+  } catch (_) {}
+  document.dispatchEvent(new CustomEvent("voters-updated"));
+  return changed.length;
+}
+
+/** Explicit sync pass used by topbar Refresh to push local candidate assignments to Firestore. */
+export async function syncCandidateAssignmentsToFirebase() {
+  const count = await syncCandidateAgentAssignmentsFromLocalMaps().catch(() => 0);
+  return Number.isFinite(count) ? count : 0;
 }
 
 export function updateVoterPledgeStatus(voterId, pledgeStatus) {

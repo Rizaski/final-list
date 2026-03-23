@@ -1009,6 +1009,347 @@ function openAgentViewModal(agent) {
   openModal({ title: "View agent", body, footer });
 }
 
+/** Read-only assigned voters list for an agent (global + per-candidate assignments). */
+async function openAgentAssignedVotersModal(agent) {
+  if (!agent || agent.id == null) return;
+  const targetNameRaw = String(agent.name || "").trim();
+  const normalizeName = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const targetName = normalizeName(targetNameRaw);
+  const targetAgentId = String(agent.id);
+  const agentsByNormName = new Map(
+    getAgents().map((a) => [normalizeName(a?.name), String(a?.id ?? "")])
+  );
+  const matchesAgent = ({ assignedName, assignedId }) => {
+    const id = String(assignedId || "").trim();
+    if (id && id === targetAgentId) return true;
+    const nameNorm = normalizeName(assignedName);
+    if (!nameNorm) return false;
+    if (nameNorm === targetName) return true;
+    const mappedId = agentsByNormName.get(nameNorm) || "";
+    return mappedId && mappedId === targetAgentId;
+  };
+  const localVoters = getVotersForAgentModalSearch();
+  const byId = new Map();
+  localVoters.forEach((v) => {
+    if (v && v.id != null) byId.set(String(v.id), v);
+  });
+  try {
+    const api = await firebaseInitPromise;
+    if (api && api.ready && typeof api.getAllVotersFs === "function") {
+      const remoteVoters = await api.getAllVotersFs();
+      if (Array.isArray(remoteVoters)) {
+        remoteVoters.forEach((v) => {
+          if (!v || v.id == null) return;
+          const key = String(v.id);
+          // Prefer remote doc fields, but keep any local-only fields if present.
+          byId.set(key, { ...(byId.get(key) || {}), ...v });
+        });
+      }
+    }
+  } catch (_) {}
+  const allVoters = Array.from(byId.values());
+  const byIdLookup = new Map(allVoters.map((v) => [String(v.id), v]));
+  const assignedMetaByVoterId = new Map(); // voterId -> { global: bool, candidateIds:Set<string> }
+
+  function ensureMeta(voterId) {
+    const key = String(voterId);
+    if (!assignedMetaByVoterId.has(key)) {
+      assignedMetaByVoterId.set(key, { global: false, candidateIds: new Set() });
+    }
+    return assignedMetaByVoterId.get(key);
+  }
+
+  // 1) Global assignment from voter.volunteer (Door to Door / Pledges global field)
+  allVoters.forEach((v) => {
+    const volunteerRaw = v && v.volunteer != null ? v.volunteer : "";
+    const volunteerName = volunteerRaw && typeof volunteerRaw === "object" ? volunteerRaw.name : volunteerRaw;
+    const volunteerId = volunteerRaw && typeof volunteerRaw === "object" ? volunteerRaw.id : "";
+    if (matchesAgent({ assignedName: volunteerName, assignedId: volunteerId })) {
+      ensureMeta(v.id).global = true;
+    }
+  });
+
+  // 2) Candidate-scoped assignment maps used in candidate/report views
+  const candidateNameById = new Map(
+    getCandidates().map((c) => [String(c.id), String(c.name || c.id || "").trim()])
+  );
+
+  // 2a) Candidate-scoped assignments persisted on voter documents (shared across logins/devices).
+  allVoters.forEach((v) => {
+    if (!v || !v.id) return;
+    const byIdObj = v.candidateAgentAssignmentIds;
+    if (byIdObj && typeof byIdObj === "object") {
+      Object.entries(byIdObj).forEach(([candidateId, assignedAgentId]) => {
+        if (!matchesAgent({ assignedName: "", assignedId: assignedAgentId })) return;
+        ensureMeta(v.id).candidateIds.add(String(candidateId));
+      });
+    }
+    const obj = v.candidateAgentAssignments;
+    if (!obj || typeof obj !== "object") return;
+    Object.entries(obj).forEach(([candidateId, assignedAgentName]) => {
+      const raw = assignedAgentName;
+      const name = raw && typeof raw === "object" ? raw.name : raw;
+      const id = raw && typeof raw === "object" ? raw.id : "";
+      if (!matchesAgent({ assignedName: name, assignedId: id })) return;
+      ensureMeta(v.id).candidateIds.add(String(candidateId));
+    });
+  });
+
+  // 2b) Legacy per-browser candidate-scoped maps (keep for backward compatibility).
+  const CAND_ASSIGN_PREFIX = "candidatePledgedAgentAssignments:v2:";
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i) || "";
+    if (!key.startsWith(CAND_ASSIGN_PREFIX)) continue;
+    const candidateId = key.slice(CAND_ASSIGN_PREFIX.length);
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const map = JSON.parse(raw);
+      if (!map || typeof map !== "object") continue;
+      Object.entries(map).forEach(([voterId, assignedVal]) => {
+        const assignedName = assignedVal && typeof assignedVal === "object" ? assignedVal.name : assignedVal;
+        const assignedId = assignedVal && typeof assignedVal === "object" ? assignedVal.id || "" : "";
+        if (matchesAgent({ assignedName, assignedId })) {
+          ensureMeta(voterId).candidateIds.add(String(candidateId));
+        }
+      });
+    } catch (_) {}
+  }
+
+  const assigned = Array.from(assignedMetaByVoterId.entries())
+    .map(([voterId, meta]) => {
+      const v = byIdLookup.get(String(voterId));
+      if (!v) return null;
+      const candidateScopes = Array.from(meta.candidateIds)
+        .map((cid) => candidateNameById.get(cid) || `Candidate ${cid}`)
+        .filter(Boolean)
+        .join(", ");
+      return {
+        voter: v,
+        assignmentScope:
+          meta.global && candidateScopes
+            ? `Global + ${candidateScopes}`
+            : meta.global
+              ? "Global"
+              : candidateScopes || "Candidate scope",
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const sa = Number(a.voter && a.voter.sequence != null ? a.voter.sequence : NaN);
+      const sb = Number(b.voter && b.voter.sequence != null ? b.voter.sequence : NaN);
+      const aHas = Number.isFinite(sa);
+      const bHas = Number.isFinite(sb);
+      if (aHas && bHas) return sa - sb;
+      if (aHas) return -1;
+      if (bHas) return 1;
+      return String(a.voter?.fullName || "").localeCompare(String(b.voter?.fullName || ""), "en");
+    });
+
+  const body = document.createElement("div");
+  body.className = "modal-body-inner";
+  const toolbar = document.createElement("div");
+  toolbar.className = "modal-list-toolbar list-toolbar";
+  const boxes = [...new Set(assigned.map((x) => String(x.voter.ballotBox || "").trim()).filter(Boolean))].sort();
+  toolbar.innerHTML = `
+    <div class="list-toolbar__search">
+      <label for="agentAssignedSearch" class="sr-only">Search</label>
+      <input type="search" id="agentAssignedSearch" placeholder="Search by name, ID, address, phone, notes…" aria-label="Search assigned voters">
+    </div>
+    <div class="list-toolbar__controls">
+      <div class="field-group field-group--inline">
+        <label for="agentAssignedFilterPledge">Filter</label>
+        <select id="agentAssignedFilterPledge">
+          <option value="all">All</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+          <option value="undecided">Undecided</option>
+        </select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="agentAssignedFilterBox">Ballot box</label>
+        <select id="agentAssignedFilterBox">
+          <option value="all">All</option>
+          ${boxes.map((b) => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="agentAssignedSort">Sort</label>
+        <select id="agentAssignedSort">
+          <option value="sequence">Seq</option>
+          <option value="name-asc">Name A-Z</option>
+          <option value="name-desc">Name Z-A</option>
+          <option value="id">ID Number</option>
+          <option value="box">Ballot box</option>
+          <option value="pledge">Pledge</option>
+          <option value="voted">Voted at</option>
+        </select>
+      </div>
+    </div>
+  `;
+  body.appendChild(toolbar);
+
+  const summary = document.createElement("p");
+  summary.className = "helper-text";
+  summary.style.margin = "0 0 8px";
+  summary.textContent = `Agent: ${agent.name || "—"} • Assigned voters: ${assigned.length}`;
+  body.appendChild(summary);
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-wrapper";
+  body.appendChild(tableWrap);
+
+  function sortRows(list, sortBy) {
+    const rows = [...list];
+    rows.sort((a, b) => {
+      const va = a.voter || {};
+      const vb = b.voter || {};
+      switch (sortBy) {
+        case "name-desc":
+          return String(vb.fullName || "").localeCompare(String(va.fullName || ""), "en");
+        case "name-asc":
+          return String(va.fullName || "").localeCompare(String(vb.fullName || ""), "en");
+        case "id":
+          return String(va.nationalId || va.id || "").localeCompare(String(vb.nationalId || vb.id || ""), "en");
+        case "box":
+          return String(va.ballotBox || "").localeCompare(String(vb.ballotBox || ""), "en");
+        case "pledge":
+          return String(va.pledgeStatus || "").localeCompare(String(vb.pledgeStatus || ""), "en");
+        case "voted":
+          return String(vb.votedAt || "").localeCompare(String(va.votedAt || ""), "en");
+        case "sequence":
+        default: {
+          const sa = Number(va.sequence != null ? va.sequence : NaN);
+          const sb = Number(vb.sequence != null ? vb.sequence : NaN);
+          const aHas = Number.isFinite(sa);
+          const bHas = Number.isFinite(sb);
+          if (aHas && bHas) return sa - sb;
+          if (aHas) return -1;
+          if (bHas) return 1;
+          return String(va.fullName || "").localeCompare(String(vb.fullName || ""), "en");
+        }
+      }
+    });
+    return rows;
+  }
+
+  function render() {
+    const q = String(body.querySelector("#agentAssignedSearch")?.value || "").trim().toLowerCase();
+    const filterPledge = String(body.querySelector("#agentAssignedFilterPledge")?.value || "all");
+    const filterBox = String(body.querySelector("#agentAssignedFilterBox")?.value || "all");
+    const sortBy = String(body.querySelector("#agentAssignedSort")?.value || "sequence");
+
+    let list = assigned.filter((x) => {
+      const v = x.voter || {};
+      if (filterPledge !== "all" && String(v.pledgeStatus || "undecided") !== filterPledge) return false;
+      if (filterBox !== "all" && String(v.ballotBox || "").trim() !== filterBox) return false;
+      if (!q) return true;
+      const hay = [
+        v.fullName,
+        v.nationalId,
+        v.id,
+        v.phone,
+        v.permanentAddress,
+        v.ballotBox,
+        v.notes,
+        v.callComments,
+        x.assignmentScope,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+    list = sortRows(list, sortBy);
+
+    if (!list.length) {
+      tableWrap.innerHTML = `<p class="helper-text" style="padding: 12px 0;">No assigned voters match your filters.</p>`;
+      return;
+    }
+
+    const rowsHtml = list
+      .map((row) => {
+        const v = row.voter || {};
+        const initials = (v.fullName || "")
+          .split(" ")
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((p) => p[0]?.toUpperCase() || "")
+          .join("") || "?";
+        const photoSrc = getVoterImageSrc(v);
+        const imgOnError =
+          "var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
+        const photoCell = photoSrc
+          ? `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="${imgOnError}"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+          : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+        return `
+          <tr>
+            <td>${escapeHtml(v.sequence != null && v.sequence !== "" ? String(v.sequence) : "—")}</td>
+            <td>${photoCell}</td>
+            <td class="data-table-col--name">${escapeHtml(v.fullName || "—")}</td>
+            <td>${escapeHtml(v.nationalId || v.id || "—")}</td>
+            <td>${escapeHtml(v.phone || "—")}</td>
+            <td>${escapeHtml(v.permanentAddress || "—")}</td>
+            <td>${escapeHtml(v.ballotBox || "—")}</td>
+            <td>${escapeHtml(v.pledgeStatus || "undecided")}</td>
+            <td>${escapeHtml(v.supportStatus || "—")}</td>
+            <td>${escapeHtml(v.metStatus || "—")}</td>
+            <td>${escapeHtml(v.persuadable || "—")}</td>
+            <td>${escapeHtml(v.pledgedAt || "—")}</td>
+            <td class="voted-status-cell">${escapeHtml(v.votedAt || "—")}</td>
+            <td>${escapeHtml(row.assignmentScope || "—")}</td>
+            <td>${escapeHtml(v.notes || v.callComments || "—")}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    tableWrap.innerHTML = `
+      <table class="data-table" aria-label="Assigned voters list">
+        <thead>
+          <tr>
+            <th>Seq</th>
+            <th>Image</th>
+            <th>Name</th>
+            <th>ID Number</th>
+            <th>Phone</th>
+            <th>Permanent Address</th>
+            <th>Ballot box</th>
+            <th>Pledge</th>
+            <th>Support</th>
+            <th>Met?</th>
+            <th>Persuadable?</th>
+            <th>Date pledged</th>
+            <th>Voted at</th>
+            <th>Assigned in</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    `;
+  }
+
+  body.querySelector("#agentAssignedSearch")?.addEventListener("input", render);
+  body.querySelector("#agentAssignedFilterPledge")?.addEventListener("change", render);
+  body.querySelector("#agentAssignedFilterBox")?.addEventListener("change", render);
+  body.querySelector("#agentAssignedSort")?.addEventListener("change", render);
+  render();
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "ghost-button";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeModal());
+  footer.appendChild(closeBtn);
+
+  openModal({ title: "Assigned voters", body, footer });
+}
+
 /** Delete agent (D in CRUD) — Firestore + local cache. */
 async function deleteAgentRecord(agent) {
   if (!agent || agent.id == null) return;
@@ -1113,6 +1454,7 @@ function renderAgentsTable() {
       <td class="settings-agents-actions-col">
         <div class="settings-agents-crud" role="group" aria-label="Agent actions">
           <button type="button" class="ghost-button ghost-button--small" data-view-agent="${escapeHtml(aid)}" title="View details">View</button>
+          <button type="button" class="ghost-button ghost-button--small" data-view-agent-voters="${escapeHtml(aid)}" title="View assigned voters">Voters</button>
           ${mutateActions}
         </div>
       </td>
@@ -1136,6 +1478,14 @@ function renderAgentsTable() {
       const id = btn.getAttribute("data-view-agent");
       const agent = agents.find((x) => String(x.id) === String(id));
       if (agent) openAgentViewModal(agent);
+    });
+  });
+
+  tbody.querySelectorAll("[data-view-agent-voters]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-view-agent-voters");
+      const agent = agents.find((x) => String(x.id) === String(id));
+      if (agent) openAgentAssignedVotersModal(agent);
     });
   });
 

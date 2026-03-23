@@ -1,6 +1,12 @@
 import "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
-import { initVotersModule, getVoterStats, getPledgeByBallotBox, refreshVotersFromStorage } from "./voters.js";
+import {
+  initVotersModule,
+  getVoterStats,
+  getPledgeByBallotBox,
+  refreshVotersFromStorage,
+  syncCandidateAssignmentsToFirebase,
+} from "./voters.js";
 import { initPledgesModule, getPledgeStatsFromPledges } from "./pledges.js";
 import { initEventsModule, getUpcomingEventsSummary } from "./events.js";
 import { initReportsModule } from "./reports.js";
@@ -673,6 +679,7 @@ async function startAppModules(firebaseApi) {
       refreshBtn.classList.add("topbar__refresh-btn--spinning");
       try {
         await syncCampaignConfigFromFirestore();
+        await syncCandidateAssignmentsToFirebase();
         refreshVotersFromStorage();
         const scope = {
           electionType: electionTypeSelect.value,
