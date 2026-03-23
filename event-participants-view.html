@@ -9,44 +9,44 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
-  <style>
-    .event-share-page { max-width: 1100px; margin: 0 auto; padding: 24px; }
-    .event-share-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .event-share-toolbar__left { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .event-share-table-wrap { overflow: auto; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface); }
-    .event-share-table-wrap table { width: 100%; min-width: 860px; }
-  </style>
 </head>
 <body>
-  <div class="event-share-page">
-    <header style="margin-bottom:14px;">
-      <h1 id="eventShareTitle">Loading…</h1>
-      <p id="eventShareSubtitle" class="helper-text">Shared participants list. You can add and edit rows.</p>
-    </header>
-    <div class="event-share-toolbar">
-      <div class="event-share-toolbar__left">
-        <button type="button" class="ghost-button ghost-button--small" id="eventShareRefreshBtn">Refresh</button>
-        <button type="button" class="ghost-button ghost-button--small" id="eventShareAddBtn">Add participant</button>
+  <main class="event-share-page">
+    <section class="split-layout__panel event-share-panel">
+      <header class="panel-header event-share-panel__header">
+        <div class="panel-header-main">
+          <h1 id="eventShareTitle">Loading…</h1>
+          <p id="eventShareSubtitle" class="panel-subtitle">Shared participants list. You can add and edit rows.</p>
+        </div>
+        <div class="event-share-toolbar__left">
+          <button type="button" class="ghost-button ghost-button--small" id="eventShareRefreshBtn">Refresh</button>
+          <button type="button" class="primary-button" id="eventShareAddBtn">Add participant</button>
+        </div>
+      </header>
+      <div class="event-share-toolbar modal-list-toolbar list-toolbar">
+        <div class="list-toolbar__search">
+          <label for="eventShareSearch" class="sr-only">Search participants</label>
+          <input type="search" id="eventShareSearch" class="input" placeholder="Search by name, ID, phone, address, notes…">
+        </div>
       </div>
-      <input type="search" id="eventShareSearch" class="input" placeholder="Search by name, ID, phone, address, notes…" style="max-width:420px;">
-    </div>
-    <div class="event-share-table-wrap">
-      <table class="data-table" id="eventShareTable">
-        <thead>
-          <tr>
-            <th class="data-table-col--name">Name</th>
-            <th>ID Number</th>
-            <th>Phone</th>
-            <th>Address</th>
-            <th>Notes</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="eventShareTbody"></tbody>
-      </table>
-    </div>
-    <p id="eventShareEmpty" class="text-muted" style="display:none; padding-top:10px;">No participants yet.</p>
-  </div>
+      <div class="event-share-table-wrap table-wrapper">
+        <table class="data-table" id="eventShareTable">
+          <thead>
+            <tr>
+              <th class="data-table-col--name">Name</th>
+              <th>ID Number</th>
+              <th>Phone</th>
+              <th>Address</th>
+              <th>Notes</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="eventShareTbody"></tbody>
+        </table>
+      </div>
+      <p id="eventShareEmpty" class="text-muted event-share-empty" style="display:none;">No participants yet.</p>
+    </section>
+  </main>
   <script type="module" src="event-participants-view.js"></script>
 </body>
 </html>

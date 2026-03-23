@@ -136,6 +136,13 @@ function getCandidatesListFromStorage() {
   }
 }
 
+/** Display label for candidate id (same idea as settings.js; local-only to avoid circular imports). */
+function candidateLabelById(id) {
+  if (!id) return "All campaigns";
+  const c = getCandidatesListFromStorage().find((x) => String(x.id) === String(id));
+  return c ? String(c.name || c.id || id) : `Candidate #${id}`;
+}
+
 const VOTER_DETAIL_AGENT_SCOPE_KEY = "voterDetailAgentCandidateScope";
 const ALL_CAMPAIGN_SCOPE_KEY = "__all_campaign__";
 
@@ -146,6 +153,23 @@ function getViewerIsAdmin() {
   } catch (_) {
     return false;
   }
+}
+
+function getAgentScopeId(agent) {
+  const raw = agent && agent.candidateId;
+  if (raw === null || raw === undefined || raw === "") return "";
+  const s = String(raw).trim();
+  return s && s !== "undefined" && s !== "null" ? s : "";
+}
+
+/** Candidate login can assign candidate-scoped agents and all-campaign (unscoped) agents. */
+function getCandidateAssignableAgents(candidateId) {
+  const cid = String(candidateId || "").trim();
+  if (!cid) return [];
+  return getAgentsFromStorage().filter((a) => {
+    const scopeId = getAgentScopeId(a);
+    return !scopeId || scopeId === cid;
+  });
 }
 
 const VOTERS_MODULE_DESC_DEFAULT =
@@ -837,11 +861,32 @@ function renderVoterDetails(voter) {
         }
       } catch (_) {}
       const assignedName = assignedByVoterId[String(voter.id)] || "";
-      const agentOptions = buildAgentOptions(assignedName);
+      const agentOptions =
+        '<option value="">Unassigned</option>' +
+        getCandidateAssignableAgents(candCtx.candidateId)
+          .map(
+            (a) =>
+              `<option value="${escapeHtml(a.name)}"${
+                a.name === assignedName ? " selected" : ""
+              }>${escapeHtml(a.name)}</option>`
+          )
+          .join("");
       return `
       <section class="voter-details-section voter-details-section--full voter-details-section--agent">
         <h3 class="voter-details-section__title">Assigned agent — All Campaign</h3>
         <div class="details-grid details-grid--two-column">
+          <div>
+            <div class="detail-item-label">Candidate scope</div>
+            <div class="detail-item-value">
+              <div class="field-group">
+                <label class="sr-only">Candidate for assignment</label>
+                <select class="agent-dropdown-select agent-dropdown-select--modal" aria-label="Candidate for agent assignment" disabled>
+                  <option value="${escapeHtml(String(candCtx.candidateId))}" selected>${escapeHtml(candidateLabelById(candCtx.candidateId))}</option>
+                </select>
+              </div>
+              <p class="helper-text" style="margin-top:6px;">Uses the same per-candidate assignments as Reports → pledged voters.</p>
+            </div>
+          </div>
           <div class="voter-details-agent-col">
             <div class="detail-item-label">Agent</div>
             <div class="detail-item-value detail-item-value--agent-stack">
@@ -856,7 +901,7 @@ function renderVoterDetails(voter) {
                 ${agentOptions}
               </select>
               <button type="button" class="ghost-button ghost-button--small voter-details-agent-add-btn" id="candidateVoterAddAgentBtn">Add new agent…</button>
-              <p class="helper-text voter-details-agent-hint">Assign follow-up for the wider campaign. New agents must use a proper full name (first and last).</p>
+              <p class="helper-text voter-details-agent-hint">Candidate scope is fixed to your login. New agents must use a proper full name (first and last).</p>
             </div>
           </div>
         </div>
@@ -1206,7 +1251,7 @@ function renderVoterDetails(voter) {
       agentSel,
       agentSearchInput,
       menuEl: agentMenu,
-      getAgents: () => filterAgentsForViewer(getAgentsFromStorage()),
+      getAgents: () => getCandidateAssignableAgents(candCtx.candidateId),
     });
     function applyAgentFromSearch() {
       if (!agentSel || !agentSearchInput) return;
@@ -1216,7 +1261,7 @@ function renderVoterDetails(voter) {
         agentSel.dispatchEvent(new Event("change"));
         return;
       }
-      const list = filterAgentsForViewer(getAgentsFromStorage());
+      const list = getCandidateAssignableAgents(candCtx.candidateId);
       const exact =
         list.find((a) => String(a.name || "").trim().toLowerCase() === q.toLowerCase()) ||
         list.find((a) => String(a.name || "").trim().toLowerCase().includes(q.toLowerCase()));
@@ -1234,7 +1279,7 @@ function renderVoterDetails(voter) {
       if (!agentSearchInput || !agentSel) return;
       const q = String(agentSearchInput.value || "").trim().toLowerCase();
       if (!q) return;
-      const list = filterAgentsForViewer(getAgentsFromStorage());
+      const list = getCandidateAssignableAgents(candCtx.candidateId);
       const exact = list.find((a) => String(a.name || "").trim().toLowerCase() === q);
       if (exact) {
         agentSel.value = exact.name || "";
@@ -1267,7 +1312,7 @@ function renderVoterDetails(voter) {
           }
           const selectedName = agentSel.value || "";
           const selectedAgent =
-            filterAgentsForViewer(getAgentsFromStorage()).find(
+            getCandidateAssignableAgents(candCtx.candidateId).find(
               (a) => String(a?.name || "").trim() === String(selectedName).trim()
             ) || null;
           v.candidateAgentAssignments[String(candCtx.candidateId)] = agentSel.value || "";

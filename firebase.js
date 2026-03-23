@@ -114,6 +114,11 @@ export const firebaseInitPromise = (async () => {
     try {
       const firestoreMod = await import(`${SDK_BASE}/firebase-firestore.js`);
       db = firestoreMod.getFirestore(app);
+      /** Avoid "Uncaught Error in snapshot listener" when rules/auth deny; log once per path. */
+      const onSnapshotSafe = (ref, onNext, label) =>
+        firestoreMod.onSnapshot(ref, onNext, (err) => {
+          console.warn(`[Firestore] listener ${label}:`, err?.code || "", err?.message || err);
+        });
       const configRef = firestoreMod.doc(db, CAMPAIGN_CONFIG_COLLECTION, CAMPAIGN_CONFIG_DOC);
       // Read
       getFirestoreCampaignConfig = async () => {
@@ -182,10 +187,14 @@ export const firebaseInitPromise = (async () => {
       onVotedSnapshotForMonitor = (token, handler) => {
         if (!token || typeof handler !== "function") return noopUnsubscribe;
         const ref = firestoreMod.collection(db, MONITORS_COLLECTION, String(token), "voted");
-        return firestoreMod.onSnapshot(ref, (snap) => {
-          const entries = snap.docs.map((d) => ({ voterId: d.id, timeMarked: d.data().timeMarked }));
-          handler(entries);
-        });
+        return onSnapshotSafe(
+          ref,
+          (snap) => {
+            const entries = snap.docs.map((d) => ({ voterId: d.id, timeMarked: d.data().timeMarked }));
+            handler(entries);
+          },
+          `monitors/${String(token)}/voted`
+        );
       };
       deleteMonitorDoc = async (token) => {
         if (!token) return;
@@ -222,10 +231,14 @@ export const firebaseInitPromise = (async () => {
 
       onVotersSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
-        return firestoreMod.onSnapshot(votersColRef, (snap) => {
-          const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          handler(items);
-        });
+        return onSnapshotSafe(
+          votersColRef,
+          (snap) => {
+            const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            handler(items);
+          },
+          "voters"
+        );
       };
 
       // Agents collection
@@ -255,10 +268,14 @@ export const firebaseInitPromise = (async () => {
 
       onAgentsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
-        return firestoreMod.onSnapshot(agentsColRef, (snap) => {
-          const items = snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
-          handler(items);
-        });
+        return onSnapshotSafe(
+          agentsColRef,
+          (snap) => {
+            const items = snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
+            handler(items);
+          },
+          "agents"
+        );
       };
 
       // Candidates collection
@@ -289,10 +306,14 @@ export const firebaseInitPromise = (async () => {
 
       onCandidatesSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
-        return firestoreMod.onSnapshot(candidatesColRef, (snap) => {
-          const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          handler(items);
-        });
+        return onSnapshotSafe(
+          candidatesColRef,
+          (snap) => {
+            const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            handler(items);
+          },
+          "candidates"
+        );
       };
 
       // Voter lists (saved lists)
@@ -330,9 +351,13 @@ export const firebaseInitPromise = (async () => {
       };
       onVoterListsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
-        return firestoreMod.onSnapshot(voterListsColRef, (snap) => {
-          handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        });
+        return onSnapshotSafe(
+          voterListsColRef,
+          (snap) => {
+            handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          "voterLists"
+        );
       };
 
       // Shared list (candidate link) – doc id = token
@@ -411,9 +436,13 @@ export const firebaseInitPromise = (async () => {
       onEventParticipantRowsSnapshotFs = (token, handler) => {
         if (!token || typeof handler !== "function") return noopUnsubscribe;
         const ref = firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
-        return firestoreMod.onSnapshot(ref, (snap) => {
-          handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        });
+        return onSnapshotSafe(
+          ref,
+          (snap) => {
+            handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          `eventParticipantShares/${String(token)}/rows`
+        );
       };
       const campaignUsersColRef = firestoreMod.collection(db, CAMPAIGN_USERS_COLLECTION);
       getCampaignUserByEmailFs = async (email) => {
@@ -463,9 +492,13 @@ export const firebaseInitPromise = (async () => {
       onListShareStatusSnapshotFs = (token, handler) => {
         if (!token || typeof handler !== "function") return noopUnsubscribe;
         const ref = firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status");
-        return firestoreMod.onSnapshot(ref, (snap) => {
-          handler(snap.docs.map((d) => ({ voterId: d.id, ...d.data() })));
-        });
+        return onSnapshotSafe(
+          ref,
+          (snap) => {
+            handler(snap.docs.map((d) => ({ voterId: d.id, ...d.data() })));
+          },
+          `voterListShares/${String(token)}/status`
+        );
       };
       getListStatusByVoterIdFs = async (voterId) => {
         const lists = await firestoreMod.getDocs(voterListsColRef);
@@ -501,9 +534,13 @@ export const firebaseInitPromise = (async () => {
       };
       onEventsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
-        return firestoreMod.onSnapshot(eventsColRef, (snap) => {
-          handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        });
+        return onSnapshotSafe(
+          eventsColRef,
+          (snap) => {
+            handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          "events"
+        );
       };
 
       // Zero Day transport trips
@@ -539,13 +576,17 @@ export const firebaseInitPromise = (async () => {
       };
       onTransportTripsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
-        return firestoreMod.onSnapshot(transportTripsColRef, (snap) => {
-          handler(snap.docs.map((d) => {
-            const id = Number(d.id);
-            const data = d.data();
-            return { id: isNaN(id) ? d.id : id, ...data, voterIds: Array.isArray(data.voterIds) ? data.voterIds : [] };
-          }));
-        });
+        return onSnapshotSafe(
+          transportTripsColRef,
+          (snap) => {
+            handler(snap.docs.map((d) => {
+              const id = Number(d.id);
+              const data = d.data();
+              return { id: isNaN(id) ? d.id : id, ...data, voterIds: Array.isArray(data.voterIds) ? data.voterIds : [] };
+            }));
+          },
+          "transportTrips"
+        );
       };
     } catch (fsErr) {
       // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
