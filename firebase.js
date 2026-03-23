@@ -27,6 +27,7 @@ const MONITORS_COLLECTION = "monitors";
 const VOTER_LISTS_COLLECTION = "voterLists";
 const VOTER_LIST_SHARES_COLLECTION = "voterListShares";
 const PLEDGED_REPORT_SHARES_COLLECTION = "pledgedReportShares";
+const EVENT_PARTICIPANT_SHARES_COLLECTION = "eventParticipantShares";
 const CAMPAIGN_USERS_COLLECTION = "campaignUsers";
 const EVENTS_COLLECTION = "events";
 const TRANSPORT_TRIPS_COLLECTION = "transportTrips";
@@ -94,6 +95,13 @@ export const firebaseInitPromise = (async () => {
     let setListShareFs = async () => {};
     let getPledgedReportShareByTokenFs = async () => null;
     let setPledgedReportShareFs = async () => {};
+    let getEventParticipantShareByTokenFs = async () => null;
+    let setEventParticipantShareFs = async () => {};
+    let getEventParticipantRowsFs = async () => [];
+    let getEventParticipantRowsFromServerFs = async () => [];
+    let setEventParticipantRowFs = async () => {};
+    let deleteEventParticipantRowFs = async () => {};
+    let onEventParticipantRowsSnapshotFs = () => noopUnsubscribe;
     let getCampaignUserByEmailFs = async () => null;
     let getAllCampaignUsersFs = async () => [];
     let setCampaignUserFs = async () => {};
@@ -352,6 +360,61 @@ export const firebaseInitPromise = (async () => {
         const ref = firestoreMod.doc(db, PLEDGED_REPORT_SHARES_COLLECTION, String(token));
         await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
       };
+      // Event participants share (doc id = token, collaborative row edits in subcollection)
+      getEventParticipantShareByTokenFs = async (token) => {
+        if (!token) return null;
+        const ref = firestoreMod.doc(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token));
+        const snap = await firestoreMod.getDoc(ref);
+        if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
+        return null;
+      };
+      setEventParticipantShareFs = async (token, data) => {
+        if (!token) return;
+        const ref = firestoreMod.doc(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token));
+        await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+      };
+      getEventParticipantRowsFs = async (token) => {
+        if (!token) return [];
+        const ref = firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
+        const snap = await firestoreMod.getDocs(ref);
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      };
+      getEventParticipantRowsFromServerFs = async (token) => {
+        if (!token) return [];
+        const ref = firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
+        const getDocsFromServer = firestoreMod.getDocsFromServer || firestoreMod.getDocs;
+        const snap = await getDocsFromServer(ref);
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      };
+      setEventParticipantRowFs = async (token, rowId, data) => {
+        if (!token || !rowId) return;
+        const ref = firestoreMod.doc(
+          db,
+          EVENT_PARTICIPANT_SHARES_COLLECTION,
+          String(token),
+          "rows",
+          String(rowId)
+        );
+        await firestoreMod.setDoc(ref, { ...(data || {}), updatedAt: new Date().toISOString() }, { merge: true });
+      };
+      deleteEventParticipantRowFs = async (token, rowId) => {
+        if (!token || !rowId) return;
+        const ref = firestoreMod.doc(
+          db,
+          EVENT_PARTICIPANT_SHARES_COLLECTION,
+          String(token),
+          "rows",
+          String(rowId)
+        );
+        await firestoreMod.deleteDoc(ref);
+      };
+      onEventParticipantRowsSnapshotFs = (token, handler) => {
+        if (!token || typeof handler !== "function") return noopUnsubscribe;
+        const ref = firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
+        return firestoreMod.onSnapshot(ref, (snap) => {
+          handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        });
+      };
       const campaignUsersColRef = firestoreMod.collection(db, CAMPAIGN_USERS_COLLECTION);
       getCampaignUserByEmailFs = async (email) => {
         if (!email) return null;
@@ -539,6 +602,13 @@ export const firebaseInitPromise = (async () => {
       setListShareFs,
       getPledgedReportShareByTokenFs,
       setPledgedReportShareFs,
+      getEventParticipantShareByTokenFs,
+      setEventParticipantShareFs,
+      getEventParticipantRowsFs,
+      getEventParticipantRowsFromServerFs,
+      setEventParticipantRowFs,
+      deleteEventParticipantRowFs,
+      onEventParticipantRowsSnapshotFs,
       getCampaignUserByEmailFs,
       getAllCampaignUsersFs,
       setCampaignUserFs,

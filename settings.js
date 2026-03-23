@@ -287,20 +287,26 @@ function normalizeAgentNationalId(s) {
   return String(s || "").trim().replace(/\s+/g, "");
 }
 
+function normalizeAgentName(s) {
+  return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function normalizeAgentCandidateScope(c) {
   if (c == null || c === "") return "";
   return String(c).trim();
 }
 
-/** Returns the existing agent row if this national ID + scope is already registered, else null. */
-function getDuplicateAgentInScope({ nationalId, candidateId, excludeAgentId }) {
+/** Returns existing agent row if same name or national ID exists in this scope. */
+function getDuplicateAgentInScope({ name, nationalId, candidateId, excludeAgentId }) {
   const nid = normalizeAgentNationalId(nationalId);
-  if (!nid) return null;
+  const nameKey = normalizeAgentName(name);
   const scope = normalizeAgentCandidateScope(candidateId);
   return (
     agents.find((a) => {
       if (excludeAgentId != null && String(a.id) === String(excludeAgentId)) return false;
-      if (normalizeAgentNationalId(a.nationalId) !== nid) return false;
+      const sameNid = nid && normalizeAgentNationalId(a.nationalId) === nid;
+      const sameName = nameKey && normalizeAgentName(a.name) === nameKey;
+      if (!sameNid && !sameName) return false;
       return normalizeAgentCandidateScope(a.candidateId) === scope;
     }) || null
   );
@@ -864,6 +870,7 @@ export function openAgentModal(existing = null, options = {}) {
 
     const scopeForDup = (candidateId || "").trim();
     const existingDup = getDuplicateAgentInScope({
+      name,
       nationalId,
       candidateId: scopeForDup || null,
       excludeAgentId: isEdit && existing?.id != null ? existing.id : null,
@@ -872,11 +879,11 @@ export function openAgentModal(existing = null, options = {}) {
       const scopeLabel = scopeForDup
         ? candidateLabelById(scopeForDup)
         : "All campaigns (unscoped)";
-      const existingLabel = (existingDup.name || "").trim() || "this national ID";
+      const existingLabel = (existingDup.name || "").trim() || "this agent";
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Agent already exists",
-          meta: `An agent with this national ID is already registered for ${scopeLabel}. Existing: ${existingLabel} (agent ID ${existingDup.id}). Remove or edit that record instead of adding again.`,
+          meta: `An agent with the same name or national ID is already registered for ${scopeLabel}. Existing: ${existingLabel} (agent ID ${existingDup.id}). Remove or edit that record instead of adding again.`,
         });
       }
       return;
