@@ -59,19 +59,20 @@ export function getAgentsFromStorage() {
 }
 
 /**
- * "Proper" full name: at least first + last name, each word capitalized (Latin letters), optional middle names.
+ * Agent full name: at least first + last word.
+ * Allows normal real-world entry styles (upper/lower/title case, hyphen/apostrophe).
  */
 export function isProperAgentFullName(name) {
   const s = String(name || "").trim();
   if (!s) return false;
   const parts = s.split(/\s+/).filter(Boolean);
   if (parts.length < 2) return false;
-  const wordOk = (w) => /^[A-Z][a-z]+(?:-[A-Za-z]+)?$/.test(w);
+  const wordOk = (w) => /^[A-Za-z][A-Za-z'’-]*$/.test(w);
   return parts.every(wordOk);
 }
 
 export function formatAgentNameHint() {
-  return "Use title case with first and last name, e.g. Ahmed Hassan.";
+  return "Use first and last name, e.g. Ahmed Hassan.";
 }
 
 /** localStorage key for per-candidate pledged-voter → agent name assignments */

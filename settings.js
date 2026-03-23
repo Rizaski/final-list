@@ -902,11 +902,11 @@ export function openAgentModal(existing = null, options = {}) {
       }
       return;
     }
-    if (!nationalId || !phone || !island) {
+    if (!nationalId || !phone) {
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Missing fields",
-          meta: "National ID, phone and island are required.",
+          meta: "National ID and phone are required.",
         });
       }
       return;
@@ -936,6 +936,7 @@ export function openAgentModal(existing = null, options = {}) {
     (async () => {
       try {
         const api = await firebaseInitPromise;
+        let savedToFirestore = false;
         const nextId =
           agents.length && agents.every((a) => a.id != null)
             ? agents.reduce((max, a) => Math.max(max, Number(a.id) || 0), 0) + 1
@@ -953,26 +954,35 @@ export function openAgentModal(existing = null, options = {}) {
 
         if (api.ready && api.setAgentFs) {
           await api.setAgentFs(agent);
-        } else {
-          if (isEdit) {
-            const ix = agents.findIndex((a) => String(a.id) === idStr);
-            if (ix >= 0) agents[ix] = agent;
-            else agents.push(agent);
-          } else {
-            agents.push(agent);
-          }
-          saveAgentsToStorage();
-          renderAgentsTable();
-          try {
-            window.agentsCached = [...agents];
-          } catch (_) {}
-          document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
+          savedToFirestore = true;
         }
+        // Always reflect successful create/update in local UI immediately.
+        if (isEdit) {
+          const ix = agents.findIndex((a) => String(a.id) === idStr);
+          if (ix >= 0) agents[ix] = agent;
+          else agents.push(agent);
+        } else {
+          agents.push(agent);
+        }
+        saveAgentsToStorage();
+        renderAgentsTable();
+        try {
+          window.agentsCached = [...agents];
+        } catch (_) {}
+        document.dispatchEvent(new CustomEvent("agents-updated", { detail: { agents: [...agents] } }));
         closeModal();
         if (window.appNotifications) {
           window.appNotifications.push({
-            title: isEdit ? "Agent updated" : "Agent created",
-            meta: name,
+            title: savedToFirestore
+              ? isEdit
+                ? "Agent updated"
+                : "Agent created"
+              : isEdit
+                ? "Agent updated (local only)"
+                : "Agent created (local only)",
+            meta: savedToFirestore
+              ? name
+              : `${name} — Firebase sync unavailable. Check connection/permissions.`,
           });
         }
       } catch (err) {

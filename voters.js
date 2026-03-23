@@ -162,13 +162,13 @@ function getAgentScopeId(agent) {
   return s && s !== "undefined" && s !== "null" ? s : "";
 }
 
-/** Candidate login can assign candidate-scoped agents and all-campaign (unscoped) agents. */
+/** Candidate login can assign only candidate-scoped agents for that candidate. */
 function getCandidateAssignableAgents(candidateId) {
   const cid = String(candidateId || "").trim();
   if (!cid) return [];
   return getAgentsFromStorage().filter((a) => {
     const scopeId = getAgentScopeId(a);
-    return !scopeId || scopeId === cid;
+    return scopeId === cid;
   });
 }
 
