@@ -2555,6 +2555,98 @@ export function updateVoterPledgeStatus(voterId, pledgeStatus) {
   })();
 }
 
+export function updateVoterTransportNeeded(voterId, transportNeeded) {
+  const v = currentVoters.find((x) => x.id === voterId);
+  if (!v) return;
+  v.transportNeeded = !!transportNeeded;
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+      saveVotersToStorage();
+      renderVotersTable();
+      if (selectedVoterId === voterId) renderVoterDetails(v);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+    } catch (_) {}
+  })();
+}
+
+/**
+ * Open the existing Voter Details panel as a modal popup (no navigation/scroll jump).
+ * This moves `#voterDetailsPanel` into the shared modal shell, then restores it on close.
+ */
+export function openVoterDetailsPopup(voterId) {
+  const voter = currentVoters.find((x) => String(x.id) === String(voterId));
+  if (!voter) {
+    openModal({
+      title: "Voter Details",
+      body: (() => {
+        const d = document.createElement("div");
+        d.className = "helper-text";
+        d.style.padding = "12px 0";
+        d.textContent = "Voter not found.";
+        return d;
+      })(),
+    });
+    return;
+  }
+
+  // Render details into the voters module panel first.
+  selectedVoterId = voter.id;
+  renderVoterDetails(voter);
+
+  const panel = document.getElementById("voterDetailsPanel");
+  if (!panel) {
+    openModal({
+      title: "Voter Details",
+      body: (() => {
+        const d = document.createElement("div");
+        d.className = "helper-text";
+        d.style.padding = "12px 0";
+        d.textContent = "Voter details UI not available.";
+        return d;
+      })(),
+    });
+    return;
+  }
+
+  const modalBackdrop = document.getElementById("modalBackdrop");
+  const originalParent = panel.parentElement;
+  if (!originalParent) return;
+
+  const placeholder = document.createElement("div");
+  placeholder.style.display = "none";
+
+  const next = panel.nextSibling;
+  originalParent.insertBefore(placeholder, next);
+
+  // Move the whole panel into the modal body.
+  const wrapper = document.createElement("div");
+  wrapper.style.width = "100%";
+  wrapper.appendChild(panel);
+
+  openModal({
+    title: "Voter Details",
+    body: wrapper,
+    startMaximized: true,
+    dialogClass: "modal--wide",
+  });
+
+  // Restore panel when modal is closed (X, backdrop click, or Esc).
+  if (modalBackdrop) {
+    const observer = new MutationObserver(() => {
+      // closeModal sets the `hidden` property; it usually maps to the attribute.
+      if (modalBackdrop.hidden) {
+        try {
+          placeholder.replaceWith(panel);
+        } catch (_) {}
+        observer.disconnect();
+      }
+    });
+    observer.observe(modalBackdrop, { attributes: true, attributeFilter: ["hidden"] });
+  }
+}
+
 /** Update pledge for a single candidate; candidateId is the candidate's id (number or string). */
 export function updateVoterCandidatePledge(voterId, candidateId, status) {
   const ctx = getCandidateContext();
@@ -2567,6 +2659,57 @@ export function updateVoterCandidatePledge(voterId, candidateId, status) {
     try {
       const api = await firebaseInitPromise;
       if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+      saveVotersToStorage();
+      renderVotersTable();
+      if (selectedVoterId === voterId) renderVoterDetails(v);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+    } catch (_) {}
+  })();
+}
+
+/** Update candidate-scoped assigned agent on the voter doc. */
+export function updateVoterCandidateAgentAssignment(voterId, candidateId, agentId, agentName) {
+  const ctx = getCandidateContext();
+  // Candidate logins should not set assignments for other candidates.
+  if (ctx && String(candidateId) !== String(ctx.candidateId)) return;
+
+  const v = currentVoters.find((x) => x.id === voterId);
+  if (!v) return;
+
+  const cid = String(candidateId);
+  const nextName = String(agentName || "");
+  const nextId = agentId == null ? "" : String(agentId);
+
+  if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
+    v.candidateAgentAssignments = {};
+  }
+  if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
+    v.candidateAgentAssignmentIds = {};
+  }
+
+  v.candidateAgentAssignments[cid] = nextName;
+  v.candidateAgentAssignmentIds[cid] = nextId;
+
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+
+      // Keep legacy per-candidate localStorage map in sync after successful cloud write.
+      if (cid) {
+        try {
+          const key = candidatePledgedAgentStorageKey(cid);
+          let map = {};
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && typeof p === "object") map = p;
+          }
+          map[String(voterId)] = nextName;
+          localStorage.setItem(key, JSON.stringify(map));
+        } catch (_) {}
+      }
+
       saveVotersToStorage();
       renderVotersTable();
       if (selectedVoterId === voterId) renderVoterDetails(v);

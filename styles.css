@@ -1759,6 +1759,28 @@ body.sidebar-collapsed .nav-item {
   justify-content: space-between;
 }
 
+/* Pledges details: inline title + info jump */
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pledges-details-info-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+}
+
+.pledges-details-info-btn:hover,
+.pledges-details-info-btn:focus-visible {
+  color: var(--color-text);
+}
+
 .panel-header-main h2 {
   margin: 0;
   font-size: 15px;
@@ -2373,6 +2395,11 @@ body.list-workspace-page {
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 10px;
+}
+
+/* Pledges toolbar: match list toolbar spacing */
+.pledges-toolbar__controls {
+  gap: 12px;
 }
 
 @media (max-width: 768px) {
@@ -3000,8 +3027,48 @@ body.list-workspace-page {
 }
 
 .data-table--pledges {
-  table-layout: fixed;
-  min-width: 960px;
+  table-layout: auto;
+  min-width: 0;
+}
+
+/* Prevent header text from visually spilling into neighboring columns */
+.data-table--pledges thead th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Prevent content from visually overflowing neighboring columns */
+.data-table--pledges .pledge-cell--id,
+.data-table--pledges .pledge-cell--address,
+.data-table--pledges .pledge-cell--ballotbox,
+.data-table--pledges .pledge-cell--pledge {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ensure header labels clip cleanly */
+.data-table--pledges .pledge-th--id,
+.data-table--pledges .pledge-th--address,
+.data-table--pledges .pledge-th--ballotbox,
+.data-table--pledges .pledge-th--pledge {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ensure pledge-table columns behave like the default voters table (no wrapping) */
+.data-table--pledges .pledge-th--id,
+.data-table--pledges .pledge-cell--id,
+.data-table--pledges .pledge-th--address,
+.data-table--pledges .pledge-cell--address,
+.data-table--pledges .pledge-th--ballotbox,
+.data-table--pledges .pledge-cell--ballotbox,
+.data-table--pledges .pledge-th--pledge,
+.data-table--pledges .pledge-cell--pledge {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  word-break: normal !important;
 }
 
 .data-table--door-to-door {
@@ -3152,6 +3219,23 @@ body.list-workspace-page {
   padding-right: 20px;
 }
 
+/* Pledges: make Seq column more compact */
+.data-table--pledges .pledge-th--sequence,
+.data-table--pledges .pledge-cell--sequence {
+  width: 1.75rem;
+  max-width: 2.2rem;
+  min-width: 1.25rem;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+/* Also reduce extra sortable-header padding for this column */
+.data-table--pledges .pledge-th--sequence.th-sortable {
+  padding-right: 12px;
+}
+
 /* Compact Name column (ellipsis, bounded width — matches Seq treatment) */
 .data-table th.data-table-col--name,
 .data-table td.data-table-col--name,
@@ -3192,10 +3276,28 @@ body.list-workspace-page {
 
 .data-table--pledges .pledge-th--address,
 .data-table--pledges .pledge-cell--address {
-  width: 14%;
-  min-width: 110px;
+  width: 13%;
+  min-width: 100px;
   white-space: normal;
   word-break: break-word;
+}
+
+.data-table--pledges .pledge-th--ballotbox,
+.data-table--pledges .pledge-cell--ballotbox {
+  width: 10%;
+  min-width: 95px;
+}
+
+.data-table--pledges .pledge-th--transport,
+.data-table--pledges .pledge-cell--transport {
+  width: 13%;
+  min-width: 105px;
+}
+
+.data-table--pledges .pledge-th--pledge,
+.data-table--pledges .pledge-cell--pledge {
+  width: 12%;
+  min-width: 105px;
 }
 
 .data-table--pledges .pledge-th--island,
@@ -3303,6 +3405,20 @@ body.list-workspace-page {
   align-items: center;
 }
 #doorToDoorTable .door-to-door-pledge-pill .door-to-door-pledge {
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-weight: 500;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* Pledges table: use the same inline select styling as Door-to-Door pledge column */
+.data-table--pledges .door-to-door-pledge-pill {
+  display: inline-flex;
+  align-items: center;
+}
+.data-table--pledges .door-to-door-pledge-pill .door-to-door-pledge {
   min-width: 0;
   border: none;
   background: transparent;
@@ -3420,20 +3536,206 @@ body.list-workspace-page {
   margin-top: 4px;
 }
 
-.candidate-pledge-row {
+.candidate-pledges-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 6px;
+}
+
+.candidate-pledge-row {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0;
+  border-radius: 0;
+  background-color: transparent;
+  flex-wrap: nowrap;
+}
+
+.candidate-pledge-name-box {
+  flex: 0 0 140px;
+  min-width: 0;
   padding: 6px 8px;
   border-radius: 8px;
-  background-color: #f9fafb;
+  background-color: #ffffff;
+  border: 1px solid var(--color-border-subtle);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
+.candidate-pledge-assigned-container {
+  display: grid;
+  grid-template-columns: 190px auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background-color: #ffffff;
+  border: 1px solid var(--color-border-subtle);
+  box-sizing: border-box;
+}
+
+.candidate-pledge-pledges-container {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background-color: #ffffff;
+  border: 1px solid var(--color-border-subtle);
+  box-sizing: border-box;
+  margin-left: auto;
+}
+
+.candidate-pledge-assigned-container {
+  flex-wrap: nowrap;
+}
+
+.candidate-pledge-pledges-container {
+  justify-content: flex-end;
 }
 
 .candidate-pledge-name {
   font-size: 13px;
   font-weight: 500;
   color: var(--color-text);
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  min-height: 32px;
+}
+
+/* Pledges details panel: candidate row layout + typography alignment */
+.pledges-details-root .candidate-pledge-row {
+  align-items: center;
+}
+
+.pledges-details-root .candidate-pledge-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.pledges-details-root .candidate-agent-select {
+  width: 190px;
+  min-width: 190px;
+  max-width: 190px;
+  flex: 0 0 190px;
+  box-sizing: border-box;
+  min-height: 36px;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  background-image: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.pledges-details-root .candidate-pledge-agentline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.pledges-details-root .candidate-pledge-agentline .voter-agent-dropdown {
+  flex: 0 0 190px;
+  min-width: 190px;
+  max-width: 190px;
+  width: 190px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.pledges-details-root .candidate-pledge-agentline .agent-modal-voter-search-input {
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+  background-color: #ffffff;
+  box-sizing: border-box;
+  font-family: inherit;
+  color: var(--color-text);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.pledges-details-root
+  .candidate-pledge-agentline
+  .agent-modal-voter-search-input:hover {
+  border-color: rgba(0, 156, 156, 0.35);
+}
+
+.pledges-details-root
+  .candidate-pledge-agentline
+  .agent-modal-voter-search-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+.pledges-details-root
+  .candidate-pledge-agentline
+  .agent-modal-voter-search-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.pledges-details-root .candidate-pledge-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+
+/* Keep Yes/No/Undecided on the far right */
+.pledges-details-root .candidate-pledge-row .pill-toggle-group {
+  margin-left: 0;
+}
+
+.pledges-details-root .candidate-pledge-agent-add-container {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+/* Match Voters detail "Add new agent" sizing */
+.pledges-details-root
+  .candidate-pledge-agent-add-container
+  .voter-details-agent-add-btn {
+  height: 32px;
+  padding: 4px 10px;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* (button sizing moved to candidate-pledge-agent-add-container) */
+
+.pledges-details-root .candidate-pledge-name {
+  font-size: 13px;
+  font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.pledges-details-root .pill-toggle {
+  font-size: 12px;
+  font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* Branded confirm dialog */

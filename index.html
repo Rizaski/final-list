@@ -593,11 +593,13 @@
               </div>
               <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                 <button type="button" class="primary-button" id="pledgesExportCsvButton">Export list as CSV</button>
-                <div class="dropdown-wrap">
-                  <button type="button" class="ghost-button" id="pledgeColumnsButton" title="Table view and candidate columns" aria-haspopup="true" aria-expanded="false">⋮</button>
-                  <div class="dropdown-menu" id="pledgeColumnsMenu" role="menu" hidden aria-label="Candidate columns">
-                    <div class="dropdown-menu__item" style="pointer-events:none; font-weight:600;">Show columns</div>
-                    <!-- Checkboxes for each candidate injected by pledges.js -->
+                <div class="dropdown-wrap table-view-dropdown" data-table-view-for="pledgesTable">
+                  <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" id="pledgeColumnsButton" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                  <div class="dropdown-menu" id="pledgeColumnsMenu" role="menu" hidden aria-label="Table view">
+                    <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
                   </div>
                 </div>
                 <div class="key-legend">
@@ -614,72 +616,94 @@
               </div>
             </header>
             <div class="card-body">
-              <div class="pledges-toolbar">
-                <div class="pledges-toolbar__search">
-                  <label for="pledgeSearch" class="sr-only">Search pledges</label>
-                  <input type="search" id="pledgeSearch" placeholder="Search by name, address, island, notes…">
-                </div>
-                <div class="pledges-toolbar__controls">
-                  <div class="field-group field-group--inline">
-                    <label for="pledgeSort">Sort</label>
-                    <select id="pledgeSort">
-                      <option value="sequence">Seq</option>
-                      <option value="name-asc">Name A–Z</option>
-                      <option value="name-desc">Name Z–A</option>
-                      <option value="id">ID Number</option>
-                      <option value="address">Permanent address</option>
-                      <option value="pledge">Pledge status</option>
-                      <option value="island">Ballot box</option>
-                      <option value="volunteer">Assigned agent</option>
-                      <option value="met">Met?</option>
-                      <option value="persuadable">Persuadable?</option>
-                      <option value="date">Date pledged</option>
-                      <option value="notes">Notes</option>
-                    </select>
+              <div class="split-layout">
+                <!-- Left: pledges table -->
+                <section class="split-layout__panel split-layout__panel--table">
+                  <div class="pledges-toolbar">
+                    <div class="pledges-toolbar__search">
+                      <label for="pledgeSearch" class="sr-only">Search pledges</label>
+                      <input type="search" id="pledgeSearch" placeholder="Search by name, address, island, notes…">
+                    </div>
+                    <div class="pledges-toolbar__controls">
+                      <div class="field-group field-group--inline">
+                        <label for="pledgeSort">Sort</label>
+                        <select id="pledgeSort">
+                          <option value="sequence">Seq</option>
+                          <option value="name-asc">Name A–Z</option>
+                          <option value="name-desc">Name Z–A</option>
+                          <option value="id">ID Number</option>
+                          <option value="address">Permanent address</option>
+                          <option value="pledge">Pledge status</option>
+                          <option value="island">Ballot box</option>
+                        </select>
+                      </div>
+                      <div class="field-group field-group--inline">
+                        <label for="pledgeFilterStatus">Filter</label>
+                        <select id="pledgeFilterStatus">
+                          <option value="all">All pledge statuses</option>
+                          <option value="yes">Yes</option>
+                          <option value="no">No</option>
+                          <option value="undecided">Undecided</option>
+                        </select>
+                      </div>
+                      <div class="field-group field-group--inline">
+                        <label for="pledgeGroupBy">Group by</label>
+                        <select id="pledgeGroupBy">
+                          <option value="none">None</option>
+                          <option value="island">Ballot box</option>
+                          <option value="pledge">Pledge status</option>
+                          <option value="address">Permanent address</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div class="field-group field-group--inline">
-                    <label for="pledgeFilterStatus">Filter</label>
-                    <select id="pledgeFilterStatus">
-                      <option value="all">All pledge statuses</option>
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
-                      <option value="undecided">Undecided</option>
-                    </select>
+
+                  <div class="table-wrapper table-wrapper--sticky-header table-wrapper--pledges">
+                    <table class="data-table data-table--pledges" id="pledgesTable" role="table" aria-label="Pledges list">
+                      <thead>
+                        <tr>
+                          <th scope="col" class="pledge-th pledge-th--sequence th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
+                          <th scope="col" class="pledge-th pledge-th--photo">Image</th>
+                          <th scope="col" class="pledge-th pledge-th--name data-table-col--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
+                          <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
+                          <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
+                          <th scope="col" class="pledge-th pledge-th--ballotbox th-sortable" data-sort-key="island">Ballot Box<span class="sort-indicator"></span></th>
+                          <th scope="col" class="pledge-th pledge-th--pledge th-sortable" data-sort-key="pledge">Overall Pledge<span class="sort-indicator"></span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <!-- Populated by pledges module -->
+                      </tbody>
+                    </table>
                   </div>
-                  <div class="field-group field-group--inline">
-                    <label for="pledgeFilterIsland">Ballot box</label>
-                    <select id="pledgeFilterIsland">
-                      <option value="all">All</option>
-                    </select>
+                  <div id="pledgesPagination" class="pagination-bar"></div>
+                </section>
+
+                <!-- Right: details -->
+                <section class="split-layout__panel split-layout__panel--details" id="pledgesDetailsPanel">
+                  <header class="panel-header">
+                    <div>
+                      <div class="panel-title-row">
+                        <h2>Pledge Details</h2>
+                        <button type="button" class="ghost-button ghost-button--small pledges-details-info-btn" id="pledgesDetailsInfoBtn" aria-label="Info: open voter details popup" title="Open voter details popup">
+                          <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true" width="16" height="16">
+                            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"></circle>
+                            <path d="M12 10.2v5.2m0-8.1h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                          </svg>
+                        </button>
+                      </div>
+                      <p class="panel-subtitle" id="pledgesDetailsSubtitle">
+                        Select a voter from the list to edit pledge status.
+                      </p>
+                    </div>
+                  </header>
+                  <div class="panel-body panel-body--scroll">
+                    <div id="pledgesDetailsContent" class="pledges-details-root">
+                      <!-- Populated by pledges module -->
+                    </div>
                   </div>
-                  <div class="field-group field-group--inline">
-                    <label for="pledgeGroupBy">Group by</label>
-                    <select id="pledgeGroupBy">
-                      <option value="none">None</option>
-                      <option value="island">Ballot box</option>
-                      <option value="pledge">Pledge status</option>
-                    </select>
-                  </div>
-                </div>
+                </section>
               </div>
-              <div class="table-wrapper table-wrapper--sticky-header table-wrapper--pledges">
-                <table class="data-table data-table--pledges" id="pledgesTable" role="table" aria-label="Pledges list">
-                  <thead>
-                    <tr>
-                      <th scope="col" class="pledge-th pledge-th--sequence th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--photo">Image</th>
-                      <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--name data-table-col--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
-                      <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
-                      <!-- Candidate pledge columns are injected dynamically by pledges.js -->
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <!-- Populated by pledges module -->
-                  </tbody>
-                </table>
-              </div>
-              <div id="pledgesPagination" class="pagination-bar"></div>
             </div>
           </section>
         </section>

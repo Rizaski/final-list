@@ -1,13 +1,11 @@
-import { openModal } from "./ui.js";
-import { updateVoterCandidatePledge, getVoterImageSrc } from "./voters.js";
-import { getAgentsForDropdown, getCandidates } from "./settings.js";
-import { TABLE_VIEW_MENU_SECTION_HTML, initPledgesTableViewInColumnMenu } from "./table-view-menu.js";
+import * as votersApi from "./voters.js";
+import { getCandidates, openAddAgentModal } from "./settings.js";
+import { getAgentsFromStorage } from "./agents-context.js";
+import { initPledgesTableViewInColumnMenu } from "./table-view-menu.js";
 
 const PAGE_SIZE = 15;
-/** Pledges table: Seq, Image, Name, ID, Permanent Address, then candidate columns (Pledge column is on Door to Door). */
-const BASE_PLEDGE_COLUMNS = 5;
-const VISIBLE_CANDIDATES_STORAGE_KEY = "pledges-visible-candidates";
-
+/** Pledges page table: Seq, Image, ID, Name, Permanent Address, Ballot Box, Transport Required, Overall Pledge. */
+const PLEDGES_TABLE_COL_COUNT = 8;
 const pledgesTableBody = document.querySelector("#pledgesTable tbody");
 const pledgesPaginationEl = document.getElementById("pledgesPagination");
 const pledgeSearchEl = document.getElementById("pledgeSearch");
@@ -15,9 +13,12 @@ const pledgeSortEl = document.getElementById("pledgeSort");
 const pledgeFilterStatusEl = document.getElementById("pledgeFilterStatus");
 const pledgeFilterIslandEl = document.getElementById("pledgeFilterIsland");
 const pledgeGroupByEl = document.getElementById("pledgeGroupBy");
+const pledgesDetailsContent = document.getElementById("pledgesDetailsContent");
+const pledgesDetailsSubtitle = document.getElementById("pledgesDetailsSubtitle");
 
 let pledgeRows = [];
 let pledgesCurrentPage = 1;
+let selectedPledgeVoterId = null;
 
 function ensureSeedData(votersContext) {
   const voters = votersContext.getAllVoters();
@@ -31,12 +32,24 @@ function ensureSeedData(votersContext) {
     ballotBox: v.ballotBox ?? "",
     volunteer: v.volunteer ?? "",
     pledgeStatus: v.pledgeStatus || "undecided",
+    transportNeeded: v.transportNeeded === true,
     metStatus: v.metStatus ?? "not-met",
     persuadable: v.persuadable ?? "unknown",
     pledgedAt: v.pledgedAt ?? "",
     notes: v.notes || "",
     photoUrl: v.photoUrl || "",
-    candidatePledges: v.candidatePledges && typeof v.candidatePledges === "object" ? { ...v.candidatePledges } : {},
+    candidatePledges:
+      v.candidatePledges && typeof v.candidatePledges === "object"
+        ? { ...v.candidatePledges }
+        : {},
+    candidateAgentAssignments:
+      v.candidateAgentAssignments && typeof v.candidateAgentAssignments === "object"
+        ? { ...v.candidateAgentAssignments }
+        : {},
+    candidateAgentAssignmentIds:
+      v.candidateAgentAssignmentIds && typeof v.candidateAgentAssignmentIds === "object"
+        ? { ...v.candidateAgentAssignmentIds }
+        : {},
   }));
   syncPledgeFilterIsland();
 }
@@ -63,6 +76,10 @@ function pledgeStatusLabel(status) {
     default:
       return "Undecided";
   }
+}
+
+function transportNeededPillClass(transportNeeded) {
+  return transportNeeded ? "pledge-pill pledge-pill--pledged" : "pledge-pill pledge-pill--not-pledged";
 }
 
 function pledgeStatusClass(status) {
@@ -93,6 +110,125 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function setupPledgeCandidateAgentDropdown({ agentSel, agentSearchInput, menuEl, getAgents, rootEl }) {
+  if (!agentSel || !agentSearchInput || !menuEl) return;
+
+  const toNorm = (s) => String(s || "").trim().toLowerCase();
+  const initialsFromName = (name) => {
+    const out = String(name || "")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || "")
+      .join("");
+    return out || "?";
+  };
+
+  const imgOnError =
+    "var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
+
+  const hideMenu = () => {
+    menuEl.style.display = "none";
+  };
+
+  const renderMenu = () => {
+    if (agentSearchInput.disabled) {
+      hideMenu();
+      return;
+    }
+    const q = toNorm(agentSearchInput.value);
+    const list = (typeof getAgents === "function" ? getAgents() : [])
+      .filter((a) => {
+        if (!q) return true;
+        const name = toNorm(a?.name);
+        const nationalId = toNorm(a?.nationalId);
+        const phone = toNorm(a?.phone);
+        return name.includes(q) || nationalId.includes(q) || phone.includes(q);
+      })
+      .slice(0, 40);
+
+    if (!list.length) {
+      menuEl.innerHTML = '<div class="voter-agent-dropdown__empty">No matching agents.</div>';
+      menuEl.style.display = "block";
+      return;
+    }
+
+    menuEl.innerHTML = list
+      .map((a) => {
+        const aid = a?.id != null ? String(a.id) : "";
+        const name = String(a?.name || "");
+        const nationalId = String(a?.nationalId || "—");
+        const phone = String(a?.phone || "—");
+        const initials = initialsFromName(name);
+        const photoSrc = votersApi.getVoterImageSrc({ nationalId: a?.nationalId || aid || "" });
+        const photoHtml = photoSrc
+          ? `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(
+              photoSrc
+            )}" alt="" onerror="${imgOnError}"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(
+              initials
+            )}</div></div>`
+          : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
+
+        return `<button type="button" class="voter-agent-dropdown__item" data-agent-id="${escapeHtml(
+          aid
+        )}" data-agent-name="${escapeHtml(name)}">
+          ${photoHtml}
+          <span class="voter-agent-dropdown__main">${escapeHtml(name)}</span>
+          <span class="voter-agent-dropdown__meta">ID: ${escapeHtml(nationalId)} | ${escapeHtml(phone)}</span>
+        </button>`;
+      })
+      .join("");
+
+    menuEl.style.display = "block";
+  };
+
+  agentSearchInput.addEventListener("focus", renderMenu);
+  agentSearchInput.addEventListener("input", renderMenu);
+
+  const applyAgentFromSearch = () => {
+    const q = String(agentSearchInput.value || "").trim();
+    if (!q) {
+      agentSel.value = "";
+      agentSel.dispatchEvent(new Event("change"));
+      return;
+    }
+    const list = (typeof getAgents === "function" ? getAgents() : []) || [];
+    const exact =
+      list.find((a) => String(a?.name || "").trim().toLowerCase() === q.toLowerCase()) ||
+      list.find((a) => String(a?.name || "").trim().toLowerCase().includes(q.toLowerCase()));
+    if (!exact) {
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Agent not found", meta: "Pick an agent from the list." });
+      }
+      return;
+    }
+    agentSearchInput.value = exact.name || "";
+    agentSel.value = exact?.id != null ? String(exact.id) : "";
+    agentSel.dispatchEvent(new Event("change"));
+  };
+
+  agentSearchInput.addEventListener("change", applyAgentFromSearch);
+
+  const focusOutRoot = rootEl || agentSearchInput.parentElement;
+  focusOutRoot?.addEventListener("focusout", () => {
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (focusOutRoot && !focusOutRoot.contains(active)) hideMenu();
+    }, 0);
+  });
+
+  menuEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-agent-id]");
+    if (!btn) return;
+    const aid = String(btn.getAttribute("data-agent-id") || "");
+    const name = String(btn.getAttribute("data-agent-name") || "");
+    agentSearchInput.value = name;
+    agentSel.value = aid;
+    agentSel.dispatchEvent(new Event("change"));
+    hideMenu();
+  });
 }
 
 function getFilteredSortedGroupedPledges() {
@@ -139,7 +275,8 @@ function getFilteredSortedGroupedPledges() {
       case "pledge":
         return (ra.pledgeStatus || "").localeCompare(rb.pledgeStatus || "", "en");
       case "island":
-        return (ra.island || "").localeCompare(rb.island || "", "en");
+        // On the Pledges page, "Ballot box" sort should sort by the voter row's `ballotBox`.
+        return (ra.ballotBox || "").localeCompare(rb.ballotBox || "", "en");
       case "volunteer":
         return (ra.volunteer || "").localeCompare(rb.volunteer || "", "en");
       case "met":
@@ -165,7 +302,9 @@ function getFilteredSortedGroupedPledges() {
     const key =
       groupBy === "island"
         ? item.row.ballotBox || "Unassigned"
-        : pledgeStatusLabel(item.row.pledgeStatus);
+        : groupBy === "address"
+          ? item.row.permanentAddress || "Unassigned"
+          : pledgeStatusLabel(item.row.pledgeStatus);
     if (lastKey !== key) {
       lastKey = key;
       out.push({ type: "group", label: key });
@@ -175,56 +314,23 @@ function getFilteredSortedGroupedPledges() {
   return out;
 }
 
-function getVisibleCandidateIds() {
-  try {
-    const raw = localStorage.getItem(VISIBLE_CANDIDATES_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return parsed.map(String);
-  } catch (_) {
-    return null;
-  }
-}
-
-function setVisibleCandidateIds(ids) {
-  try {
-    localStorage.setItem(VISIBLE_CANDIDATES_STORAGE_KEY, JSON.stringify(ids));
-  } catch (_) {}
-}
-
-/** Candidates to show in the table: stored visible ids, or all if none stored. */
-function getVisibleCandidates() {
-  const all = getCandidates();
-  const stored = getVisibleCandidateIds();
-  if (!stored || stored.length === 0) return all;
-  const set = new Set(stored);
-  return all.filter((c) => set.has(String(c.id)));
-}
-
 function getPledgeTableColumnCount() {
-  return BASE_PLEDGE_COLUMNS + getVisibleCandidates().length;
+  return PLEDGES_TABLE_COL_COUNT;
 }
 
 function updatePledgesTableHeader() {
   const thead = document.querySelector("#pledgesTable thead");
   if (!thead) return;
-  const candidates = getVisibleCandidates();
-  const candidateHeaders = candidates
-    .map((c) => {
-      const name = c.name || "Candidate";
-      const initials = getInitials(name);
-      return `<th scope="col" class="pledge-th pledge-th--candidate" title="${escapeHtml(name)}">${escapeHtml(initials)}</th>`;
-    })
-    .join("");
   thead.innerHTML = `
     <tr>
       <th scope="col" class="pledge-th pledge-th--sequence data-table-col--seq th-sortable" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--photo">Image</th>
-      <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--name data-table-col--name th-sortable" data-sort-key="name">Name<span class="sort-indicator"></span></th>
+      <th scope="col" class="pledge-th pledge-th--id th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
       <th scope="col" class="pledge-th pledge-th--address th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
-      ${candidateHeaders}
+      <th scope="col" class="pledge-th pledge-th--ballotbox th-sortable" data-sort-key="island">Ballot Box<span class="sort-indicator"></span></th>
+      <th scope="col" class="pledge-th pledge-th--transport">Transportation Required</th>
+      <th scope="col" class="pledge-th pledge-th--pledge th-sortable" data-sort-key="pledge">Overall Pledge<span class="sort-indicator"></span></th>
     </tr>
   `;
 }
@@ -241,7 +347,6 @@ function renderPledgesTable() {
   const start = (pledgesCurrentPage - 1) * PAGE_SIZE;
   const end = start + PAGE_SIZE;
   const pageDataRows = dataRows.slice(start, end);
-  const candidates = getVisibleCandidates();
   const colCount = getPledgeTableColumnCount();
 
   const pageDisplayList = [];
@@ -272,51 +377,52 @@ function renderPledgesTable() {
     tr.dataset.rowIndex = String(index);
 
     const rowVoter = { photoUrl: row.photoUrl, nationalId: row.nationalId, id: row.voterId };
-    const photoSrc = getVoterImageSrc(rowVoter);
+    const photoSrc = votersApi.getVoterImageSrc(rowVoter);
     const initials = getInitials(row.name);
     const photoCell = photoSrc
       ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
       : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
-    const cp = row.candidatePledges || {};
-    const candidateCells = candidates
-      .map(
-        (c) => {
-          const val = cp[String(c.id)] || "undecided";
-          const pillClass = pledgeStatusClass(val);
-          const selId = `pledge-cand-${index}-${c.id}`;
-          return `<td class="pledge-cell pledge-cell--candidate">
-            <span class="${pillClass} pledge-cell__pill">
-              <select id="${selId}" class="inline-select pledge-candidate-select" data-candidate-id="${escapeHtml(String(c.id))}">
-                <option value="yes"${val === "yes" ? " selected" : ""}>Yes</option>
-                <option value="no"${val === "no" ? " selected" : ""}>No</option>
-                <option value="undecided"${val === "undecided" ? " selected" : ""}>Undecided</option>
-              </select>
-            </span>
-          </td>`;
-        }
-      )
-      .join("");
+    const pledgeVal = row.pledgeStatus || "undecided";
+    const pledgeClass = pledgeStatusClass(pledgeVal);
+    const transportText = row.transportNeeded === true ? "Yes" : "No";
 
     tr.innerHTML = `
       <td class="pledge-cell pledge-cell--sequence data-table-col--seq">${escapeHtml(String(row.sequence ?? ""))}</td>
       <td class="pledge-cell pledge-cell--photo">${photoCell}</td>
-      <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
       <td class="pledge-cell pledge-cell--name data-table-col--name">${escapeHtml(row.name)}</td>
+      <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
       <td class="pledge-cell pledge-cell--address">${escapeHtml(row.permanentAddress || "")}</td>
-      ${candidateCells}
+      <td class="pledge-cell pledge-cell--ballotbox">${escapeHtml(row.ballotBox || "")}</td>
+      <td class="pledge-cell pledge-cell--transport">
+        ${escapeHtml(transportText)}
+      </td>
+      <td class="pledge-cell pledge-cell--pledge">
+        <span class="${pledgeClass} door-to-door-pledge-pill">
+          <select class="inline-select door-to-door-pledge" data-voter-id="${escapeHtml(String(row.voterId))}" aria-label="Overall pledge status">
+            <option value="yes"${pledgeVal === "yes" ? " selected" : ""}>Yes</option>
+            <option value="no"${pledgeVal === "no" ? " selected" : ""}>No</option>
+            <option value="undecided"${pledgeVal === "undecided" ? " selected" : ""}>Undecided</option>
+          </select>
+        </span>
+      </td>
     `;
 
+    tr.dataset.voterId = String(row.voterId);
+    if (selectedPledgeVoterId != null && String(selectedPledgeVoterId) === String(row.voterId)) {
+      tr.classList.add("is-selected");
+    }
     pledgesTableBody.appendChild(tr);
 
-    tr.querySelectorAll(".pledge-candidate-select").forEach((sel) => {
-      const cid = sel.getAttribute("data-candidate-id");
-      sel.addEventListener("change", () => {
-        const status = sel.value;
-        if (!row.candidatePledges) row.candidatePledges = {};
-        row.candidatePledges[cid] = status;
-        updateVoterCandidatePledge(row.voterId, cid, status);
-        document.dispatchEvent(new CustomEvent("pledges-updated", { detail: { rows: pledgeRows } }));
-      });
+    const pledgeSel = tr.querySelector('select.door-to-door-pledge[data-voter-id]');
+    pledgeSel?.addEventListener("change", () => {
+      const next = pledgeSel.value || "undecided";
+      // Update local row so subsequent re-renders immediately reflect the change.
+      row.pledgeStatus = next;
+      votersApi.updateVoterPledgeStatus(row.voterId, next);
+      // Keep details panel aligned (candidate/agent panel uses row.volunteer + row.candidatePledges).
+      selectedPledgeVoterId = String(row.voterId);
+      renderPledgesDetailsPanel(row);
+      renderPledgesTable();
     });
   }
 
@@ -399,6 +505,7 @@ function exportPledgesCSV() {
     "Permanent Address",
     "Pledge",
     "Ballot Box",
+    "Transportation Required",
     "Assigned agent",
     "Met?",
     "Persuadable?",
@@ -418,6 +525,7 @@ function exportPledgesCSV() {
       row.permanentAddress || "",
       row.pledgeStatus || "",
       row.ballotBox || "",
+      row.transportNeeded === true ? "Yes" : "No",
       row.volunteer || "",
       row.metStatus || "",
       row.persuadable || "",
@@ -442,46 +550,6 @@ function exportPledgesCSV() {
   }
 }
 
-function renderCandidateVisibilityMenu() {
-  const menu = document.getElementById("pledgeColumnsMenu");
-  if (!menu) return;
-  const all = getCandidates();
-  const stored = getVisibleCandidateIds();
-  const visibleSet = new Set(stored && stored.length > 0 ? stored : all.map((c) => String(c.id)));
-  menu.innerHTML = `
-    ${TABLE_VIEW_MENU_SECTION_HTML}
-    <div class="dropdown-menu__item dropdown-menu__item--static">Show columns</div>
-    ${all
-      .map(
-        (c) => {
-          const id = String(c.id);
-          const name = escapeHtml(c.name || "Candidate");
-          const checked = visibleSet.has(id);
-          return `<label class="dropdown-menu__item" style="cursor:pointer; display:flex; align-items:center; gap:8px;">
-        <input type="checkbox" data-candidate-id="${escapeHtml(id)}" ${checked ? "checked" : ""}>
-        <span>${name}</span>
-      </label>`;
-        }
-      )
-      .join("")}
-  `;
-  menu.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-    cb.addEventListener("change", (e) => {
-      e.stopPropagation();
-      const cid = cb.getAttribute("data-candidate-id");
-      const current = getVisibleCandidateIds();
-      const allIds = getCandidates().map((c) => String(c.id));
-      const base = current && current.length > 0 ? current.filter((id) => allIds.includes(id)) : allIds;
-      const set = new Set(base);
-      if (cb.checked) set.add(cid);
-      else set.delete(cid);
-      const next = Array.from(set);
-      setVisibleCandidateIds(next.length === allIds.length ? [] : next);
-      renderPledgesTable();
-    });
-  });
-}
-
 function bindPledgeToolbar() {
   const resetPageAndRender = () => {
     pledgesCurrentPage = 1;
@@ -494,11 +562,202 @@ function bindPledgeToolbar() {
   pledgeGroupByEl?.addEventListener("change", resetPageAndRender);
 }
 
+function renderPledgesDetailsPanel(row) {
+  if (!pledgesDetailsContent || !pledgesDetailsSubtitle) return;
+
+  if (!row) {
+    pledgesDetailsSubtitle.textContent = "Select a voter from the list to edit pledge status.";
+    pledgesDetailsContent.innerHTML =
+      `<p class="helper-text" style="padding: 12px 0;">No voter selected.</p>`;
+    return;
+  }
+
+  const cp = row.candidatePledges || {};
+  const candAgentMap = row.candidateAgentAssignments || {};
+  const candAgentIdMap = row.candidateAgentAssignmentIds || {};
+  const allCandidates = getCandidates() || [];
+
+  pledgesDetailsSubtitle.textContent = `${row.name || "Voter"} • ${row.id || row.voterId}`;
+
+  pledgesDetailsContent.innerHTML = `
+    <div class="form-grid">
+      <div class="form-group form-group--full" style="margin-top: 12px;">
+        <div class="candidate-pledges-header">
+          <label>Assigned agent</label>
+          <label>Candidate pledges</label>
+        </div>
+        <div class="candidate-pledge-list" style="margin-top: 10px;">
+          ${
+            allCandidates.length
+              ? allCandidates
+                  .map((c) => {
+                    const cid = String(c.id);
+                    const current = cp[cid] || "undecided";
+                    const isYes = current === "yes";
+                    const isNo = current === "no";
+                    const isUndecided = current === "undecided";
+                    const allAgents = getAgentsFromStorage();
+                    const candAgents = allAgents.filter((a) => String(a?.candidateId || "") === cid);
+                    const assignedId = candAgentIdMap[cid] != null ? String(candAgentIdMap[cid]) : "";
+                    const assignedName = candAgentMap[cid] != null ? String(candAgentMap[cid]) : "";
+                    const assignedAgentFromId =
+                      assignedId && candAgents.length ? candAgents.find((a) => String(a?.id || "") === assignedId) : null;
+                    const assignedNameFinal = assignedName || assignedAgentFromId?.name || "";
+
+                    return `
+                      <div class="candidate-pledge-row" data-candidate-id="${escapeHtml(cid)}">
+                        <div class="candidate-pledge-name-box">
+                          <div class="candidate-pledge-name">${escapeHtml(c.name || "Candidate")}</div>
+                        </div>
+
+                        <div class="candidate-pledge-assigned-container">
+                          <div class="candidate-pledge-agentline">
+                            <div class="voter-agent-dropdown pledges-candidate-agent-dropdown" data-candidate-id="${escapeHtml(cid)}">
+                              <input
+                                type="text"
+                                class="agent-modal-voter-search-input voter-agent-dropdown__search"
+                                data-candidate-id="${escapeHtml(cid)}"
+                                value="${escapeHtml(assignedNameFinal)}"
+                                placeholder="Search and pick agent…"
+                                aria-label="Search agent from list"
+                                autocomplete="off"
+                                spellcheck="false"
+                              />
+                              <div class="voter-agent-dropdown__menu" role="listbox" aria-label="Agents"></div>
+                            </div>
+                            <select
+                              class="agent-dropdown-select agent-dropdown-select--table candidate-agent-select"
+                              data-candidate-id="${escapeHtml(cid)}"
+                              data-voter-id="${escapeHtml(String(row.voterId))}"
+                              aria-label="Assigned agent for candidate"
+                              style="display:none"
+                            >
+                              <option value="">Unassigned</option>
+                              ${candAgents
+                                .map((a) => {
+                                  const aid = a?.id != null ? String(a.id) : "";
+                                  const label = a?.name != null ? String(a.name) : "";
+                                  const selected =
+                                    (assignedId && aid === assignedId) ||
+                                    (!assignedId &&
+                                      assignedNameFinal &&
+                                      label.toLowerCase() === assignedNameFinal.toLowerCase())
+                                      ? " selected"
+                                      : "";
+                                  return `<option value="${escapeHtml(aid)}"${selected}>${escapeHtml(label)}</option>`;
+                                })
+                                .join("")}
+                            </select>
+                          </div>
+                          <div class="candidate-pledge-agent-add-container">
+                            <button
+                              type="button"
+                              class="ghost-button ghost-button--small voter-details-agent-add-btn"
+                              data-candidate-id="${escapeHtml(cid)}"
+                              aria-label="Add new agent for candidate"
+                            >
+                              Add new agent…
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="candidate-pledge-pledges-container">
+                          <div class="pill-toggle-group">
+                            <button type="button" class="pill-toggle${
+                              isYes ? " pill-toggle--active" : ""
+                            }" data-pledge-status="yes">Yes</button>
+                            <button type="button" class="pill-toggle${
+                              isNo ? " pill-toggle--active" : ""
+                            }" data-pledge-status="no">No</button>
+                            <button type="button" class="pill-toggle${
+                              isUndecided ? " pill-toggle--active" : ""
+                            }" data-pledge-status="undecided">Undecided</button>
+                          </div>
+                        </div>
+                      </div>
+                    `;
+                  })
+                  .join("")
+              : `<p class="helper-text">No candidates found.</p>`
+          }
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Candidate assigned agent (auto-save)
+  pledgesDetailsContent
+    .querySelectorAll('select.agent-dropdown-select[data-candidate-id]')
+    .forEach((sel) => {
+      sel.addEventListener("change", () => {
+        const cid = sel.getAttribute("data-candidate-id") || "";
+        const voterId = sel.getAttribute("data-voter-id") || String(row.voterId);
+        const agentId = sel.value || "";
+        const agentName = agentId ? sel.options[sel.selectedIndex]?.text || "" : "";
+        if (typeof votersApi.updateVoterCandidateAgentAssignment === "function") {
+          votersApi.updateVoterCandidateAgentAssignment(voterId, cid, agentId, agentName);
+        }
+      });
+    });
+
+  // Candidate assigned agent: searchable dropdown (per candidate)
+  pledgesDetailsContent
+    .querySelectorAll(".pledges-candidate-agent-dropdown[data-candidate-id]")
+    .forEach((rootEl) => {
+      const cid = rootEl.getAttribute("data-candidate-id") || "";
+      const rowEl = rootEl.closest(".candidate-pledge-row");
+      const agentSel = rowEl?.querySelector(`select.candidate-agent-select[data-candidate-id="${escapeHtml(cid)}"]`);
+      const agentSearchInput = rootEl.querySelector("input.agent-modal-voter-search-input");
+      const menuEl = rootEl.querySelector(".voter-agent-dropdown__menu");
+
+      setupPledgeCandidateAgentDropdown({
+        agentSel,
+        agentSearchInput,
+        menuEl,
+        rootEl,
+        getAgents: () => getAgentsFromStorage().filter((a) => String(a?.candidateId || "") === cid),
+      });
+    });
+
+  // Candidate: add new agent (scoped to that candidate)
+  pledgesDetailsContent
+    .querySelectorAll(".voter-details-agent-add-btn[data-candidate-id]")
+    .forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const cid = btn.getAttribute("data-candidate-id") || "";
+        openAddAgentModal({ lockCandidateId: cid });
+      });
+    });
+
+  // Candidate pledges (per candidate) (auto-save)
+  pledgesDetailsContent.querySelectorAll(".candidate-pledge-row").forEach((rowEl) => {
+    const cid = rowEl.getAttribute("data-candidate-id");
+    if (!cid) return;
+    rowEl.querySelectorAll(".pill-toggle[data-pledge-status]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const nextStatus = btn.getAttribute("data-pledge-status") || "undecided";
+        votersApi.updateVoterCandidatePledge(row.voterId, cid, nextStatus);
+      });
+    });
+  });
+}
+
 export function initPledgesModule(votersContext) {
   ensureSeedData(votersContext);
   bindPledgeToolbar();
   bindPledgeTableHeaderSort();
   renderPledgesTable();
+  renderPledgesDetailsPanel(null);
+
+  const infoBtn = document.getElementById("pledgesDetailsInfoBtn");
+  infoBtn?.addEventListener("click", () => {
+    const voterId = selectedPledgeVoterId;
+    if (!voterId) return;
+
+    if (typeof votersApi.openVoterDetailsPopup === "function") {
+      votersApi.openVoterDetailsPopup(voterId);
+    }
+  });
 
   const exportCsvBtn = document.getElementById("pledgesExportCsvButton");
   if (exportCsvBtn) {
@@ -506,12 +765,14 @@ export function initPledgesModule(votersContext) {
   }
 
   document.addEventListener("candidates-updated", () => {
-    renderCandidateVisibilityMenu();
-    initPledgesTableViewInColumnMenu();
+    // Candidate changes only affect the details panel content.
     renderPledgesTable();
+    if (selectedPledgeVoterId != null) {
+      const row = pledgeRows.find((r) => String(r.voterId) === String(selectedPledgeVoterId));
+      renderPledgesDetailsPanel(row || null);
+    }
   });
 
-  renderCandidateVisibilityMenu();
   initPledgesTableViewInColumnMenu();
   const pledgeColumnsBtn = document.getElementById("pledgeColumnsButton");
   const pledgeColumnsMenu = document.getElementById("pledgeColumnsMenu");
@@ -537,234 +798,33 @@ export function initPledgesModule(votersContext) {
 
   document.addEventListener("agents-updated", () => {
     renderPledgesTable();
+    if (selectedPledgeVoterId != null) {
+      const row = pledgeRows.find((r) => String(r.voterId) === String(selectedPledgeVoterId));
+      renderPledgesDetailsPanel(row || null);
+    }
   });
 
   document.addEventListener("voters-updated", () => {
     ensureSeedData(votersContext);
     renderPledgesTable();
+
+    if (selectedPledgeVoterId != null) {
+      const row = pledgeRows.find((r) => String(r.voterId) === String(selectedPledgeVoterId));
+      renderPledgesDetailsPanel(row || null);
+    } else {
+      renderPledgesDetailsPanel(null);
+    }
   });
 
-  pledgesTableBody.addEventListener("dblclick", (e) => {
+  pledgesTableBody?.addEventListener("click", (e) => {
     const tr = e.target.closest("tr");
     if (!tr) return;
-    const index = Number(tr.dataset.rowIndex || -1);
-    if (index < 0) return;
-    const row = pledgeRows[index];
-    const body = document.createElement("div");
-    const agents = getAgentsForDropdown();
-    const candidates = getCandidates();
-    const cp = row.candidatePledges || {};
-
-    body.innerHTML = `
-      <div class="form-grid">
-        <div class="form-group">
-          <label for="pledgeEditName">Voter name</label>
-          <input id="pledgeEditName" type="text" value="${escapeHtml(
-            row.name
-          )}" disabled>
-        </div>
-        <div class="form-group">
-          <label for="pledgeEditIsland">Island / Ward</label>
-          <input id="pledgeEditIsland" type="text" value="${escapeHtml(
-            row.island
-          )}" disabled>
-        </div>
-        <div class="form-group">
-          <label for="pledgeEditAgent">Assigned agent</label>
-          <select id="pledgeEditAgent" class="agent-dropdown-select agent-dropdown-select--modal">
-            <option value="">Unassigned</option>
-            ${agents
-              .map(
-                (a) =>
-                  `<option value="${escapeHtml(a.name)}"${
-                    a.name === row.volunteer ? " selected" : ""
-                  }>${escapeHtml(a.name)}</option>`
-              )
-              .join("")}
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="pledgeEditStatus">Overall pledge status</label>
-          <select id="pledgeEditStatus">
-            <option value="yes"${
-              row.pledgeStatus === "yes" ? " selected" : ""
-            }>Yes</option>
-            <option value="no"${
-              row.pledgeStatus === "no" ? " selected" : ""
-            }>No</option>
-            <option value="undecided"${
-              row.pledgeStatus === "undecided" ? " selected" : ""
-            }>Undecided</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="pledgeEditMet">Met during door-to-door / event?</label>
-          <select id="pledgeEditMet">
-            <option value="not-met"${
-              row.metStatus === "not-met" ? " selected" : ""
-            }>No</option>
-            <option value="met"${
-              row.metStatus === "met" ? " selected" : ""
-            }>Yes</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="pledgeEditPersuadable">Persuadable?</label>
-          <select id="pledgeEditPersuadable">
-            <option value="unknown"${
-              row.persuadable === "unknown" ? " selected" : ""
-            }>Unknown</option>
-            <option value="yes"${
-              row.persuadable === "yes" ? " selected" : ""
-            }>Yes</option>
-            <option value="no"${
-              row.persuadable === "no" ? " selected" : ""
-            }>No</option>
-          </select>
-        </div>
-        <div class="form-group form-group--full">
-          <label for="pledgeEditNotes">Notes</label>
-          <textarea id="pledgeEditNotes" rows="3">${escapeHtml(
-            row.notes || ""
-          )}</textarea>
-        </div>
-      </div>
-      <div class="form-group form-group--full">
-        <label>Candidate pledges</label>
-        <div class="candidate-pledge-list">
-          ${candidates
-            .map((c) => {
-              const cid = String(c.id);
-              const current = cp[cid] || "undecided";
-              const isYes = current === "yes";
-              const isNo = current === "no";
-              const isUndecided = current === "undecided";
-              return `
-                <div class="candidate-pledge-row" data-candidate-id="${escapeHtml(
-                  cid
-                )}">
-                  <div class="candidate-pledge-name">${escapeHtml(
-                    c.name || "Candidate"
-                  )}</div>
-                  <div class="pill-toggle-group">
-                    <button type="button" class="pill-toggle${
-                      isYes ? " pill-toggle--active" : ""
-                    }" data-pledge-status="yes">Yes</button>
-                    <button type="button" class="pill-toggle${
-                      isNo ? " pill-toggle--active" : ""
-                    }" data-pledge-status="no">No</button>
-                    <button type="button" class="pill-toggle${
-                      isUndecided ? " pill-toggle--active" : ""
-                    }" data-pledge-status="undecided">Undecided</button>
-                  </div>
-                </div>
-              `;
-            })
-            .join("")}
-        </div>
-      </div>
-      <div class="form-group form-group--full">
-        <label for="pledgeEditPassword">Approval password</label>
-        <input id="pledgeEditPassword" type="password" class="input" autocomplete="off" placeholder="Enter password to save candidate pledges">
-        <p class="helper-text">Required only if candidate pledges are changed.</p>
-      </div>
-    `;
-
-    // Bind candidate pledge pill toggles (local state only until Save)
-    body
-      .querySelectorAll(".candidate-pledge-row")
-      .forEach((rowEl) => {
-        const buttons = Array.from(
-          rowEl.querySelectorAll(".pill-toggle[data-pledge-status]")
-        );
-        buttons.forEach((btn) => {
-          btn.addEventListener("click", () => {
-            buttons.forEach((b) =>
-              b.classList.remove("pill-toggle--active")
-            );
-            btn.classList.add("pill-toggle--active");
-          });
-        });
-      });
-
-    const footer = document.createElement("div");
-    const saveBtn = document.createElement("button");
-    saveBtn.className = "primary-button";
-    saveBtn.textContent = "Save changes";
-    footer.appendChild(saveBtn);
-
-    saveBtn.addEventListener("click", () => {
-      const agentSelect = body.querySelector("#pledgeEditAgent");
-      const pledgeSelect = body.querySelector("#pledgeEditStatus");
-      const metSel = body.querySelector("#pledgeEditMet");
-      const persSel = body.querySelector("#pledgeEditPersuadable");
-      const notesTextarea = body.querySelector("#pledgeEditNotes");
-      const passwordInput = body.querySelector("#pledgeEditPassword");
-
-      row.volunteer = (agentSelect && agentSelect.value) || "";
-      row.pledgeStatus = (pledgeSelect && pledgeSelect.value) || row.pledgeStatus;
-      row.metStatus = (metSel && metSel.value) || row.metStatus;
-      row.persuadable = (persSel && persSel.value) || row.persuadable;
-      row.notes = notesTextarea ? notesTextarea.value : row.notes;
-      if (row.pledgeStatus === "yes") {
-        row.pledgedAt = new Date().toISOString().slice(0, 10);
-      } else if (row.pledgeStatus !== "yes") {
-        row.pledgedAt = "";
-      }
-
-      const changedCandidates = [];
-      body
-        .querySelectorAll(".candidate-pledge-row")
-        .forEach((rowEl) => {
-          const cid = rowEl.getAttribute("data-candidate-id");
-          if (!cid) return;
-          const activeBtn = rowEl.querySelector(
-            ".pill-toggle--active[data-pledge-status]"
-          );
-          const nextStatus =
-            (activeBtn &&
-              activeBtn.getAttribute("data-pledge-status")) || "undecided";
-          const prevStatus =
-            (row.candidatePledges && row.candidatePledges[cid]) ||
-            "undecided";
-          if (nextStatus !== prevStatus) {
-            changedCandidates.push({ cid, nextStatus });
-          }
-        });
-
-      if (changedCandidates.length > 0) {
-        const pwd = (passwordInput && passwordInput.value) || "";
-        if (pwd !== "PNC@2026") {
-          if (window.appNotifications) {
-            window.appNotifications.push({
-              title: "Incorrect password",
-              meta: "Candidate pledges were not updated.",
-            });
-          }
-          return;
-        }
-        if (!row.candidatePledges || typeof row.candidatePledges !== "object") {
-          row.candidatePledges = {};
-        }
-        changedCandidates.forEach(({ cid, nextStatus }) => {
-          row.candidatePledges[cid] = nextStatus;
-          updateVoterCandidatePledge(row.voterId, cid, nextStatus);
-        });
-      }
-
-      renderPledgesTable();
-      document.dispatchEvent(
-        new CustomEvent("pledges-updated", {
-          detail: { rows: pledgeRows },
-        })
-      );
-    });
-
-    openModal({
-      title: "Edit voter pledges",
-      body,
-      footer,
-    });
+    const voterId = tr.dataset.voterId;
+    if (!voterId) return; // group header rows
+    selectedPledgeVoterId = String(voterId);
+    const row = pledgeRows.find((r) => String(r.voterId) === String(voterId));
+    renderPledgesDetailsPanel(row || null);
+    renderPledgesTable(); // ensure selection highlight updates
   });
 
   return {
