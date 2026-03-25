@@ -59,6 +59,10 @@ export const firebaseInitPromise = (async () => {
     // Firestore-backed collections for core data (default to no-op so callers can always call these safely)
     let getAllVotersFs = async () => [];
     let setVoterFs = async () => {};
+    /** Merge only `referendumVote` on the voter doc (small payload, reliable field write). */
+    let setVoterReferendumVoteFs = async () => {};
+    /** Merge only `referendumNotes` on the voter doc. */
+    let setVoterReferendumNotesFs = async () => {};
     let setVoterVotedAtFs = async () => {};
     let deleteVoterFs = async () => {};
     let onVotersSnapshotFs = () => noopUnsubscribe;
@@ -221,6 +225,21 @@ export const firebaseInitPromise = (async () => {
         if (!voter || !voter.id) return;
         const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voter.id));
         await firestoreMod.setDoc(ref, voter, { merge: true });
+      };
+
+      setVoterReferendumVoteFs = async (voterId, referendumVote) => {
+        if (voterId == null || voterId === "") return;
+        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const next =
+          referendumVote === "yes" || referendumVote === "no" ? referendumVote : "undecided";
+        await firestoreMod.setDoc(ref, { referendumVote: next }, { merge: true });
+      };
+
+      setVoterReferendumNotesFs = async (voterId, referendumNotes) => {
+        if (voterId == null || voterId === "") return;
+        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const text = referendumNotes == null ? "" : String(referendumNotes);
+        await firestoreMod.setDoc(ref, { referendumNotes: text }, { merge: true });
       };
 
       setVoterVotedAtFs = async (voterId, timeMarked) => {
@@ -632,6 +651,8 @@ export const firebaseInitPromise = (async () => {
       // Firestore-backed core collections
       getAllVotersFs,
       setVoterFs,
+      setVoterReferendumVoteFs,
+      setVoterReferendumNotesFs,
       setVoterVotedAtFs,
       deleteVoterFs,
       onVotersSnapshotFs,

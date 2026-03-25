@@ -2571,6 +2571,50 @@ export function updateVoterTransportNeeded(voterId, transportNeeded) {
   })();
 }
 
+/** Referendum position: yes | no | undecided (stored on voter as `referendumVote`). */
+export function updateVoterReferendumVote(voterId, referendumVote) {
+  const v = currentVoters.find((x) => x.id === voterId);
+  if (!v) return;
+  const next =
+    referendumVote === "yes" || referendumVote === "no" ? referendumVote : "undecided";
+  v.referendumVote = next;
+  saveVotersToStorage();
+  renderVotersTable();
+  if (selectedVoterId === voterId) renderVoterDetails(v);
+  document.dispatchEvent(new CustomEvent("voters-updated"));
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVoterReferendumVoteFs) {
+        await api.setVoterReferendumVoteFs(voterId, next);
+      } else if (api.ready && api.setVoterFs) {
+        await api.setVoterFs(v);
+      }
+    } catch (_) {}
+  })();
+}
+
+/** Free-text comment for referendum (stored as `referendumNotes` on the voter). */
+export function updateVoterReferendumNotes(voterId, referendumNotes) {
+  const v = currentVoters.find((x) => x.id === voterId);
+  if (!v) return;
+  v.referendumNotes = referendumNotes == null ? "" : String(referendumNotes);
+  saveVotersToStorage();
+  renderVotersTable();
+  if (selectedVoterId === voterId) renderVoterDetails(v);
+  document.dispatchEvent(new CustomEvent("voters-updated"));
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVoterReferendumNotesFs) {
+        await api.setVoterReferendumNotesFs(voterId, v.referendumNotes);
+      } else if (api.ready && api.setVoterFs) {
+        await api.setVoterFs(v);
+      }
+    } catch (_) {}
+  })();
+}
+
 /**
  * Open the existing Voter Details panel as a modal popup (no navigation/scroll jump).
  * This moves `#voterDetailsPanel` into the shared modal shell, then restores it on close.

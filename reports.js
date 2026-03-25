@@ -14,6 +14,24 @@ function escapeHtml(str) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function normalizeReferendumVote(v) {
+  const r = v?.referendumVote;
+  if (r === "yes" || r === "no") return r;
+  return "undecided";
+}
+
+function referendumVoteLabel(status) {
+  if (status === "yes") return "Yes";
+  if (status === "no") return "No";
+  return "Undecided";
+}
+
+function referendumPillClass(status) {
+  if (status === "yes") return "pledge-pill pledge-pill--pledged";
+  if (status === "undecided") return "pledge-pill pledge-pill--undecided";
+  return "pledge-pill pledge-pill--not-pledged";
+}
+
 /** Combined momentum score (0–100): pledge yes rate, support blend, marked turnout. */
 function computeWinOMeter(voters) {
   const n = voters.length;
@@ -195,7 +213,8 @@ function buildDetailTable(columns, rows) {
 }
 
 // Rich voter detail table used in Reports → View details (same columns as Candidate pledge summary → View pledged voters)
-function buildVoterDetailTable(voters) {
+function buildVoterDetailTable(voters, options = {}) {
+  const includeReferendum = options.includeReferendum === true;
   const wrap = document.createElement("div");
   wrap.className = "table-wrapper";
   const table = document.createElement("table");
@@ -209,11 +228,13 @@ function buildVoterDetailTable(voters) {
         <th class="data-table-col--name">Name</th>
         <th>Permanent Address</th>
         <th>Pledge</th>
+        ${includeReferendum ? "<th>Referendum</th>" : ""}
         <th>Ballot box</th>
         <th>Assigned agent</th>
         <th>Phone</th>
         <th>Island</th>
         <th>Voted</th>
+        ${includeReferendum ? "<th>Referendum notes</th>" : ""}
       </tr>
     </thead>
     <tbody></tbody>
@@ -259,6 +280,14 @@ function buildVoterDetailTable(voters) {
           )}">Voted</span>`;
         })()
       : '<span class="text-muted">—</span>';
+    const refStatus = normalizeReferendumVote(v);
+    const refNotesText = String(v.referendumNotes ?? "").trim();
+    const refVoteCol = includeReferendum
+      ? `<td><span class="${referendumPillClass(refStatus)}">${referendumVoteLabel(refStatus)}</span></td>`
+      : "";
+    const refNotesCol = includeReferendum
+      ? `<td class="data-table-col--referendum-notes">${refNotesText ? escapeHtml(refNotesText) : '<span class="text-muted">—</span>'}</td>`
+      : "";
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="data-table-col--seq">${v.sequence ?? ""}</td>
@@ -267,11 +296,13 @@ function buildVoterDetailTable(voters) {
       <td class="data-table-col--name">${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
       <td>${escapeHtml(v.permanentAddress ?? "")}</td>
       <td><span class="${pledgeClass}">${pledgeStatus === "yes" ? "Yes" : pledgeStatus === "no" ? "No" : "Undecided"}</span></td>
+      ${refVoteCol}
       <td>${escapeHtml((v.ballotBox || "").trim() || "—")}</td>
       <td>${escapeHtml(v.volunteer ?? "")}</td>
       <td>${escapeHtml(v.phone ?? "")}</td>
       <td>${escapeHtml(v.island ?? "")}</td>
       <td class="voted-status-cell">${votedCell}</td>
+      ${refNotesCol}
     `;
     tbody.appendChild(tr);
   });
@@ -370,7 +401,7 @@ function renderCandidatePledgeSummary(container, voters, options = {}) {
 
 export function initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser }) {
   const pledgeChart = document.getElementById("reportsPledgeChart");
-  const supportChart = document.getElementById("reportsSupportChart");
+  const referendumChart = document.getElementById("reportsReferendumChart");
   const registrationChart = document.getElementById("reportsRegistrationChart");
   const boxPledgeChart = document.getElementById("reportsBoxPledgeChart");
   const winOMeterEl = document.getElementById("reportsWinOMeter");
@@ -428,12 +459,14 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
         .sort((a, b) => (a.ballotBox || "").localeCompare(b.ballotBox || "", "en"));
       title = "Box-wise pledge – voters who pledged and have voted";
       body.appendChild(buildVoterDetailTable(pledgedAndVoted));
-    } else if (reportType === "support") {
-      const bySupport = voters
+    } else if (reportType === "referendum") {
+      const byRef = voters
         .slice()
-        .sort((a, b) => (a.supportStatus || "").localeCompare(b.supportStatus || "", "en"));
-      title = "Support distribution – voters";
-      body.appendChild(buildVoterDetailTable(bySupport));
+        .sort((a, b) =>
+          normalizeReferendumVote(a).localeCompare(normalizeReferendumVote(b), "en")
+        );
+      title = "Referendum pledge results – voters";
+      body.appendChild(buildVoterDetailTable(byRef, { includeReferendum: true }));
     } else if (reportType === "win-o-meter") {
       const w = computeWinOMeter(voters);
       title = "Win O Meter – breakdown";
@@ -847,15 +880,14 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       .sort((a, b) => b.value - a.value);
     renderBarSet(boxPledgeChart, candidateResults);
 
-    const supportTypes = ["supporting", "leaning", "opposed", "unknown"];
-    const supportDistribution = supportTypes.map((type) => {
-      const count = voters.filter((v) => v.supportStatus === type).length;
+    const referendumBuckets = ["yes", "no", "undecided"];
+    const referendumDistribution = referendumBuckets.map((type) => {
+      const count = voters.filter((v) => normalizeReferendumVote(v) === type).length;
       const pct = voters.length === 0 ? 0 : (count / voters.length) * 100;
-      const label =
-        type.charAt(0).toUpperCase() + type.slice(1).replace("-", " ");
+      const label = type === "yes" ? "Yes" : type === "no" ? "No" : "Undecided";
       return { label, value: pct };
     });
-    renderBarSet(supportChart, supportDistribution);
+    renderBarSet(referendumChart, referendumDistribution);
 
     renderWinOMeter(winOMeterEl, voters);
 

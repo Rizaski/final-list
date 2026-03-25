@@ -3612,6 +3612,85 @@ body.list-workspace-page {
   min-height: 32px;
 }
 
+/* Pledges details: Referendum block (above candidate rows) */
+.pledges-details-root .pledges-referendum-box {
+  margin-top: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: #ffffff;
+  border: 1px solid var(--color-border-subtle);
+  box-sizing: border-box;
+}
+
+.pledges-details-root .pledges-referendum-box > label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.pledges-details-root .pledges-referendum-pills {
+  flex-wrap: wrap;
+}
+
+/* Referendum comment — match pledges agent search / form field branding */
+.pledges-details-root .pledges-referendum-notes-field {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.pledges-details-root .pledges-referendum-notes-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  letter-spacing: 0.01em;
+}
+
+.pledges-details-root textarea.pledges-referendum-notes {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text);
+  background-color: #ffffff;
+  box-sizing: border-box;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.pledges-details-root textarea.pledges-referendum-notes:hover {
+  border-color: rgba(0, 156, 156, 0.35);
+}
+
+.pledges-details-root textarea.pledges-referendum-notes:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+.pledges-details-root textarea.pledges-referendum-notes::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Reports modal: referendum comment column */
+.data-table .data-table-col--referendum-notes {
+  max-width: 320px;
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: top;
+}
+
 /* Pledges details panel: candidate row layout + typography alignment */
 .pledges-details-root .candidate-pledge-row {
   align-items: center;

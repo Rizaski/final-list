@@ -20,6 +20,23 @@ let pledgeRows = [];
 let pledgesCurrentPage = 1;
 let selectedPledgeVoterId = null;
 
+function normalizeReferendumVote(raw) {
+  if (raw === "yes" || raw === "no") return raw;
+  return "undecided";
+}
+
+function referendumVoteLabel(status) {
+  switch (status) {
+    case "yes":
+      return "Yes";
+    case "no":
+      return "No";
+    case "undecided":
+    default:
+      return "Undecided";
+  }
+}
+
 function ensureSeedData(votersContext) {
   const voters = votersContext.getAllVoters();
   pledgeRows = voters.map((v) => ({
@@ -50,6 +67,8 @@ function ensureSeedData(votersContext) {
       v.candidateAgentAssignmentIds && typeof v.candidateAgentAssignmentIds === "object"
         ? { ...v.candidateAgentAssignmentIds }
         : {},
+    referendumVote: normalizeReferendumVote(v.referendumVote),
+    referendumNotes: v.referendumNotes != null ? String(v.referendumNotes) : "",
   }));
   syncPledgeFilterIsland();
 }
@@ -506,6 +525,8 @@ function exportPledgesCSV() {
     "Pledge",
     "Ballot Box",
     "Transportation Required",
+    "Referendum",
+    "Referendum notes",
     "Assigned agent",
     "Met?",
     "Persuadable?",
@@ -526,6 +547,8 @@ function exportPledgesCSV() {
       row.pledgeStatus || "",
       row.ballotBox || "",
       row.transportNeeded === true ? "Yes" : "No",
+      referendumVoteLabel(row.referendumVote),
+      row.referendumNotes != null ? String(row.referendumNotes) : "",
       row.volunteer || "",
       row.metStatus || "",
       row.persuadable || "",
@@ -576,11 +599,39 @@ function renderPledgesDetailsPanel(row) {
   const candAgentMap = row.candidateAgentAssignments || {};
   const candAgentIdMap = row.candidateAgentAssignmentIds || {};
   const allCandidates = getCandidates() || [];
+  const refVote = normalizeReferendumVote(row.referendumVote);
+  const refYes = refVote === "yes";
+  const refNo = refVote === "no";
+  const refUndecided = refVote === "undecided";
 
   pledgesDetailsSubtitle.textContent = `${row.name || "Voter"} • ${row.id || row.voterId}`;
 
   pledgesDetailsContent.innerHTML = `
     <div class="form-grid">
+      <div class="form-group form-group--full pledges-referendum-box">
+        <label>Referendum</label>
+        <div class="pill-toggle-group pledges-referendum-pills" role="group" aria-label="Referendum vote">
+          <button type="button" class="pill-toggle${
+            refYes ? " pill-toggle--active" : ""
+          }" data-referendum="yes">Yes</button>
+          <button type="button" class="pill-toggle${
+            refNo ? " pill-toggle--active" : ""
+          }" data-referendum="no">No</button>
+          <button type="button" class="pill-toggle${
+            refUndecided ? " pill-toggle--active" : ""
+          }" data-referendum="undecided">Undecided</button>
+        </div>
+        <div class="pledges-referendum-notes-field">
+          <label class="pledges-referendum-notes-label" for="pledgesReferendumNotes">Comment</label>
+          <textarea
+            id="pledgesReferendumNotes"
+            class="pledges-referendum-notes"
+            rows="3"
+            placeholder="Voter comment on referendum…"
+            aria-label="Referendum comment"
+          >${escapeHtml(row.referendumNotes != null ? String(row.referendumNotes) : "")}</textarea>
+        </div>
+      </div>
       <div class="form-group form-group--full" style="margin-top: 12px;">
         <div class="candidate-pledges-header">
           <label>Assigned agent</label>
@@ -684,6 +735,21 @@ function renderPledgesDetailsPanel(row) {
       </div>
     </div>
   `;
+
+  pledgesDetailsContent.querySelectorAll(".pledges-referendum-pills .pill-toggle[data-referendum]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const next = btn.getAttribute("data-referendum") || "undecided";
+      if (typeof votersApi.updateVoterReferendumVote === "function") {
+        votersApi.updateVoterReferendumVote(row.voterId, next);
+      }
+    });
+  });
+
+  const referendumNotesEl = pledgesDetailsContent.querySelector("#pledgesReferendumNotes");
+  referendumNotesEl?.addEventListener("blur", () => {
+    if (typeof votersApi.updateVoterReferendumNotes !== "function") return;
+    votersApi.updateVoterReferendumNotes(row.voterId, referendumNotesEl.value);
+  });
 
   // Candidate assigned agent (auto-save)
   pledgesDetailsContent
