@@ -743,6 +743,10 @@ function renderVoterDetails(voter) {
   const candRecord = candCtx ? getCandidateRecordById(candCtx.candidateId) : null;
   const candLabel = candRecord?.name ? escapeHtml(candRecord.name) : "";
   const myPledge = candCtx ? getEffectivePledgeStatus(voter) : "";
+  const referendumVoteVal =
+    voter.referendumVote === "yes" || voter.referendumVote === "no"
+      ? voter.referendumVote
+      : "undecided";
   const votedStatusHtml = (() => {
     const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
     if (timeMarked) {
@@ -815,6 +819,35 @@ function renderVoterDetails(voter) {
           <div>
             <div class="detail-item-label">Marked voted</div>
             <div class="detail-item-value">${votedStatusHtml}</div>
+          </div>
+          <div>
+            <div class="detail-item-label">Referendum</div>
+            <div class="detail-item-value">
+              <div class="candidate-pledge-picker voter-detail-referendum-picker" role="group" aria-label="Referendum vote">
+                <button type="button" class="candidate-pledge-option candidate-pledge-option--yes${
+                  referendumVoteVal === "yes" ? " is-active" : ""
+                }" data-referendum-vote="yes">Yes</button>
+                <button type="button" class="candidate-pledge-option candidate-pledge-option--no${
+                  referendumVoteVal === "no" ? " is-active" : ""
+                }" data-referendum-vote="no">No</button>
+                <button type="button" class="candidate-pledge-option candidate-pledge-option--undecided${
+                  referendumVoteVal === "undecided" ? " is-active" : ""
+                }" data-referendum-vote="undecided">Undecided</button>
+              </div>
+              <p class="helper-text candidate-pledge-picker__hint">Same referendum pledge as in Pledges (campaign-wide).</p>
+            </div>
+          </div>
+          <div>
+            <div class="detail-item-label">Referendum comment</div>
+            <div class="detail-item-value">
+              <textarea
+                id="voterDetailReferendumNotes"
+                class="voter-detail-referendum-notes"
+                rows="2"
+                placeholder="Comment on referendum…"
+                aria-label="Referendum comment"
+              >${escapeHtml(voter.referendumNotes != null ? String(voter.referendumNotes) : "")}</textarea>
+            </div>
           </div>
         </div>
       </section>`
@@ -1234,6 +1267,26 @@ function renderVoterDetails(voter) {
         });
         updateVoterCandidatePledge(voter.id, candCtx.candidateId, val);
       });
+    });
+  }
+
+  const referendumPicker = document.querySelector(".voter-detail-referendum-picker");
+  if (referendumPicker && candCtx) {
+    referendumPicker.querySelectorAll("[data-referendum-vote]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const val = btn.getAttribute("data-referendum-vote");
+        if (val !== "yes" && val !== "no" && val !== "undecided") return;
+        referendumPicker.querySelectorAll("[data-referendum-vote]").forEach((b) => {
+          b.classList.toggle("is-active", b === btn);
+        });
+        updateVoterReferendumVote(voter.id, val);
+      });
+    });
+  }
+  const voterDetailRefNotes = document.getElementById("voterDetailReferendumNotes");
+  if (voterDetailRefNotes && candCtx) {
+    voterDetailRefNotes.addEventListener("blur", () => {
+      updateVoterReferendumNotes(voter.id, voterDetailRefNotes.value);
     });
   }
 

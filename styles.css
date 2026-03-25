@@ -2790,6 +2790,29 @@ body.list-workspace-page {
   margin-top: 4px;
 }
 
+/* Candidate detail Status: referendum comment (matches compact Pledges referendum field) */
+textarea.voter-detail-referendum-notes {
+  width: 100%;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text);
+  background-color: #fff;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+textarea.voter-detail-referendum-notes:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
 .table-wrapper {
   flex: 1;
   min-height: 0;

@@ -66,12 +66,14 @@ function applyPledgesNavVisibility() {
   const cfg = getCampaignConfig();
   const show = cfg.showPledgesNav !== false;
   /** Class + !important survives applyUserToShell clearing inline display on other nav items */
-  pledgesBtn.classList.toggle("nav-item--hidden-sidebar", !show);
+  pledgesBtn.classList.toggle("nav-item--hidden-sidebar", isCandidateOnly || !show);
   pledgesBtn.style.removeProperty("display");
   const activePledges = document.querySelector(
     '.nav-item.nav-item--active[data-module="pledges"]'
   );
-  if (!show && !isCandidateOnly && activePledges) {
+  if (isCandidateOnly && activePledges) {
+    switchModule("voters");
+  } else if (!show && !isCandidateOnly && activePledges) {
     switchModule("dashboard");
   }
 }
@@ -134,14 +136,13 @@ function applyUserToShell(user) {
     settingsNavItem.style.display = user?.isAdmin ? "flex" : "none";
   }
 
-  // Candidate users: Voters, Pledges (referendum + candidate pledges), and Reports; no other modules
+  // Candidate users: Voters and Reports only (no Pledges module)
   const isCandidateOnly = user?.role === "candidate" && user?.candidateId;
   navButtons.forEach((btn) => {
     const moduleKey = btn.dataset.module;
     if (moduleKey === "settings") return; // already handled above
     if (isCandidateOnly) {
-      const allowed =
-        moduleKey === "voters" || moduleKey === "reports" || moduleKey === "pledges";
+      const allowed = moduleKey === "voters" || moduleKey === "reports";
       btn.style.display = allowed ? "flex" : "none";
     } else {
       btn.style.display = "";
@@ -178,13 +179,12 @@ function switchModule(key) {
     // Guard against programmatic attempts to open settings
     return;
   }
-  // Candidate users can only open Voters, Pledges, or Reports
+  // Candidate users can only open Voters or Reports
   if (
     currentUser?.role === "candidate" &&
     currentUser?.candidateId &&
     key !== "reports" &&
-    key !== "voters" &&
-    key !== "pledges"
+    key !== "voters"
   ) {
     return;
   }
