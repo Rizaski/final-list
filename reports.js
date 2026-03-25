@@ -411,11 +411,14 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   function applyCandidateOnlyView() {
     const user = getCurrentUser ? getCurrentUser() : null;
     const isCandidate = user?.role === "candidate" && user?.candidateId;
-    if (!reportsModule || !candidateSummaryEl || !isCandidate) return;
-    const candidateCard = candidateSummaryEl.closest(".card");
-    if (!candidateCard) return;
+    if (!reportsModule || !isCandidate) return;
+    const candidateCard = candidateSummaryEl?.closest(".card");
+    const referendumCard = document.getElementById("reportsReferendumChart")?.closest(".card");
+    if (!candidateCard && !referendumCard) return;
     reportsModule.querySelectorAll(".card").forEach((card) => {
-      card.style.display = card === candidateCard ? "" : "none";
+      const show =
+        (candidateCard && card === candidateCard) || (referendumCard && card === referendumCard);
+      card.style.display = show ? "" : "none";
     });
     const moduleHeader = reportsModule.querySelector(".module-header");
     if (moduleHeader) moduleHeader.style.display = "none";
