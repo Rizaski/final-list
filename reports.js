@@ -726,7 +726,11 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
                 return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(formatted)}">Voted</span>`;
               })()
             : '<span class="text-muted">—</span>';
-          const assignedAgentName = assignedByVoterId[String(v.id)] || "";
+          const fromDoc =
+            v.candidateAgentAssignments && typeof v.candidateAgentAssignments === "object"
+              ? String(v.candidateAgentAssignments[String(candidateId)] || "")
+              : "";
+          const assignedAgentName = (fromDoc || assignedByVoterId[String(v.id)] || "").trim();
           const tr = document.createElement("tr");
           tr.innerHTML = `
             <td class="data-table-col--seq">${v.sequence ?? ""}</td>

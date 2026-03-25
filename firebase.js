@@ -118,6 +118,7 @@ export const firebaseInitPromise = (async () => {
       // so this runs before any Firestore use.
       db = firestoreMod.initializeFirestore(app, {
         experimentalForceLongPolling: true,
+        ignoreUndefinedProperties: true,
       });
       /** Avoid "Uncaught Error in snapshot listener" when rules/auth deny; log once per path. */
       const onSnapshotSafe = (ref, onNext, label) =>

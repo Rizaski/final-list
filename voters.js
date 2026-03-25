@@ -41,6 +41,52 @@ function saveVotersToStorage() {
     localStorage.setItem(VOTERS_STORAGE_KEY, JSON.stringify(currentVoters));
   } catch (_) {}
 }
+
+/** After Firestore succeeds: keep legacy localStorage map in sync (reports / older UIs). */
+function mirrorCandidatePledgedAgentLocalMap(candidateId, voterId, agentName) {
+  if (!candidateId || voterId == null) return;
+  const key = candidatePledgedAgentStorageKey(candidateId);
+  let map = {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object") map = p;
+    }
+  } catch (_) {}
+  map[String(voterId)] = agentName || "";
+  try {
+    localStorage.setItem(key, JSON.stringify(map));
+  } catch (_) {}
+}
+
+/** Write voter to Firestore; show notification on failure. Returns whether the write succeeded. */
+async function saveVoterToFirestoreWithNotification(v, errorTitle) {
+  const title = errorTitle || "Could not save to cloud";
+  try {
+    const api = await firebaseInitPromise;
+    if (!api?.ready || typeof api.setVoterFs !== "function") {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title,
+          meta: "Cloud sync is not ready. Check your connection and try again.",
+        });
+      }
+      return false;
+    }
+    await api.setVoterFs(v);
+    return true;
+  } catch (err) {
+    console.warn("[Voters] setVoterFs failed", err);
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title,
+        meta: err?.message || String(err),
+      });
+    }
+    return false;
+  }
+}
 let selectedVoterId = null;
 let votersCurrentPage = 1;
 let unsubscribeVotersFs = null;
@@ -872,7 +918,7 @@ function renderVoterDetails(voter) {
         typeof voter.candidateAgentAssignments === "object"
           ? String(voter.candidateAgentAssignments[String(candCtx.candidateId)] || "")
           : "";
-      const assignedName = (mapAssignedName || voterDocAssignedName || "").trim();
+      const assignedName = (voterDocAssignedName || mapAssignedName || "").trim();
       const candidateAgents = getCandidateAssignableAgents(candCtx.candidateId);
       const agentOptions =
         '<option value="">Unassigned</option>' +
@@ -962,16 +1008,25 @@ function renderVoterDetails(voter) {
           ? voter.volunteer
           : voter?.volunteer?.name || "";
     } else if (selectedScope) {
-      const key = candidatePledgedAgentStorageKey(selectedScope);
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const p = JSON.parse(raw);
-          if (p && typeof p === "object") {
-            assignedName = p[String(voter.id)] || "";
+      const docName =
+        voter?.candidateAgentAssignments &&
+        typeof voter.candidateAgentAssignments === "object"
+          ? String(voter.candidateAgentAssignments[String(selectedScope)] || "")
+          : "";
+      if (docName) {
+        assignedName = docName;
+      } else {
+        const key = candidatePledgedAgentStorageKey(selectedScope);
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (p && typeof p === "object") {
+              assignedName = p[String(voter.id)] || "";
+            }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
     }
 
     const agentOptions = buildAgentOptions(assignedName, selectedScope);
@@ -1307,45 +1362,59 @@ function renderVoterDetails(voter) {
     });
     agentSearchInput?.addEventListener("change", applyAgentFromSearch);
     if (agentSel) {
-      agentSel.addEventListener("change", () => {
-        const key = candidatePledgedAgentStorageKey(candCtx.candidateId);
-        let map = {};
-        try {
-          const raw = localStorage.getItem(key);
-          if (raw) {
-            const p = JSON.parse(raw);
-            if (p && typeof p === "object") map = p;
-          }
-        } catch (_) {}
-        map[String(voter.id)] = agentSel.value || "";
-        try {
-          localStorage.setItem(key, JSON.stringify(map));
-        } catch (_) {}
+      agentSel.addEventListener("change", async () => {
         const v = currentVoters.find((x) => x.id === voter.id);
-        if (v) {
-          if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
-            v.candidateAgentAssignments = {};
+        if (!v) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Could not save assignment",
+              meta: "Voter not found in the list.",
+            });
           }
-          if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
-            v.candidateAgentAssignmentIds = {};
-          }
-          const selectedName = agentSel.value || "";
-          const selectedAgent =
-            getCandidateAssignableAgents(candCtx.candidateId).find(
-              (a) => String(a?.name || "").trim() === String(selectedName).trim()
-            ) || null;
-          v.candidateAgentAssignments[String(candCtx.candidateId)] = agentSel.value || "";
-          v.candidateAgentAssignmentIds[String(candCtx.candidateId)] =
-            selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
-          (async () => {
-            try {
-              const api = await firebaseInitPromise;
-              if (api.ready && api.setVoterFs) await api.setVoterFs(v);
-              saveVotersToStorage();
-              document.dispatchEvent(new CustomEvent("voters-updated"));
-            } catch (_) {}
-          })();
+          return;
         }
+        const cid = String(candCtx.candidateId);
+        const prevAssignments = {
+          ...(v.candidateAgentAssignments && typeof v.candidateAgentAssignments === "object"
+            ? v.candidateAgentAssignments
+            : {}),
+        };
+        const prevIds = {
+          ...(v.candidateAgentAssignmentIds && typeof v.candidateAgentAssignmentIds === "object"
+            ? v.candidateAgentAssignmentIds
+            : {}),
+        };
+        const prevName = String(prevAssignments[cid] ?? "");
+        const prevAgentId = String(prevIds[cid] ?? "");
+
+        if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
+          v.candidateAgentAssignments = {};
+        }
+        if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
+          v.candidateAgentAssignmentIds = {};
+        }
+        const selectedName = agentSel.value || "";
+        const selectedAgent =
+          getCandidateAssignableAgents(candCtx.candidateId).find(
+            (a) => String(a?.name || "").trim() === String(selectedName).trim()
+          ) || null;
+        v.candidateAgentAssignments[cid] = selectedName;
+        v.candidateAgentAssignmentIds[cid] =
+          selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+
+        const ok = await saveVoterToFirestoreWithNotification(v, "Agent assignment not saved to cloud");
+        if (!ok) {
+          v.candidateAgentAssignments = { ...prevAssignments };
+          v.candidateAgentAssignmentIds = { ...prevIds };
+          const revertLabel = prevName;
+          agentSel.value = revertLabel;
+          if (agentSearchInput) agentSearchInput.value = revertLabel;
+          return;
+        }
+
+        mirrorCandidatePledgedAgentLocalMap(candCtx.candidateId, v.id, selectedName);
+        saveVotersToStorage();
+        document.dispatchEvent(new CustomEvent("voters-updated"));
         document.dispatchEvent(new CustomEvent("pledges-updated"));
       });
     }
@@ -1422,50 +1491,72 @@ function renderVoterDetails(voter) {
     });
     agentSearchInput?.addEventListener("change", applyAgentFromSearch);
     if (agentSel) {
-      agentSel.addEventListener("change", () => {
+      agentSel.addEventListener("change", async () => {
         const scopeId = scopeSel?.value?.trim() || "";
         const v = currentVoters.find((x) => x.id === voter.id);
-        if (v) {
-          if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
-            v.candidateAgentAssignments = {};
+        if (!v) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Could not save assignment",
+              meta: "Voter not found in the list.",
+            });
           }
-          if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
-            v.candidateAgentAssignmentIds = {};
-          }
-          const selectedName = agentSel.value || "";
-          const selectedAgent =
-            adminAgentsForScope().find(
-              (a) => String(a?.name || "").trim() === String(selectedName).trim()
-            ) || null;
-          if (scopeId === ALL_CAMPAIGN_SCOPE_KEY) {
-            v.volunteer = selectedName || "";
-          } else if (scopeId) {
-            const key = candidatePledgedAgentStorageKey(scopeId);
-            let map = {};
-            try {
-              const raw = localStorage.getItem(key);
-              if (raw) {
-                const p = JSON.parse(raw);
-                if (p && typeof p === "object") map = p;
-              }
-            } catch (_) {}
-            map[String(voter.id)] = selectedName || "";
-            try {
-              localStorage.setItem(key, JSON.stringify(map));
-            } catch (_) {}
-            v.candidateAgentAssignments[String(scopeId)] = selectedName || "";
-            v.candidateAgentAssignmentIds[String(scopeId)] =
-              selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
-          }
-          (async () => {
-            try {
-              const api = await firebaseInitPromise;
-              if (api.ready && api.setVoterFs) await api.setVoterFs(v);
-              saveVotersToStorage();
-              document.dispatchEvent(new CustomEvent("voters-updated"));
-            } catch (_) {}
-          })();
+          return;
         }
+
+        const prevVolunteer = v.volunteer;
+        const prevAssignments = {
+          ...(v.candidateAgentAssignments && typeof v.candidateAgentAssignments === "object"
+            ? v.candidateAgentAssignments
+            : {}),
+        };
+        const prevIds = {
+          ...(v.candidateAgentAssignmentIds && typeof v.candidateAgentAssignmentIds === "object"
+            ? v.candidateAgentAssignmentIds
+            : {}),
+        };
+
+        if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
+          v.candidateAgentAssignments = {};
+        }
+        if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
+          v.candidateAgentAssignmentIds = {};
+        }
+        const selectedName = agentSel.value || "";
+        const selectedAgent =
+          adminAgentsForScope().find(
+            (a) => String(a?.name || "").trim() === String(selectedName).trim()
+          ) || null;
+
+        if (scopeId === ALL_CAMPAIGN_SCOPE_KEY) {
+          v.volunteer = selectedName || "";
+        } else if (scopeId) {
+          v.candidateAgentAssignments[String(scopeId)] = selectedName || "";
+          v.candidateAgentAssignmentIds[String(scopeId)] =
+            selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+        }
+
+        const ok = await saveVoterToFirestoreWithNotification(v, "Agent assignment not saved to cloud");
+        if (!ok) {
+          v.volunteer = prevVolunteer;
+          v.candidateAgentAssignments = { ...prevAssignments };
+          v.candidateAgentAssignmentIds = { ...prevIds };
+          const prevDisplay =
+            scopeId === ALL_CAMPAIGN_SCOPE_KEY
+              ? typeof prevVolunteer === "string"
+                ? prevVolunteer
+                : prevVolunteer?.name || ""
+              : String(prevAssignments[scopeId] || "");
+          agentSel.value = prevDisplay;
+          if (agentSearchInput) agentSearchInput.value = prevDisplay;
+          return;
+        }
+
+        if (scopeId && scopeId !== ALL_CAMPAIGN_SCOPE_KEY) {
+          mirrorCandidatePledgedAgentLocalMap(scopeId, v.id, selectedName);
+        }
+        saveVotersToStorage();
+        document.dispatchEvent(new CustomEvent("voters-updated"));
         document.dispatchEvent(new CustomEvent("pledges-updated"));
       });
     }
