@@ -599,6 +599,13 @@ function renderPledgesDetailsPanel(row) {
   const candAgentMap = row.candidateAgentAssignments || {};
   const candAgentIdMap = row.candidateAgentAssignmentIds || {};
   const allCandidates = getCandidates() || [];
+  const allAgents = getAgentsFromStorage();
+  const agentsByCandidateId = new Map();
+  for (const a of allAgents) {
+    const key = String(a?.candidateId || "");
+    if (!agentsByCandidateId.has(key)) agentsByCandidateId.set(key, []);
+    agentsByCandidateId.get(key).push(a);
+  }
   const refVote = normalizeReferendumVote(row.referendumVote);
   const refYes = refVote === "yes";
   const refNo = refVote === "no";
@@ -626,7 +633,7 @@ function renderPledgesDetailsPanel(row) {
           <textarea
             id="pledgesReferendumNotes"
             class="pledges-referendum-notes"
-            rows="3"
+            rows="2"
             placeholder="Voter comment on referendum…"
             aria-label="Referendum comment"
           >${escapeHtml(row.referendumNotes != null ? String(row.referendumNotes) : "")}</textarea>
@@ -647,8 +654,7 @@ function renderPledgesDetailsPanel(row) {
                     const isYes = current === "yes";
                     const isNo = current === "no";
                     const isUndecided = current === "undecided";
-                    const allAgents = getAgentsFromStorage();
-                    const candAgents = allAgents.filter((a) => String(a?.candidateId || "") === cid);
+                    const candAgents = agentsByCandidateId.get(cid) || [];
                     const assignedId = candAgentIdMap[cid] != null ? String(candAgentIdMap[cid]) : "";
                     const assignedName = candAgentMap[cid] != null ? String(candAgentMap[cid]) : "";
                     const assignedAgentFromId =
@@ -775,13 +781,14 @@ function renderPledgesDetailsPanel(row) {
       const agentSel = rowEl?.querySelector(`select.candidate-agent-select[data-candidate-id="${escapeHtml(cid)}"]`);
       const agentSearchInput = rootEl.querySelector("input.agent-modal-voter-search-input");
       const menuEl = rootEl.querySelector(".voter-agent-dropdown__menu");
+      const candAgentsForDropdown = agentsByCandidateId.get(cid) || [];
 
       setupPledgeCandidateAgentDropdown({
         agentSel,
         agentSearchInput,
         menuEl,
         rootEl,
-        getAgents: () => getAgentsFromStorage().filter((a) => String(a?.candidateId || "") === cid),
+        getAgents: () => candAgentsForDropdown,
       });
     });
 
