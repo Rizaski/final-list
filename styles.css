@@ -3636,15 +3636,15 @@ body.list-workspace-page {
 
 /* Referendum comment — match pledges agent search / form field branding */
 .pledges-details-root .pledges-referendum-notes-field {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--color-border-subtle);
 }
 
 .pledges-details-root .pledges-referendum-notes-label {
   display: block;
-  margin-bottom: 5px;
-  font-size: 12px;
+  margin-bottom: 4px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--color-text-muted);
   letter-spacing: 0.01em;
@@ -3652,15 +3652,15 @@ body.list-workspace-page {
 
 .pledges-details-root textarea.pledges-referendum-notes {
   width: 100%;
-  min-height: 58px;
+  min-height: 44px;
   resize: vertical;
   margin: 0;
-  padding: 6px 10px;
+  padding: 5px 8px;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-subtle);
   font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--color-text);
   background-color: #ffffff;
   box-sizing: border-box;
