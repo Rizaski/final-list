@@ -331,11 +331,50 @@ function renderDoorToDoorTable() {
       updateVoterDoorToDoorFields(voterId, { notes: el.value || "" });
     });
   });
+
+  updateDoorToDoorSortIndicators();
+}
+
+function updateDoorToDoorSortIndicators() {
+  const headers = document.querySelectorAll("#doorToDoorTable thead th.th-sortable");
+  if (!headers.length) return;
+  const sortBy = doorToDoorSortEl?.value || "sequence";
+  headers.forEach((th) => {
+    const key = th.getAttribute("data-sort-key");
+    th.classList.remove("is-sorted-asc", "is-sorted-desc");
+    th.removeAttribute("aria-sort");
+    if (key === "name" && (sortBy === "name-asc" || sortBy === "name-desc")) {
+      th.classList.add(sortBy === "name-asc" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "name-asc" ? "ascending" : "descending");
+    } else if (sortBy === key) {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    }
+  });
+}
+
+function bindDoorToDoorTableHeaderSort() {
+  const thead = document.querySelector("#doorToDoorTable thead");
+  if (!thead) return;
+  thead.addEventListener("click", (e) => {
+    const th = e.target.closest("th.th-sortable");
+    if (!th) return;
+    const key = th.getAttribute("data-sort-key");
+    if (!key || !doorToDoorSortEl) return;
+    if (key === "name") {
+      doorToDoorSortEl.value = doorToDoorSortEl.value === "name-asc" ? "name-desc" : "name-asc";
+    } else {
+      doorToDoorSortEl.value = key;
+    }
+    doorToDoorCurrentPage = 1;
+    renderDoorToDoorTable();
+  });
 }
 
 export function initDoorToDoorModule(votersContextParam) {
   votersContext = votersContextParam || null;
   syncBallotBoxFilter();
+  bindDoorToDoorTableHeaderSort();
   renderDoorToDoorTable();
 
   doorToDoorSearchEl?.addEventListener("input", () => {
