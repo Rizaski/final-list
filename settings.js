@@ -1,5 +1,6 @@
 import { openModal, closeModal, confirmDialog } from "./ui.js";
-import { importVotersFromTemplateRows, getVoterImageSrc } from "./voters.js";
+import { importVotersFromTemplateRows, getVoterImageSrc, getVotersContextForStandalone } from "./voters.js";
+import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
 import { firebaseInitPromise } from "./firebase.js";
 import {
   AGENTS_STORAGE_KEY,
@@ -294,7 +295,10 @@ function renderCandidatesTable() {
       <td>${c.electionType}</td>
       <td>${c.constituency}</td>
       <td style="text-align:right;">
-        <button class="ghost-button ghost-button--small" data-edit-candidate="${c.id}">Edit</button>
+        <div class="settings-agents-crud" role="group" aria-label="Candidate actions">
+          <button type="button" class="ghost-button ghost-button--small" data-candidate-pledged-voters="${c.id}" title="Pledged voters list">Voters</button>
+          <button type="button" class="ghost-button ghost-button--small" data-edit-candidate="${c.id}">Edit</button>
+        </div>
       </td>
     `;
     candidatesTableBody.appendChild(tr);
@@ -2747,6 +2751,19 @@ export function initSettingsModule() {
 
   if (candidatesTableBody) {
     candidatesTableBody.addEventListener("click", (e) => {
+      const votersBtn = e.target.closest("[data-candidate-pledged-voters]");
+      if (votersBtn) {
+        const candidateId = votersBtn.getAttribute("data-candidate-pledged-voters");
+        if (candidateId == null || candidateId === "") return;
+        const ctx = getVotersContextForStandalone();
+        openCandidatePledgedVotersModal({
+          candidateId,
+          getAllVoters: () => ctx.getAllVoters(),
+          getCurrentUser: () => parseViewerFromStorage(),
+          getCandidates,
+        });
+        return;
+      }
       const btn = e.target.closest("[data-edit-candidate]");
       if (!btn) return;
       const id = Number(btn.getAttribute("data-edit-candidate"));

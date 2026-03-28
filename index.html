@@ -475,6 +475,13 @@
                       <option value="undecided">Undecided</option>
                     </select>
                   </div>
+                  <div class="field-group field-group--inline" id="voterFilterAgentWrap" hidden>
+                    <label for="voterFilterAgent">Agent</label>
+                    <select id="voterFilterAgent" aria-label="Filter by assigned agent">
+                      <option value="all">All agents</option>
+                      <option value="__unassigned__">Unassigned</option>
+                    </select>
+                  </div>
                   <div class="field-group field-group--inline">
                     <label for="voterSort">Sort</label>
                     <select id="voterSort">
@@ -484,6 +491,7 @@
                       <option value="id">ID Number</option>
                       <option value="address">Permanent address</option>
                       <option value="pledge">Pledge status</option>
+                      <option value="assignedAgent" id="voterSortOptAssignedAgent" hidden>Assigned agent</option>
                       <option value="island">Ballot box</option>
                     </select>
                   </div>
@@ -519,6 +527,7 @@
                       <th class="th-sortable data-table-col--name" data-sort-key="name">Name<span class="sort-indicator"></span></th>
                       <th class="th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
                       <th class="th-sortable" data-sort-key="pledge">Pledge<span class="sort-indicator"></span></th>
+                      <th class="th-sortable data-table-col--assigned-agent" data-sort-key="assignedAgent" id="votersThAssignedAgent" hidden>Assigned agent<span class="sort-indicator"></span></th>
                       <th>Voted</th>
                     <th scope="col" style="width:1%; text-align:right;">Actions</th>
                     </tr>
@@ -1335,7 +1344,7 @@
                             <th>Position</th>
                             <th>Election type</th>
                             <th>Constituency</th>
-                            <th></th>
+                            <th style="text-align:right;">Actions</th>
                           </tr>
                         </thead>
                         <tbody>

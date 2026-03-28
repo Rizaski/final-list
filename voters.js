@@ -157,6 +157,40 @@ function pledgeStatusLabel(s) {
   return "Undecided";
 }
 
+function pickAgentAssignmentVal(raw) {
+  if (raw == null) return "";
+  if (typeof raw === "object") return String(raw.name || raw.id || "").trim();
+  return String(raw).trim();
+}
+
+/** Same source as voter detail “Assigned agent” for this candidate: Firestore map + legacy local map. */
+function loadCandidateAgentAssignmentMap(candidateId) {
+  const key = candidatePledgedAgentStorageKey(String(candidateId));
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object") return p;
+    }
+  } catch (_) {}
+  return {};
+}
+
+function getCandidateScopedAssignedAgentNameWithMap(voter, candidateId, map) {
+  if (!voter || !candidateId) return "";
+  const cid = String(candidateId);
+  const fromObj =
+    voter.candidateAgentAssignments && typeof voter.candidateAgentAssignments === "object"
+      ? voter.candidateAgentAssignments[cid]
+      : "";
+  const fromDoc = pickAgentAssignmentVal(fromObj);
+  const fromMap = pickAgentAssignmentVal(map[String(voter.id)]);
+  return (fromDoc || fromMap).trim();
+}
+
+/** `voterFilterAgent` value for voters with no agent (candidate list filter). */
+const AGENT_FILTER_UNASSIGNED = "__unassigned__";
+
 /** Local read only — avoids circular import with settings.js */
 function getCandidateRecordById(candidateId) {
   try {
@@ -246,15 +280,73 @@ function applyCandidateVotersUi() {
   if (filterSel && filterSel.options[0]) {
     filterSel.options[0].textContent = isCand ? "All (your pledge)" : "All pledge statuses";
   }
+  const agentTh = document.getElementById("votersThAssignedAgent");
+  if (agentTh) agentTh.hidden = !isCand;
+  const agentSortOpt = document.getElementById("voterSortOptAssignedAgent");
+  if (agentSortOpt) agentSortOpt.hidden = !isCand;
+  const searchEl = document.getElementById("voterSearch");
+  if (searchEl) {
+    searchEl.placeholder = isCand
+      ? "Search by name, ID, address, island, notes, assigned agent…"
+      : "Search by name, ID, address, island, notes…";
+  }
+  const agentFilterWrap = document.getElementById("voterFilterAgentWrap");
+  if (agentFilterWrap) agentFilterWrap.hidden = !isCand;
+  if (isCand) refreshVoterFilterAgentOptions();
+  else {
+    const agentSel = document.getElementById("voterFilterAgent");
+    if (agentSel) agentSel.value = "all";
+  }
 }
 
-const VOTER_TABLE_COLUMN_COUNT = 8;
+/** Rebuild candidate-only “Assigned agent” filter options from agents list + current assignments. */
+function refreshVoterFilterAgentOptions() {
+  const ctx = getCandidateContext();
+  const sel = document.getElementById("voterFilterAgent");
+  if (!sel) return;
+  if (!ctx) {
+    sel.value = "all";
+    return;
+  }
+  const prev = sel.value;
+  const map = loadCandidateAgentAssignmentMap(ctx.candidateId);
+  const nameSet = new Set();
+  for (const a of getCandidateAssignableAgents(ctx.candidateId)) {
+    const n = String(a?.name || "").trim();
+    if (n) nameSet.add(n);
+  }
+  for (const v of currentVoters) {
+    const n = getCandidateScopedAssignedAgentNameWithMap(v, ctx.candidateId, map);
+    if (n) nameSet.add(n);
+  }
+  const sorted = Array.from(nameSet).sort((a, b) => a.localeCompare(b, "en"));
+  sel.innerHTML = `
+    <option value="all">All agents</option>
+    <option value="${AGENT_FILTER_UNASSIGNED}">Unassigned</option>
+    ${sorted
+      .map(
+        (n) =>
+          `<option value="${escapeHtml(encodeURIComponent(n))}">${escapeHtml(n)}</option>`
+      )
+      .join("")}
+  `;
+  const prevOk =
+    prev === "all" ||
+    prev === AGENT_FILTER_UNASSIGNED ||
+    sorted.some((n) => encodeURIComponent(n) === prev);
+  sel.value = prevOk ? prev : "all";
+}
+
+function getVotersTableColumnCount() {
+  return getCandidateContext() ? 9 : 8;
+}
 
 const votersTableBody = document.querySelector("#votersTable tbody");
 const votersPaginationEl = document.getElementById("votersPagination");
 const voterSearchInput = document.getElementById("voterSearch");
 const voterSortEl = document.getElementById("voterSort");
 const voterFilterPledgeEl = document.getElementById("voterFilterPledge");
+const voterFilterAgentEl = document.getElementById("voterFilterAgent");
 const voterGroupByEl = document.getElementById("voterGroupBy");
 const voterDetailsSubtitle = document.getElementById("voterDetailsSubtitle");
 const voterDetailsContent = document.getElementById("voterDetailsContent");
@@ -321,12 +413,30 @@ function pledgePillClass(status) {
 function getFilteredSortedGroupedVoters() {
   const query = (voterSearchInput?.value || "").toLowerCase().trim();
   const pledgeFilter = voterFilterPledgeEl?.value || "all";
-  const sortBy = voterSortEl?.value || "sequence";
+  let sortBy = voterSortEl?.value || "sequence";
   const groupBy = voterGroupByEl?.value || "none";
+  const candCtx = getCandidateContext();
+  const agentMap = candCtx ? loadCandidateAgentAssignmentMap(candCtx.candidateId) : null;
+  if (sortBy === "assignedAgent" && !candCtx) sortBy = "sequence";
+  const agentFilterRaw = candCtx ? voterFilterAgentEl?.value || "all" : "all";
 
   let list = currentVoters.filter((voter) => {
     if (pledgeFilter !== "all" && getEffectivePledgeStatus(voter) !== pledgeFilter)
       return false;
+    if (candCtx && agentFilterRaw !== "all") {
+      const assigned = getCandidateScopedAssignedAgentNameWithMap(voter, candCtx.candidateId, agentMap);
+      if (agentFilterRaw === AGENT_FILTER_UNASSIGNED) {
+        if (assigned) return false;
+      } else {
+        let wantName = agentFilterRaw;
+        try {
+          wantName = decodeURIComponent(agentFilterRaw);
+        } catch (_) {
+          /* keep raw */
+        }
+        if (assigned.trim().toLowerCase() !== wantName.trim().toLowerCase()) return false;
+      }
+    }
     if (query) {
       const name = (voter.fullName || "").toLowerCase();
       const id = (voter.id || "").toLowerCase();
@@ -335,6 +445,9 @@ function getFilteredSortedGroupedVoters() {
       const address = (voter.permanentAddress || "").toLowerCase();
       const island = (voter.island || "").toLowerCase();
       const notes = (voter.notes || "").toLowerCase();
+      const agentName = candCtx
+        ? getCandidateScopedAssignedAgentNameWithMap(voter, candCtx.candidateId, agentMap).toLowerCase()
+        : "";
       if (
         !name.includes(query) &&
         !id.includes(query) &&
@@ -342,7 +455,8 @@ function getFilteredSortedGroupedVoters() {
         !phone.includes(query) &&
         !address.includes(query) &&
         !island.includes(query) &&
-        !notes.includes(query)
+        !notes.includes(query) &&
+        !agentName.includes(query)
       )
         return false;
     }
@@ -359,6 +473,12 @@ function getFilteredSortedGroupedVoters() {
         return (a.island || "").localeCompare(b.island || "", "en");
       case "pledge":
         return getEffectivePledgeStatus(a).localeCompare(getEffectivePledgeStatus(b), "en");
+      case "assignedAgent":
+        if (!candCtx) return (a.fullName || "").localeCompare(b.fullName || "", "en");
+        return getCandidateScopedAssignedAgentNameWithMap(a, candCtx.candidateId, agentMap).localeCompare(
+          getCandidateScopedAssignedAgentNameWithMap(b, candCtx.candidateId, agentMap),
+          "en"
+        );
       case "address":
         return (a.permanentAddress || "").localeCompare(
           b.permanentAddress || "",
@@ -403,6 +523,10 @@ export function getCurrentFilteredVoterIds() {
 function renderVotersTable() {
   if (!votersTableBody) return;
   const ctx = getCandidateContext();
+  if (!ctx && voterSortEl?.value === "assignedAgent") {
+    voterSortEl.value = "sequence";
+  }
+  const agentMapForRows = ctx ? loadCandidateAgentAssignmentMap(ctx.candidateId) : null;
   let clearedSelectionForCandidate = false;
   if (ctx && selectedVoterId) {
     const sel = currentVoters.find((v) => v.id === selectedVoterId);
@@ -442,7 +566,7 @@ function renderVotersTable() {
     const emptyMsg = ctx
       ? "No voters in the system yet. Staff can import voters in Settings → Data."
       : "No voters. Add a voter or import from Settings → Data.";
-    tr.innerHTML = `<td colspan="${VOTER_TABLE_COLUMN_COUNT}" class="text-muted" style="text-align:center;padding:24px;">${emptyMsg}</td>`;
+    tr.innerHTML = `<td colspan="${getVotersTableColumnCount()}" class="text-muted" style="text-align:center;padding:24px;">${emptyMsg}</td>`;
     votersTableBody.appendChild(tr);
   }
 
@@ -450,7 +574,7 @@ function renderVotersTable() {
     if (item.type === "group") {
       const tr = document.createElement("tr");
       tr.className = "list-toolbar__group-header";
-      tr.innerHTML = `<td colspan="${VOTER_TABLE_COLUMN_COUNT}">${escapeHtml(item.label)}</td>`;
+      tr.innerHTML = `<td colspan="${getVotersTableColumnCount()}">${escapeHtml(item.label)}</td>`;
       votersTableBody.appendChild(tr);
       continue;
     }
@@ -472,6 +596,14 @@ function renderVotersTable() {
       : `<div class="avatar-cell"><div class="avatar-circle">${initials}</div></div>`;
     const effPledge = getEffectivePledgeStatus(voter);
     const pledgeDisplay = pledgeStatusLabel(effPledge);
+    const assignedAgentName = ctx
+      ? getCandidateScopedAssignedAgentNameWithMap(voter, ctx.candidateId, agentMapForRows)
+      : "";
+    const assignedAgentCell = ctx
+      ? assignedAgentName
+        ? `<td class="data-table-col--assigned-agent">${escapeHtml(assignedAgentName)}</td>`
+        : `<td class="data-table-col--assigned-agent"><span class="text-muted">—</span></td>`
+      : "";
     const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
     const votedCell = timeMarked
       ? (() => {
@@ -496,6 +628,7 @@ function renderVotersTable() {
       <td><span class="${pledgePillClass(
         effPledge
       )}">${pledgeDisplay}</span></td>
+      ${assignedAgentCell}
       <td class="voted-status-cell">${votedCell}</td>
       <td style="text-align:right;">
         ${
@@ -930,28 +1063,12 @@ function renderVoterDetails(voter) {
       );
     };
     if (showForCandidate) {
-      const key = candidatePledgedAgentStorageKey(candCtx.candidateId);
-      let assignedByVoterId = {};
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const p = JSON.parse(raw);
-          if (p && typeof p === "object") assignedByVoterId = p;
-        }
-      } catch (_) {}
-      const rawMapValue = assignedByVoterId[String(voter.id)];
-      const mapAssignedName =
-        typeof rawMapValue === "string"
-          ? rawMapValue
-          : rawMapValue && typeof rawMapValue === "object"
-            ? String(rawMapValue.name || "")
-            : "";
-      const voterDocAssignedName =
-        voter?.candidateAgentAssignments &&
-        typeof voter.candidateAgentAssignments === "object"
-          ? String(voter.candidateAgentAssignments[String(candCtx.candidateId)] || "")
-          : "";
-      const assignedName = (voterDocAssignedName || mapAssignedName || "").trim();
+      const agentMap = loadCandidateAgentAssignmentMap(candCtx.candidateId);
+      const assignedName = getCandidateScopedAssignedAgentNameWithMap(
+        voter,
+        candCtx.candidateId,
+        agentMap
+      );
       const candidateAgents = getCandidateAssignableAgents(candCtx.candidateId);
       const agentOptions =
         '<option value="">Unassigned</option>' +
@@ -1748,6 +1865,7 @@ function bindVoterToolbar() {
   if (voterSearchInput) voterSearchInput.addEventListener("input", go);
   if (voterSortEl) voterSortEl.addEventListener("change", go);
   if (voterFilterPledgeEl) voterFilterPledgeEl.addEventListener("change", go);
+  if (voterFilterAgentEl) voterFilterAgentEl.addEventListener("change", go);
   if (voterGroupByEl) voterGroupByEl.addEventListener("change", go);
 }
 bindVoterToolbar();
@@ -2254,6 +2372,10 @@ export async function initVotersModule(getCurrentUser, options = {}) {
   document.addEventListener("voted-entries-updated", () => renderVotersTable());
 
   document.addEventListener("agents-updated", () => {
+    if (getCandidateContext()) {
+      refreshVoterFilterAgentOptions();
+      renderVotersTable();
+    }
     if (selectedVoterId) {
       const v = currentVoters.find((x) => x.id === selectedVoterId);
       if (v) renderVoterDetails(v);
