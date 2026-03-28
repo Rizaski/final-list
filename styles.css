@@ -4106,6 +4106,12 @@ textarea.voter-detail-referendum-notes:focus {
   height: 34px;
 }
 
+/* Transport route rows in voter detail (no avatar column). */
+.voter-agent-dropdown__item.voter-transport-route-item {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto;
+}
+
 .voter-agent-dropdown__main {
   font-size: 13px;
   font-weight: 600;
@@ -4500,6 +4506,74 @@ textarea.voter-detail-referendum-notes:focus {
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text);
+}
+
+/* Voter detail — transport route combobox matches agent-dropdown-select--modal (chevron, radius, shadow) */
+.voter-transport-route-value .voter-agent-dropdown .agent-modal-voter-search-input,
+.voter-transport-route-value .voter-agent-dropdown .voter-agent-dropdown__search {
+  --agent-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 8l5 5 5-5' stroke='%236b7280' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  display: block;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 42px 9px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--color-text);
+  background-color: #ffffff;
+  background-image: var(--agent-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 18px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  box-sizing: border-box;
+  cursor: text;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.voter-transport-route-value .voter-agent-dropdown .agent-modal-voter-search-input:hover:not(:disabled),
+.voter-transport-route-value .voter-agent-dropdown .voter-agent-dropdown__search:hover:not(:disabled) {
+  border-color: rgba(0, 156, 156, 0.45);
+  background-color: #fafefe;
+}
+
+.voter-transport-route-value .voter-agent-dropdown .agent-modal-voter-search-input:focus,
+.voter-transport-route-value .voter-agent-dropdown .voter-agent-dropdown__search:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow:
+    0 0 0 3px rgba(0, 156, 156, 0.2),
+    0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.voter-transport-route-value .voter-agent-dropdown .agent-modal-voter-search-input:disabled,
+.voter-transport-route-value .voter-agent-dropdown .voter-agent-dropdown__search:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background-color: #f9fafb;
+}
+
+.voter-transport-route-value .voter-agent-dropdown__menu {
+  border-radius: 10px;
+  box-shadow:
+    0 8px 18px rgba(15, 23, 42, 0.12),
+    0 1px 3px rgba(15, 23, 42, 0.06);
+  border: 1px solid var(--color-border-strong);
+}
+
+/* Trip type toggles — align with detail “pill” density next to route field */
+.voter-transport-route-value .pill-toggle-group .pill-toggle {
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 10px;
 }
 
 /* Voter detail — add transport route (admin) */

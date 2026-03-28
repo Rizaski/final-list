@@ -856,6 +856,104 @@ function formatDobAndAge(voter) {
   return { dobDisplay, ageDisplay };
 }
 
+/** Searchable transport route field (same dropdown shell as assigned agent in voter details). */
+function setupTransportRouteSearchDropdown({ routeSel, routeSearchInput, menuEl, getRoutes, persistTransport }) {
+  if (
+    !routeSel ||
+    !routeSearchInput ||
+    !menuEl ||
+    typeof getRoutes !== "function" ||
+    typeof persistTransport !== "function"
+  ) {
+    return;
+  }
+  const toNorm = (s) => String(s || "").trim().toLowerCase();
+  const root = document.getElementById("voterTransportRouteDropdown");
+
+  const renderMenu = () => {
+    if (routeSearchInput.disabled) {
+      menuEl.style.display = "none";
+      return;
+    }
+    const q = toNorm(routeSearchInput.value);
+    const all = getRoutes();
+    const list = all.filter((r) => !q || toNorm(r).includes(q)).slice(0, 40);
+    if (!list.length) {
+      menuEl.innerHTML =
+        '<div class="voter-agent-dropdown__empty">No matching routes.</div>';
+      menuEl.style.display = "block";
+      return;
+    }
+    menuEl.innerHTML = list
+      .map(
+        (r) =>
+          `<button type="button" class="voter-agent-dropdown__item voter-transport-route-item" data-route-name="${escapeHtml(r)}"><span class="voter-agent-dropdown__main">${escapeHtml(r)}</span></button>`
+      )
+      .join("");
+    menuEl.style.display = "block";
+  };
+
+  const hideMenu = () => {
+    menuEl.style.display = "none";
+  };
+
+  routeSearchInput.addEventListener("focus", renderMenu);
+  routeSearchInput.addEventListener("input", renderMenu);
+  root?.addEventListener("focusout", () => {
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (!root.contains(active)) hideMenu();
+    }, 0);
+  });
+
+  menuEl.addEventListener("mousedown", (e) => {
+    if (e.target.closest("[data-route-name]")) e.preventDefault();
+  });
+
+  menuEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-route-name]");
+    if (!btn) return;
+    const name = btn.getAttribute("data-route-name") || "";
+    routeSearchInput.value = name;
+    routeSel.value = name;
+    hideMenu();
+    persistTransport();
+  });
+
+  function normalizeFromSearch() {
+    if (routeSearchInput.disabled) return;
+    const q = String(routeSearchInput.value || "").trim();
+    const all = getRoutes();
+    if (!q) {
+      if (!routeSel.value) return;
+      routeSel.value = "";
+      routeSearchInput.value = "";
+      persistTransport();
+      return;
+    }
+    const exactCi = all.find((r) => toNorm(r) === toNorm(q));
+    if (exactCi) {
+      routeSearchInput.value = exactCi;
+      if (routeSel.value === exactCi) return;
+      routeSel.value = exactCi;
+      persistTransport();
+      return;
+    }
+    const prev = routeSel.value || "";
+    routeSearchInput.value = prev;
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Route not found",
+        meta: "Pick a route from the list or clear the field.",
+      });
+    }
+  }
+
+  routeSearchInput.addEventListener("blur", () => {
+    window.setTimeout(normalizeFromSearch, 180);
+  });
+}
+
 function renderVoterDetails(voter) {
   if (!voter) {
     voterDetailsSubtitle.textContent =
@@ -872,6 +970,10 @@ function renderVoterDetails(voter) {
   const availableRoutes = getAvailableTransportRoutes();
   const transportRoute = voter.transportRoute || "";
   const transportType = voter.transportType || "oneway";
+  const routeNameSet = new Set(availableRoutes);
+  const trTrim = (transportRoute || "").trim();
+  if (trTrim) routeNameSet.add(trTrim);
+  const availableRoutesForUi = Array.from(routeNameSet).sort((a, b) => a.localeCompare(b, "en"));
   const candCtx = getCandidateContext();
   const candRecord = candCtx ? getCandidateRecordById(candCtx.candidateId) : null;
   const candLabel = candRecord?.name ? escapeHtml(candRecord.name) : "";
@@ -1243,12 +1345,18 @@ function renderVoterDetails(voter) {
               ${
                 availableRoutes.length
                   ? `<div class="field-group">
-                       <label for="voterTransportRoute" class="sr-only">Route</label>
-                       <select id="voterTransportRoute" class="input"${
-                         voter.transportNeeded ? "" : " disabled"
-                       }>
+                       <label for="voterTransportRouteSearch" class="sr-only">Route</label>
+                       <div class="voter-agent-dropdown" id="voterTransportRouteDropdown">
+                         <input id="voterTransportRouteSearch" class="input agent-modal-voter-search-input voter-agent-dropdown__search" placeholder="Search and pick route…" value="${escapeHtml(
+                           transportRoute
+                         )}" aria-label="Search route from list" autocomplete="off" spellcheck="false"${
+                           voter.transportNeeded ? "" : " disabled"
+                         }>
+                         <div class="voter-agent-dropdown__menu" id="voterTransportRouteMenu" role="listbox" aria-label="Routes"></div>
+                       </div>
+                       <select id="voterTransportRoute" style="display:none" aria-hidden="true" tabindex="-1">
                          <option value="">Select route…</option>
-                         ${availableRoutes
+                         ${availableRoutesForUi
                            .map((route) => {
                              const isSelected = route === transportRoute;
                              return `<option value="${escapeHtml(route)}"${
@@ -1272,7 +1380,7 @@ function renderVoterDetails(voter) {
                          voter.transportNeeded ? "" : " disabled"
                        }>Return</button>
                      </div>
-                     <p class="helper-text" style="margin-top:4px;">Choose the route this voter will use and whether transport is one way or return.${
+                     <p class="helper-text" style="margin-top:4px;">Search or open the list to pick a route, same as the agent field. Then choose one way or return.${
                        showAdminTransportAddRoute
                          ? " Admins can add trips without leaving this panel."
                          : ""
@@ -1769,13 +1877,25 @@ function renderVoterDetails(voter) {
   // Bind transportation (admin, staff, and candidate)
   const transportNeededEl = document.getElementById("voterTransportNeeded");
   const transportRouteEl = document.getElementById("voterTransportRoute");
+  const transportRouteSearch = document.getElementById("voterTransportRouteSearch");
+  const transportRouteMenu = document.getElementById("voterTransportRouteMenu");
   const transportTypeEls = Array.from(
     document.querySelectorAll("[data-transport-type]")
   );
   if (transportNeededEl && transportRouteEl) {
+    const getRoutesForDropdown = () => {
+      const v = currentVoters.find((x) => x.id === voter.id) || voter;
+      const routes = getAvailableTransportRoutes();
+      const cur = (v.transportRoute || "").trim();
+      const set = new Set(routes);
+      if (cur) set.add(cur);
+      return Array.from(set).sort((a, b) => a.localeCompare(b, "en"));
+    };
+
     const updateRoutesDisabled = () => {
       const disabled = !transportNeededEl.checked;
       transportRouteEl.disabled = disabled;
+      if (transportRouteSearch) transportRouteSearch.disabled = disabled;
       transportTypeEls.forEach((el) => {
         el.disabled = disabled;
       });
@@ -1786,6 +1906,9 @@ function renderVoterDetails(voter) {
       if (!v) return;
       v.transportNeeded = !!transportNeededEl.checked;
       v.transportRoute = transportRouteEl.value || "";
+      if (transportRouteSearch && !transportRouteSearch.disabled) {
+        transportRouteSearch.value = v.transportRoute;
+      }
       const activeTypeEl =
         transportTypeEls.find((el) =>
           el.classList.contains("pill-toggle--active")
@@ -1806,11 +1929,17 @@ function renderVoterDetails(voter) {
     };
 
     updateRoutesDisabled();
+    if (transportRouteSearch && transportRouteMenu) {
+      setupTransportRouteSearchDropdown({
+        routeSel: transportRouteEl,
+        routeSearchInput: transportRouteSearch,
+        menuEl: transportRouteMenu,
+        getRoutes: getRoutesForDropdown,
+        persistTransport,
+      });
+    }
     transportNeededEl.addEventListener("change", () => {
       updateRoutesDisabled();
-      persistTransport();
-    });
-    transportRouteEl.addEventListener("change", () => {
       persistTransport();
     });
     transportTypeEls.forEach((btn) => {
