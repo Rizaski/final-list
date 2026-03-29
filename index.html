@@ -24,42 +24,69 @@
         </div>
       </div>
       <div class="login-card">
-        <h2 class="login-card__heading">Sign in to your workspace</h2>
-        <p class="login-card__subheading">Use the credentials shared by your campaign administrator.</p>
-        <form id="loginForm" class="login-form" autocomplete="on">
+        <div id="loginStepCredentials" class="login-step">
+          <h2 class="login-card__heading">Sign in to your workspace</h2>
+          <p class="login-card__subheading">Use the credentials shared by your campaign administrator.</p>
+          <form id="loginForm" class="login-form" autocomplete="on">
+            <div class="form-group">
+              <label for="loginEmail">Work email</label>
+              <input
+                id="loginEmail"
+                class="login-input"
+                type="email"
+                required
+                autocomplete="email"
+                placeholder="name@campaign.mv"
+              >
+            </div>
+            <div class="form-group">
+              <label for="loginPassword">Password</label>
+              <input
+                id="loginPassword"
+                class="login-input"
+                type="password"
+                required
+                autocomplete="current-password"
+                placeholder="Enter your password"
+              >
+            </div>
+            <div class="login-form__meta">
+              <p class="login-helper">Your activity may be monitored for security and audit purposes.</p>
+            </div>
+            <p id="loginError" class="login-error" aria-live="polite"></p>
+            <button id="loginSubmit" type="submit" class="primary-button primary-button--login">
+              <span class="btn__text">Sign in</span>
+            </button>
+            <div class="login-form__meta-helper login-form__meta-helper--muted">
+              <p class="login-helper-muted">Trouble signing in? Contact your campaign administrator.</p>
+            </div>
+          </form>
+        </div>
+        <div id="loginStepMfa" class="login-step login-step--mfa" hidden>
+          <h2 class="login-card__heading">SMS verification</h2>
+          <p class="login-card__subheading">Enter the code sent to your enrolled phone number to finish signing in.</p>
+          <p id="loginMfaHint" class="login-helper login-mfa-hint" aria-live="polite"></p>
+          <div id="loginMfaRecaptcha" class="login-mfa-recaptcha" aria-hidden="true"></div>
           <div class="form-group">
-            <label for="loginEmail">Work email</label>
+            <label for="loginMfaCode">SMS code</label>
             <input
-              id="loginEmail"
+              id="loginMfaCode"
               class="login-input"
-              type="email"
-              required
-              autocomplete="email"
-              placeholder="name@campaign.mv"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+              placeholder="6-digit code"
             >
           </div>
-          <div class="form-group">
-            <label for="loginPassword">Password</label>
-            <input
-              id="loginPassword"
-              class="login-input"
-              type="password"
-              required
-              autocomplete="current-password"
-              placeholder="Enter your password"
-            >
-          </div>
-          <div class="login-form__meta">
-            <p class="login-helper">Your activity may be monitored for security and audit purposes.</p>
-          </div>
-          <p id="loginError" class="login-error" aria-live="polite"></p>
-          <button id="loginSubmit" type="submit" class="primary-button primary-button--login">
-            <span class="btn__text">Sign in</span>
+          <p id="loginMfaError" class="login-error" aria-live="polite"></p>
+          <p id="loginMfaStatus" class="login-error login-error--info" aria-live="polite"></p>
+          <button type="button" id="loginMfaVerify" class="primary-button primary-button--login">
+            <span class="btn__text">Verify &amp; continue</span>
           </button>
-          <div class="login-form__meta-helper login-form__meta-helper--muted">
-            <p class="login-helper-muted">Trouble signing in? Contact your campaign administrator.</p>
-          </div>
-        </form>
+          <button type="button" id="loginMfaResend" class="ghost-button--login">Resend code</button>
+          <button type="button" id="loginMfaCancel" class="ghost-button--login">Back to sign in</button>
+        </div>
       </div>
     </div>
   </div>
@@ -973,7 +1000,12 @@
                         <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
                       </div>
                     </div>
-                    <button type="button" class="primary-button" id="zeroDayAddTripButton">Add trip</button>
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                      <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllExcel" title="Download all visible routes as one Excel file (CSV)">All routes — Excel</button>
+                      <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllPrint" title="Print report for all visible routes">All routes — Print</button>
+                      <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllShare" title="Share all visible routes (copy or system share)">All routes — Share</button>
+                      <button type="button" class="primary-button" id="zeroDayAddTripButton">Add trip</button>
+                    </div>
                   </div>
                 </header>
                 <div class="card-body">
@@ -988,12 +1020,14 @@
                           <th>Pickup time</th>
                           <th>Voters assigned</th>
                           <th>Status</th>
+                          <th>Rate</th>
+                          <th>Amount</th>
                           <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr>
-                          <td colspan="8" class="text-muted" style="text-align: center; padding: 24px;">No trips yet. Add a trip and choose Flight or Speed boat.</td>
+                          <td colspan="10" class="text-muted" style="text-align: center; padding: 24px;">No trips yet. Add a trip and choose Flight or Speed boat.</td>
                         </tr>
                       </tbody>
                     </table>
@@ -1447,6 +1481,7 @@
                             <option value="no">No</option>
                             <option value="yes">Yes (for all users)</option>
                           </select>
+                          <span class="helper-text">SMS verification uses Firebase multi-factor authentication: enable MFA in the Firebase console, enroll each user’s phone number on their account, and list this site under Authentication → Settings → Authorized domains.</span>
                         </div>
                       </div>
                     </div>

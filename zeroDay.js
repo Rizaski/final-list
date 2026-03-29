@@ -149,7 +149,367 @@ function normalizeTrip(t) {
     onboardedVoterIds: Array.isArray(t.onboardedVoterIds)
       ? t.onboardedVoterIds.map((x) => String(x))
       : [],
+    rate: t.rate != null ? String(t.rate) : "",
+    amount: t.amount != null ? String(t.amount) : "",
   };
+}
+
+function normalizeTransportRouteKey(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/** Passengers for a trip: explicit voterIds on trip + voters with transportNeeded matching route. */
+function collectAssignedVotersForTrip(trip) {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const ids = new Set((trip.voterIds || []).map(String));
+  const normalizeRoute = normalizeTransportRouteKey;
+  const assignedByIds = voters.filter((v) => {
+    const id = v && v.id != null ? String(v.id) : "";
+    const nationalId = v && v.nationalId != null ? String(v.nationalId) : "";
+    return ids.has(id) || ids.has(nationalId);
+  });
+  const routeKey = normalizeRoute(trip.route);
+  const assignedByRoute = routeKey
+    ? voters.filter((v) => {
+        if (!v || v.transportNeeded !== true) return false;
+        const r = normalizeRoute(v.transportRoute);
+        if (!r) return false;
+        return r === routeKey || r.includes(routeKey) || routeKey.includes(r);
+      })
+    : [];
+  const byId = new Map();
+  [...assignedByIds, ...assignedByRoute].forEach((v) => {
+    if (!v) return;
+    const k = String(v.id || v.nationalId || "");
+    if (!k) return;
+    byId.set(k, v);
+  });
+  return {
+    list: Array.from(byId.values()),
+    byIdsCount: assignedByIds.length,
+    byRouteCount: assignedByRoute.length,
+  };
+}
+
+function mergeTripRowInputs(tripId) {
+  const t = zeroDayTrips.find((x) => x.id === tripId);
+  if (!t) return null;
+  const row = zeroDayTripsTableBody?.querySelector(`tr[data-trip-id="${tripId}"]`);
+  const rateInp = row?.querySelector('[data-trip-meta-field="rate"]');
+  const amountInp = row?.querySelector('[data-trip-meta-field="amount"]');
+  const rate = rateInp ? String(rateInp.value || "").trim() : String(t.rate || "");
+  const amount = amountInp ? String(amountInp.value || "").trim() : String(t.amount || "");
+  return { ...t, rate, amount };
+}
+
+function getAllVisibleTripSnapshots() {
+  return getFilteredTransportTrips()
+    .map((t) => mergeTripRowInputs(t.id))
+    .filter(Boolean);
+}
+
+async function persistTripMetaField(tripId, field, value) {
+  const t = zeroDayTrips.find((x) => x.id === tripId);
+  if (!t || (field !== "rate" && field !== "amount")) return;
+  t[field] = value;
+  saveTrips();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
+  } catch (_) {}
+}
+
+function csvEscapeTransportCell(val) {
+  const s = String(val == null ? "" : val);
+  if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+/** One data row for print/CSV/share — same fields as Transportation Management table (no Actions). */
+function transportManagementReportRowCells(t) {
+  const typeLabel =
+    TRIP_TYPES.find((x) => x.value === t.tripType)?.label || t.tripType || "—";
+  const count = getTripAssignedVoterCount(t);
+  return {
+    typeLabel,
+    route: t.route || "",
+    vehicle: t.vehicle || "",
+    driver: t.driver || "",
+    pickup: formatDateTime(t.pickupTime) || "",
+    votersAssigned: String(count),
+    status: t.status || "",
+    rate: t.rate || "",
+    amount: t.amount || "",
+  };
+}
+
+function openTransportTripsReportWindow(tripSnapshots, autoPrint) {
+  const list = Array.isArray(tripSnapshots) ? tripSnapshots.filter(Boolean) : [];
+  if (!list.length) {
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "No trips",
+        meta: "Add a trip to generate a report.",
+      });
+    }
+    return;
+  }
+  const tbodyHtml = list
+    .map((t) => {
+      const c = transportManagementReportRowCells(t);
+      return `
+          <tr>
+            <td>${escapeHtml(c.typeLabel)}</td>
+            <td>${escapeHtml(c.route)}</td>
+            <td>${escapeHtml(c.vehicle)}</td>
+            <td>${escapeHtml(c.driver)}</td>
+            <td>${escapeHtml(c.pickup)}</td>
+            <td>${escapeHtml(c.votersAssigned)}</td>
+            <td>${escapeHtml(c.status)}</td>
+            <td>${escapeHtml(c.rate)}</td>
+            <td>${escapeHtml(c.amount)}</td>
+          </tr>`;
+    })
+    .join("");
+  const sectionsHtml = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-type">Type</th>
+              <th class="col-route">Trip / Route</th>
+              <th class="col-vehicle">Vessel / Flight no.</th>
+              <th class="col-driver">Driver / Pilot / Captain</th>
+              <th class="col-pickup">Pickup time</th>
+              <th class="col-voters">Voters assigned</th>
+              <th class="col-status">Status</th>
+              <th class="col-rate">Rate</th>
+              <th class="col-amount">Amount</th>
+            </tr>
+          </thead>
+          <tbody>${tbodyHtml}</tbody>
+        </table>
+      </div>
+    `;
+  const printScript = autoPrint
+    ? `<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},400);});<\/script>`
+    : "";
+  const title =
+    list.length === 1
+      ? `Transport — ${list[0].route || "Trip"}`
+      : `Transport — all routes (${list.length})`;
+  const w = window.open("about:blank", "_blank");
+  if (!w) {
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Popup blocked",
+        meta: "Allow popups for this site to open the report.",
+      });
+    } else {
+      alert("Allow popups for this site to open the report.");
+    }
+    return;
+  }
+  try {
+    w.opener = null;
+  } catch (_) {}
+  w.document.open();
+  w.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(title)}</title>
+        <style>
+          :root { color-scheme: light; }
+          body { font-family: Arial, sans-serif; margin: 0; color: #111; background: #f5f7fb; }
+          .page { max-width: 1200px; margin: 20px auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.06); overflow: hidden; padding-bottom: 16px; }
+          .report-head { padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+          .report-title { margin: 0; font-size: 20px; line-height: 1.2; }
+          .report-meta { margin: 4px 0 0; color: #4b5563; font-size: 13px; }
+          .report-actions { display: flex; gap: 8px; }
+          .btn { border: 1px solid #d1d5db; background: #fff; color: #111; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+          .btn--primary { border-color: #2563eb; background: #2563eb; color: #fff; }
+          .sections { padding: 12px 14px; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; min-width: 920px; }
+          th, td {
+            border: 1px solid #e5e7eb;
+            padding: 4px 6px;
+            text-align: left;
+            vertical-align: top;
+            line-height: 1.2;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+          }
+          th { background: #f9fafb; font-weight: 600; }
+          tbody tr:nth-child(odd) { background: #fcfcfd; }
+          .col-type { width: 8%; }
+          .col-route { width: 16%; }
+          .col-vehicle { width: 12%; }
+          .col-driver { width: 12%; }
+          .col-pickup { width: 12%; }
+          .col-voters { width: 8%; }
+          .col-status { width: 10%; }
+          .col-rate { width: 7%; }
+          .col-amount { width: 7%; }
+          @media print {
+            @page { size: A4 landscape; margin: 9mm; }
+            body { background: #fff; }
+            .page { margin: 0; border: none; box-shadow: none; border-radius: 0; max-width: none; }
+            .report-actions { display: none !important; }
+            table { min-width: 0; width: 100%; font-size: 9.5px; }
+            th, td { padding: 2px 4px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page">
+          <header class="report-head">
+            <div>
+              <h1 class="report-title">Transportation report</h1>
+              <p class="report-meta">Routes: ${list.length} · Same columns as Transportation Management · Generated: ${escapeHtml(
+                new Date().toLocaleString("en-MV")
+              )}</p>
+            </div>
+            <div class="report-actions">
+              <button type="button" class="btn" onclick="window.close()">Close</button>
+              <button type="button" class="btn btn--primary" onclick="window.print()">Print</button>
+            </div>
+          </header>
+          <div class="sections">${sectionsHtml}</div>
+        </div>
+        ${printScript}
+      </body>
+      </html>
+    `);
+  w.document.close();
+  w.focus();
+}
+
+function downloadTransportTripsReportCsv(tripSnapshots) {
+  const list = Array.isArray(tripSnapshots) ? tripSnapshots.filter(Boolean) : [];
+  if (!list.length) {
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "No trips", meta: "Add a trip to export." });
+    }
+    return;
+  }
+  const headers = [
+    "Type",
+    "Trip / Route",
+    "Vessel / Flight no.",
+    "Driver / Pilot / Captain",
+    "Pickup time",
+    "Voters assigned",
+    "Status",
+    "Rate",
+    "Amount",
+  ];
+  const lines = [headers.map(csvEscapeTransportCell).join(",")];
+  list.forEach((t) => {
+    const c = transportManagementReportRowCells(t);
+    lines.push(
+      [
+        c.typeLabel,
+        c.route,
+        c.vehicle,
+        c.driver,
+        c.pickup,
+        c.votersAssigned,
+        c.status,
+        c.rate,
+        c.amount,
+      ]
+        .map(csvEscapeTransportCell)
+        .join(",")
+    );
+  });
+  const csv = lines.join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  const name =
+    list.length === 1
+      ? `transport-${String(list[0].route || "trip")
+          .trim()
+          .replace(/[^\w\-]+/g, "_")
+          .slice(0, 45)}`
+      : "transport-all-routes";
+  a.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function shareTransportTripsReport(tripSnapshots) {
+  const list = Array.isArray(tripSnapshots) ? tripSnapshots.filter(Boolean) : [];
+  if (!list.length) {
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "No trips", meta: "Nothing to share." });
+    }
+    return;
+  }
+  const headerLine = [
+    "Type",
+    "Trip / Route",
+    "Vessel / Flight no.",
+    "Driver / Pilot / Captain",
+    "Pickup time",
+    "Voters assigned",
+    "Status",
+    "Rate",
+    "Amount",
+  ].join("\t");
+  const rowLines = [headerLine];
+  list.forEach((t) => {
+    const c = transportManagementReportRowCells(t);
+    rowLines.push(
+      [
+        c.typeLabel,
+        c.route,
+        c.vehicle,
+        c.driver,
+        c.pickup,
+        c.votersAssigned,
+        c.status,
+        c.rate,
+        c.amount,
+      ].join("\t")
+    );
+  });
+  const title =
+    list.length === 1 ? `Transport: ${list[0].route || "Trip"}` : `Transport: all routes (${list.length})`;
+  const text = `${title}\n\n${rowLines.join("\n")}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text });
+      return;
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    if (typeof window.showToast === "function") window.showToast("Report copied to clipboard");
+    else if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Copied",
+        meta: "Transport report copied — paste into email or chat.",
+      });
+    }
+  } catch (_) {
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Share failed",
+        meta: "Could not copy to clipboard.",
+      });
+    }
+  }
 }
 
 /** Toggle voter on-board status for a transport trip (persisted on trip + Firestore). */
@@ -469,7 +829,7 @@ function renderZeroDayTripsTable() {
   if (!trips.length) {
     zeroDayTripsTableBody.innerHTML = `
       <tr>
-        <td colspan="8" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
+        <td colspan="10" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
       </tr>
     `;
     return;
@@ -489,11 +849,17 @@ function renderZeroDayTripsTable() {
       <td>${formatDateTime(trip.pickupTime)}</td>
       <td>${count}</td>
       <td><span class="${escapeHtml(statusClass)}">${escapeHtml(trip.status)}</span></td>
-      <td style="text-align:right; white-space:nowrap;">
-        <button class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
-        <button class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">View voters</button>
-        <button class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
-        <button class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
+      <td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate">
+        <input type="text" class="input input--trip-table-meta" data-trip-meta-field="rate" data-trip-id="${trip.id}" value="${escapeHtml(trip.rate || "")}" placeholder="—" aria-label="Route rate" title="Rate for this route">
+      </td>
+      <td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount">
+        <input type="text" class="input input--trip-table-meta" data-trip-meta-field="amount" data-trip-id="${trip.id}" value="${escapeHtml(trip.amount || "")}" placeholder="—" aria-label="Route amount" title="Amount for this route">
+      </td>
+      <td class="transport-trips-table__actions">
+        <button type="button" class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
+        <button type="button" class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">Voters</button>
+        <button type="button" class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
+        <button type="button" class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
       </td>
     `;
     zeroDayTripsTableBody.appendChild(tr);
@@ -656,39 +1022,7 @@ function openTripStatusModal(tripId) {
 }
 
 function openTripVotersModal(trip) {
-  const voters = votersContext ? votersContext.getAllVoters() : [];
-  const ids = new Set((trip.voterIds || []).map(String));
-  const normalizeRoute = (s) =>
-    String(s || "")
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, " ");
-  const assignedByIds = voters.filter((v) => {
-    const id = v && v.id != null ? String(v.id) : "";
-    const nationalId = v && v.nationalId != null ? String(v.nationalId) : "";
-    return ids.has(id) || ids.has(nationalId);
-  });
-  // Also include voters who requested transport for this route via Voters List detail view
-  const routeKey = normalizeRoute(trip.route);
-  const assignedByRoute = routeKey
-    ? voters.filter((v) => {
-        if (!v || v.transportNeeded !== true) return false;
-        const r = normalizeRoute(v.transportRoute);
-        if (!r) return false;
-        // Prefer exact match, but allow small variations (e.g. extra words, spacing)
-        return r === routeKey || r.includes(routeKey) || routeKey.includes(r);
-      })
-    : [];
-  const assigned = (() => {
-    const byId = new Map();
-    [...assignedByIds, ...assignedByRoute].forEach((v) => {
-      if (!v) return;
-      const k = String(v.id || v.nationalId || "");
-      if (!k) return;
-      byId.set(k, v);
-    });
-    return Array.from(byId.values());
-  })();
+  const { list: assigned, byIdsCount, byRouteCount } = collectAssignedVotersForTrip(trip);
 
   const title = `Assigned voters – ${trip.route || "Route"}`;
   const body = document.createElement("div");
@@ -788,7 +1122,7 @@ function openTripVotersModal(trip) {
   function render() {
     const tLive = zeroDayTrips.find((x) => x.id === trip.id);
     const obCount = (tLive?.onboardedVoterIds || []).length;
-    summary.textContent = `Matched ${assigned.length} voters (Trip assignment: ${assignedByIds.length}, By route: ${assignedByRoute.length}) · On-board: ${obCount}`;
+    summary.textContent = `Matched ${assigned.length} voters (Trip assignment: ${byIdsCount}, By route: ${byRouteCount}) · On-board: ${obCount}`;
     const filterPledge = (body.querySelector("#zdTripVotersFilter") || {}).value || "all";
     const sortBy = (body.querySelector("#zdTripVotersSort") || {}).value || "sequence";
     const groupBy = (body.querySelector("#zdTripVotersGroupBy") || {}).value || "none";
@@ -827,6 +1161,7 @@ function openTripVotersModal(trip) {
   if (searchEl) searchEl.addEventListener("input", render);
 
   render();
+
   openModal({ title, body });
 }
 
@@ -1732,8 +2067,367 @@ function openBoxVoterListModal(boxKey, kind) {
     });
   }
 
+  function zdReportBallotBoxLabel(v) {
+    const box = String(v && v.ballotBox != null ? v.ballotBox : "").trim();
+    const loc = String(v && v.currentLocation != null ? v.currentLocation : "").trim();
+    if (box.toLowerCase() === "others" && loc) return `Others - ${loc}`;
+    const fromIsland = v && v.island != null ? String(v.island).trim() : "";
+    return box || fromIsland || "—";
+  }
+
+  function zdAbsolutePhotoUrl(v) {
+    const rawId = (v.nationalId || v.id || "").toString().trim().replace(/\s+/g, "");
+    if (!rawId) return "";
+    const rel = `photos/${rawId}.jpg`;
+    try {
+      return new URL(rel, window.location.href).href;
+    } catch (_) {
+      return rel;
+    }
+  }
+
+  function getVisibleVotersFlat() {
+    const { voted, notYet } = getVotersByBoxSplitByVoted(boxKey);
+    const base = kind === "voted" ? voted : notYet;
+    const filterPledge = (body.querySelector("#zdModalListFilter") || {}).value || "all";
+    const sortBy = (body.querySelector("#zdModalListSort") || {}).value || "sequence";
+    const searchQuery = (body.querySelector("#zdModalListSearch") || {}).value || "";
+    let list = applySearchFilter(base, searchQuery);
+    const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, "none");
+    return displayList.filter((x) => x.type === "row").map((x) => x.voter);
+  }
+
+  function csvEscape(val) {
+    const s = String(val == null ? "" : val);
+    if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function downloadBoxVoterCsv() {
+    const rows = getVisibleVotersFlat();
+    if (!rows.length) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Nothing to export",
+          meta: "No voters match the current filters.",
+        });
+      }
+      return;
+    }
+    const headers = [
+      "Seq",
+      "Name",
+      "ID Number",
+      "Phone",
+      "Permanent Address",
+      "Ballot box",
+      "Pledge",
+      "Agent",
+    ];
+    if (kind === "voted") headers.push("Time voted");
+    const lines = [headers.map(csvEscape).join(",")];
+    rows.forEach((v) => {
+      const agent = getAgentForVoter(v.id);
+      const cols = [
+        v.sequence != null ? String(v.sequence) : "",
+        v.fullName || "",
+        v.nationalId || v.id || "",
+        v.phone || "",
+        v.permanentAddress || "",
+        zdReportBallotBoxLabel(v),
+        getPledgeLabel(v.pledgeStatus),
+        agent,
+      ];
+      if (kind === "voted") cols.push(formatDateTime(v._timeMarked) || "");
+      lines.push(cols.map(csvEscape).join(","));
+    });
+    const csv = lines.join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const safeBox = String(boxKey || "ballot-box")
+      .trim()
+      .replace(/[^\w\-]+/g, "_")
+      .slice(0, 60);
+    const kindSlug = kind === "voted" ? "voted" : "not-yet-voted";
+    a.download = `zero-day-${kindSlug}-${safeBox}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function printBoxVoterReport() {
+    const rows = getVisibleVotersFlat();
+    if (!rows.length) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Nothing to print",
+          meta: "No voters match the current filters.",
+        });
+      }
+      return;
+    }
+    const printRows = [...rows].sort((a, b) => {
+      const sa = Number(a.sequence != null ? a.sequence : NaN);
+      const sb = Number(b.sequence != null ? b.sequence : NaN);
+      const aHas = Number.isFinite(sa);
+      const bHas = Number.isFinite(sb);
+      if (aHas && bHas && sa !== sb) return sa - sb;
+      if (aHas && !bHas) return -1;
+      if (!aHas && bHas) return 1;
+      return String(a.fullName || "").localeCompare(String(b.fullName || ""), "en");
+    });
+    const reportTitle = kind === "voted" ? "Voted report" : "Not yet voted report";
+    const subtitle =
+      kind === "voted"
+        ? `Ballot box: ${boxKey} | Voted voters | Total: ${printRows.length}`
+        : `Ballot box: ${boxKey} | Not yet voted | Total: ${printRows.length}`;
+    const timeColHeader = kind === "voted" ? "Time voted" : "Voted at";
+    const rowsHtml = printRows
+      .map((v) => {
+        const agent = getAgentForVoter(v.id);
+        const abs = zdAbsolutePhotoUrl(v);
+        const photoTd = abs
+          ? `<td class="col-photo"><img src="${escapeHtml(abs)}" alt="" /></td>`
+          : `<td class="col-photo">—</td>`;
+        const timeCell =
+          kind === "voted"
+            ? escapeHtml(formatDateTime(v._timeMarked) || "")
+            : escapeHtml("—");
+        return `
+          <tr>
+            ${photoTd}
+            <td>${escapeHtml(v.sequence != null ? String(v.sequence) : "")}</td>
+            <td>${escapeHtml(v.fullName || "")}</td>
+            <td>${escapeHtml(v.nationalId || v.id || "")}</td>
+            <td>${escapeHtml(v.phone || "")}</td>
+            <td>${escapeHtml(v.permanentAddress || "")}</td>
+            <td>${escapeHtml(zdReportBallotBoxLabel(v))}</td>
+            <td>${escapeHtml(getPledgeLabel(v.pledgeStatus))}</td>
+            <td>${escapeHtml(agent)}</td>
+            <td>${timeCell}</td>
+          </tr>
+        `;
+      })
+      .join("");
+    const w = window.open("about:blank", "_blank");
+    if (!w) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Popup blocked",
+          meta: "Allow popups for this site to open Print Preview.",
+        });
+      } else {
+        alert("Allow popups for this site to open Print Preview.");
+      }
+      return;
+    }
+    try {
+      w.opener = null;
+    } catch (_) {}
+    w.document.open();
+    w.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(reportTitle)} — ${escapeHtml(boxKey)}</title>
+        <style>
+          :root { color-scheme: light; }
+          body { font-family: Arial, sans-serif; margin: 0; color: #111; background: #f5f7fb; }
+          .page { max-width: 1280px; margin: 20px auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.06); overflow: hidden; }
+          .report-head { padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+          .report-title { margin: 0; font-size: 20px; line-height: 1.2; }
+          .report-meta { margin: 4px 0 0; color: #4b5563; font-size: 13px; }
+          .report-actions { display: flex; gap: 8px; }
+          .btn { border: 1px solid #d1d5db; background: #fff; color: #111; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+          .btn--primary { border-color: #2563eb; background: #2563eb; color: #fff; }
+          .table-wrap { padding: 10px; overflow: auto; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: 1020px; }
+          th, td {
+            border: 1px solid #e5e7eb;
+            padding: 4px 5px;
+            text-align: left;
+            vertical-align: middle;
+            line-height: 1.2;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            hyphens: auto;
+          }
+          th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+          tbody tr:nth-child(odd) { background: #fcfcfd; }
+          .col-photo { width: 52px; text-align: center; vertical-align: middle; }
+          .col-photo img { display: block; margin: 0 auto; max-height: 44px; max-width: 48px; width: auto; height: auto; object-fit: cover; border-radius: 4px; }
+          .col-seq { width: 4%; }
+          .col-name { width: 13%; }
+          .col-id { width: 9%; }
+          .col-phone { width: 8%; }
+          .col-address { width: 20%; }
+          .col-box { width: 8%; }
+          .col-pledge { width: 6%; }
+          .col-agent { width: 10%; }
+          .col-time { width: 9%; }
+          @media print {
+            @page { size: A4 landscape; margin: 9mm; }
+            body { background: #fff; }
+            .page { margin: 0; border: none; box-shadow: none; border-radius: 0; max-width: none; }
+            .report-actions { display: none !important; }
+            .table-wrap { padding: 0; overflow: visible; }
+            table { min-width: 0; width: 100%; font-size: 8.5px; table-layout: fixed; }
+            th, td { padding: 2px 3px; line-height: 1.12; }
+            th { position: static; }
+            .col-photo img { max-height: 36px; max-width: 40px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page">
+          <header class="report-head">
+            <div>
+              <h1 class="report-title">${escapeHtml(reportTitle)}</h1>
+              <p class="report-meta">${escapeHtml(subtitle)} | Generated: ${escapeHtml(
+                new Date().toLocaleString("en-MV")
+              )}</p>
+            </div>
+            <div class="report-actions">
+              <button type="button" class="btn" onclick="window.close()">Close</button>
+              <button type="button" class="btn btn--primary" onclick="window.print()">Print</button>
+            </div>
+          </header>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="col-photo">Photo</th>
+                  <th class="col-seq">Seq</th>
+                  <th class="col-name">Name</th>
+                  <th class="col-id">ID Number</th>
+                  <th class="col-phone">Phone</th>
+                  <th class="col-address">Permanent Address</th>
+                  <th class="col-box">Ballot box</th>
+                  <th class="col-pledge">Pledge</th>
+                  <th class="col-agent">Agent</th>
+                  <th class="col-time">${escapeHtml(timeColHeader)}</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    w.document.close();
+    w.focus();
+  }
+
+  async function shareBoxVoterReport() {
+    const rows = getVisibleVotersFlat();
+    if (!rows.length) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Nothing to share",
+          meta: "No voters match the current filters.",
+        });
+      }
+      return;
+    }
+    const reportTitle = kind === "voted" ? `Voted — ${boxKey}` : `Not yet voted — ${boxKey}`;
+    const header = [
+      "Seq",
+      "Name",
+      "ID Number",
+      "Phone",
+      "Permanent address",
+      "Ballot box",
+      "Pledge",
+      "Agent",
+    ];
+    if (kind === "voted") header.push("Time voted");
+    const lines = [header.join("\t")];
+    rows.forEach((v) => {
+      const agent = getAgentForVoter(v.id);
+      const cells = [
+        v.sequence != null ? String(v.sequence) : "",
+        v.fullName || "",
+        v.nationalId || v.id || "",
+        v.phone || "",
+        v.permanentAddress || "",
+        zdReportBallotBoxLabel(v),
+        getPledgeLabel(v.pledgeStatus),
+        agent,
+      ];
+      if (kind === "voted") cells.push(formatDateTime(v._timeMarked) || "");
+      lines.push(cells.join("\t"));
+    });
+    const text = `${reportTitle} (${rows.length} voters)\n\n${lines.join("\n")}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: reportTitle, text });
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      if (typeof window.showToast === "function") window.showToast("Report copied to clipboard");
+      else if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Copied",
+          meta: "Report text copied to the clipboard — paste into email or chat.",
+        });
+      }
+    } catch (_) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Share failed",
+          meta: "Could not copy to clipboard. Try Print or Download CSV.",
+        });
+      }
+    }
+  }
+
   render();
-  openModal({ title, body });
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.flexWrap = "wrap";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+
+  const shareBtn = document.createElement("button");
+  shareBtn.type = "button";
+  shareBtn.className = "ghost-button";
+  shareBtn.textContent = "Share";
+  shareBtn.addEventListener("click", () => shareBoxVoterReport());
+
+  const downloadBtn = document.createElement("button");
+  downloadBtn.type = "button";
+  downloadBtn.className = "ghost-button";
+  downloadBtn.textContent = "Download CSV";
+  downloadBtn.addEventListener("click", downloadBoxVoterCsv);
+
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "ghost-button";
+  printBtn.textContent = "Print";
+  printBtn.addEventListener("click", printBoxVoterReport);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "ghost-button";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeModal());
+
+  footer.appendChild(shareBtn);
+  footer.appendChild(downloadBtn);
+  footer.appendChild(printBtn);
+  footer.appendChild(closeBtn);
+
+  openModal({ title, body, footer });
 }
 
 /** Gets or creates a monitor for the ballot box (same grouping as cards: ballotBox || island || "Unassigned"). Always refreshes voter list so Firestore has current voters. Returns the monitor (does not copy link). */
@@ -2101,6 +2795,18 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 
   const transportPanel = document.getElementById("zero-day-tab-transport");
   if (transportPanel) {
+    transportPanel.addEventListener(
+      "blur",
+      (e) => {
+        const inp = e.target.closest("[data-trip-meta-field]");
+        if (!inp || !transportPanel.contains(inp)) return;
+        const tid = Number(inp.getAttribute("data-trip-id"));
+        const field = inp.getAttribute("data-trip-meta-field");
+        if (!tid || (field !== "rate" && field !== "amount")) return;
+        persistTripMetaField(tid, field, inp.value.trim());
+      },
+      true
+    );
     transportPanel.addEventListener("click", (e) => {
       const statusBtn = e.target.closest("[data-trip-status]");
       const viewBtn = e.target.closest("[data-view-trip-voters]");
@@ -2120,6 +2826,46 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       } else if (deleteBtn) {
         const id = Number(deleteBtn.getAttribute("data-delete-trip"));
         deleteTrip(id);
+      }
+    });
+  }
+
+  const zeroDayTransportAllExcel = document.getElementById("zeroDayTransportAllExcel");
+  const zeroDayTransportAllPrint = document.getElementById("zeroDayTransportAllPrint");
+  const zeroDayTransportAllShare = document.getElementById("zeroDayTransportAllShare");
+  if (zeroDayTransportAllExcel) {
+    zeroDayTransportAllExcel.addEventListener("click", () => {
+      const snaps = getAllVisibleTripSnapshots();
+      if (snaps.length) downloadTransportTripsReportCsv(snaps);
+      else if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "No trips",
+          meta: "Add a trip or switch the type filter to include routes.",
+        });
+      }
+    });
+  }
+  if (zeroDayTransportAllPrint) {
+    zeroDayTransportAllPrint.addEventListener("click", () => {
+      const snaps = getAllVisibleTripSnapshots();
+      if (snaps.length) openTransportTripsReportWindow(snaps, false);
+      else if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "No trips",
+          meta: "Add a trip or switch the type filter to include routes.",
+        });
+      }
+    });
+  }
+  if (zeroDayTransportAllShare) {
+    zeroDayTransportAllShare.addEventListener("click", () => {
+      const snaps = getAllVisibleTripSnapshots();
+      if (snaps.length) shareTransportTripsReport(snaps);
+      else if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "No trips",
+          meta: "Add a trip or switch the type filter to include routes.",
+        });
       }
     });
   }

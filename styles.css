@@ -126,6 +126,29 @@ body {
   color: var(--color-text-muted);
 }
 
+.login-step--mfa .login-card__subheading {
+  margin-bottom: 12px;
+}
+
+.login-mfa-hint {
+  margin: 0 0 14px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.login-mfa-recaptcha {
+  min-height: 0;
+}
+
+.login-step--mfa .form-group {
+  margin-bottom: 2px;
+}
+
+.login-step--mfa .login-error--info {
+  min-height: 18px;
+  margin: 6px 0 0;
+}
+
 .login-form {
   display: flex;
   flex-direction: column;
@@ -4991,6 +5014,63 @@ textarea.voter-detail-referendum-notes:focus {
   align-items: center;
   gap: 8px;
   max-width: 220px;
+}
+
+/* Zero Day → Transportation Management: rate & amount (brand-aligned) */
+#zeroDayTripsTable .transport-trips-table__meta-cell {
+  padding: 10px 12px;
+  vertical-align: middle;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 156, 156, 0.06) 0%,
+    rgba(0, 156, 156, 0.02) 50%,
+    transparent 100%
+  );
+}
+
+#zeroDayTripsTable .transport-trips-table__meta-cell--amount {
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+#zeroDayTripsTable .input--trip-table-meta {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 120px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--color-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#zeroDayTripsTable .input--trip-table-meta:hover {
+  border-color: var(--color-primary);
+}
+
+#zeroDayTripsTable .input--trip-table-meta:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+#zeroDayTripsTable .input--trip-table-meta::placeholder {
+  color: var(--color-text-muted);
+}
+
+.transport-trips-table__actions {
+  text-align: right;
+  white-space: normal;
+  vertical-align: top;
+}
+
+.transport-trips-table__actions .ghost-button {
+  margin: 2px 0 2px 4px;
 }
 
 .modal-body-inner .table-wrapper {

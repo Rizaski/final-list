@@ -595,6 +595,8 @@ export const firebaseInitPromise = (async () => {
           voterCount: trip.voterCount != null ? trip.voterCount : 0,
           voterIds: Array.isArray(trip.voterIds) ? trip.voterIds : [],
           onboardedVoterIds: Array.isArray(trip.onboardedVoterIds) ? trip.onboardedVoterIds : [],
+          rate: trip.rate != null ? String(trip.rate) : "",
+          amount: trip.amount != null ? String(trip.amount) : "",
         };
         await firestoreMod.setDoc(ref, data, { merge: true });
       };
@@ -635,6 +637,12 @@ export const firebaseInitPromise = (async () => {
       signInWithEmailAndPassword: authMod.signInWithEmailAndPassword.bind(null, auth),
       createUserWithEmailAndPassword: authMod.createUserWithEmailAndPassword.bind(null, auth),
       sendEmailVerification: authMod.sendEmailVerification,
+      /** SMS MFA after email/password (users must enroll a phone factor in Firebase). */
+      getMultiFactorResolver: (error) => authMod.getMultiFactorResolver(auth, error),
+      PhoneAuthProvider: authMod.PhoneAuthProvider,
+      PhoneMultiFactorGenerator: authMod.PhoneMultiFactorGenerator,
+      createRecaptchaVerifier: (containerId, parameters) =>
+        new authMod.RecaptchaVerifier(auth, containerId, parameters || {}),
       getFirestoreCampaignConfig,
       setFirestoreCampaignConfig,
       updateFirestoreCampaignConfig,

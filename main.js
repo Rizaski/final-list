@@ -38,6 +38,131 @@ const SETTINGS_MODULE_KEY = "settings";
 const ADMIN_EMAIL = "alirixamv@gmail.com";
 const AUTH_STORAGE_KEY = "campaign-auth-user";
 
+/** SMS MFA after email/password (Firebase enrolled second factors only). */
+const mfaLoginState = {
+  resolver: null,
+  verificationId: null,
+  recaptchaVerifier: null,
+};
+
+function clearMfaRecaptchaVerifier() {
+  if (mfaLoginState.recaptchaVerifier) {
+    try {
+      mfaLoginState.recaptchaVerifier.clear();
+    } catch (_) {}
+    mfaLoginState.recaptchaVerifier = null;
+  }
+}
+
+function resetLoginStepsUi() {
+  mfaLoginState.resolver = null;
+  mfaLoginState.verificationId = null;
+  clearMfaRecaptchaVerifier();
+  const stepCred = document.getElementById("loginStepCredentials");
+  const stepMfa = document.getElementById("loginStepMfa");
+  if (stepCred) stepCred.hidden = false;
+  if (stepMfa) stepMfa.hidden = true;
+  const mfaCode = document.getElementById("loginMfaCode");
+  if (mfaCode) mfaCode.value = "";
+  const mfaErr = document.getElementById("loginMfaError");
+  if (mfaErr) mfaErr.textContent = "";
+  const mfaStatus = document.getElementById("loginMfaStatus");
+  if (mfaStatus) mfaStatus.textContent = "";
+  const mfaHint = document.getElementById("loginMfaHint");
+  if (mfaHint) mfaHint.textContent = "";
+}
+
+function showLoginMfaStep(resolver) {
+  mfaLoginState.resolver = resolver;
+  const stepCred = document.getElementById("loginStepCredentials");
+  const stepMfa = document.getElementById("loginStepMfa");
+  const hintEl = document.getElementById("loginMfaHint");
+  if (stepCred) stepCred.hidden = true;
+  if (stepMfa) stepMfa.hidden = false;
+  const hint = resolver && resolver.hints && resolver.hints[0];
+  if (hintEl && hint) {
+    const phone = hint.phoneNumber || hint.displayName || "your phone";
+    hintEl.textContent = `Code will be sent to ${phone}.`;
+  } else if (hintEl) {
+    hintEl.textContent = "Enter the SMS code sent to your enrolled phone number.";
+  }
+}
+
+async function sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl, errorEl } = {}) {
+  if (errorEl) errorEl.textContent = "";
+  const resolver = mfaLoginState.resolver;
+  if (!resolver || !resolver.hints || !resolver.hints.length) {
+    if (errorEl) errorEl.textContent = "No SMS second factor is enrolled for this account.";
+    return false;
+  }
+  const hint = resolver.hints[0];
+  try {
+    if (statusEl) statusEl.textContent = "Sending code…";
+    clearMfaRecaptchaVerifier();
+    mfaLoginState.recaptchaVerifier = firebaseApi.createRecaptchaVerifier("loginMfaRecaptcha", {
+      size: "invisible",
+    });
+    const phoneInfoOptions = {
+      multiFactorHint: hint,
+      session: resolver.session,
+    };
+    mfaLoginState.verificationId = await firebaseApi.PhoneAuthProvider.verifyPhoneNumber(
+      phoneInfoOptions,
+      mfaLoginState.recaptchaVerifier
+    );
+    if (statusEl) statusEl.textContent = "Code sent. Enter it below.";
+    return true;
+  } catch (err) {
+    console.error("[Auth] MFA send SMS failed", err);
+    clearMfaRecaptchaVerifier();
+    if (errorEl) {
+      errorEl.textContent =
+        err && err.message ? err.message : "Could not send SMS code. Try again.";
+    }
+    if (statusEl) statusEl.textContent = "";
+    return false;
+  }
+}
+
+async function completeMfaSignIn(firebaseApi, verifyBtn, codeInput, errorEl) {
+  if (errorEl) errorEl.textContent = "";
+  const code = codeInput && codeInput.value ? codeInput.value.trim() : "";
+  if (!code) {
+    if (errorEl) errorEl.textContent = "Enter the SMS code.";
+    return;
+  }
+  if (!mfaLoginState.verificationId || !mfaLoginState.resolver) {
+    if (errorEl) errorEl.textContent = "Session expired. Go back and sign in again.";
+    return;
+  }
+  const btnText = verifyBtn.querySelector(".btn__text");
+  const defaultText = btnText ? btnText.textContent : verifyBtn.textContent;
+  verifyBtn.disabled = true;
+  verifyBtn.classList.add("btn--loading");
+  if (btnText) btnText.textContent = "Verifying…";
+  const spinner = document.createElement("span");
+  spinner.className = "spinner--btn";
+  spinner.setAttribute("aria-hidden", "true");
+  verifyBtn.appendChild(spinner);
+  try {
+    const cred = firebaseApi.PhoneAuthProvider.credential(mfaLoginState.verificationId, code);
+    const assertion = firebaseApi.PhoneMultiFactorGenerator.assertion(cred);
+    await mfaLoginState.resolver.resolveSignIn(assertion);
+  } catch (err) {
+    console.error("[Auth] MFA verification failed", err);
+    if (errorEl) {
+      errorEl.textContent =
+        err && err.message ? err.message : "Invalid code. Try again.";
+    }
+  } finally {
+    verifyBtn.classList.remove("btn--loading");
+    const sp = verifyBtn.querySelector(".spinner--btn");
+    if (sp) sp.remove();
+    if (btnText) btnText.textContent = defaultText;
+    verifyBtn.disabled = false;
+  }
+}
+
 function getCurrentUser() {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
@@ -159,6 +284,9 @@ function applyUserToShell(user) {
   if (loginView) {
     loginView.hidden = true;
     loginView.style.display = "none";
+  }
+  if (user) {
+    resetLoginStepsUi();
   }
 }
 
@@ -838,8 +966,12 @@ async function boot() {
         await handleAuthenticatedUser(firebaseApi, fbUser);
       } else {
         setCurrentUser(null);
+        resetLoginStepsUi();
         if (appShell) appShell.hidden = true;
-        if (loginView) loginView.hidden = false;
+        if (loginView) {
+          loginView.hidden = false;
+          loginView.style.display = "";
+        }
       }
     });
   }
@@ -876,7 +1008,28 @@ async function boot() {
         console.log("[Auth] signInWithEmailAndPassword resolved successfully");
       } catch (err) {
         console.error("[Auth] Login failed", err);
-        if (loginError) {
+        if (
+          err &&
+          err.code === "auth/multi-factor-auth-required" &&
+          typeof firebaseApi.getMultiFactorResolver === "function"
+        ) {
+          try {
+            const resolver = firebaseApi.getMultiFactorResolver(err);
+            showLoginMfaStep(resolver);
+            const statusEl = document.getElementById("loginMfaStatus");
+            const errorEl = document.getElementById("loginMfaError");
+            await sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl, errorEl });
+            document.getElementById("loginMfaCode")?.focus();
+          } catch (mfaErr) {
+            console.error("[Auth] MFA flow failed", mfaErr);
+            if (loginError) {
+              loginError.textContent =
+                mfaErr && mfaErr.message
+                  ? mfaErr.message
+                  : "Could not start SMS verification.";
+            }
+          }
+        } else if (loginError) {
           loginError.textContent =
             err && err.message
               ? err.message
@@ -890,6 +1043,40 @@ async function boot() {
           if (btnText) btnText.textContent = defaultText;
           loginSubmit.disabled = false;
         }
+      }
+    });
+  }
+
+  const loginMfaVerify = document.getElementById("loginMfaVerify");
+  const loginMfaResend = document.getElementById("loginMfaResend");
+  const loginMfaCancel = document.getElementById("loginMfaCancel");
+  const loginMfaCode = document.getElementById("loginMfaCode");
+  const loginMfaError = document.getElementById("loginMfaError");
+  const loginMfaStatus = document.getElementById("loginMfaStatus");
+
+  if (loginMfaVerify && firebaseApi.PhoneAuthProvider && firebaseApi.PhoneMultiFactorGenerator) {
+    loginMfaVerify.addEventListener("click", async () => {
+      await completeMfaSignIn(firebaseApi, loginMfaVerify, loginMfaCode, loginMfaError);
+    });
+  }
+  if (loginMfaResend) {
+    loginMfaResend.addEventListener("click", async () => {
+      await sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl: loginMfaStatus, errorEl: loginMfaError });
+    });
+  }
+  if (loginMfaCancel) {
+    loginMfaCancel.addEventListener("click", async () => {
+      resetLoginStepsUi();
+      try {
+        if (firebaseApi.signOut) await firebaseApi.signOut();
+      } catch (_) {}
+    });
+  }
+  if (loginMfaCode && loginMfaVerify) {
+    loginMfaCode.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        loginMfaVerify.click();
       }
     });
   }
