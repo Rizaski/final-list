@@ -1300,15 +1300,16 @@
 
           <div class="settings-tabs" role="tablist" aria-label="Settings sections">
             <div class="settings-tabs__list">
-              <button type="button" class="settings-tabs__tab is-active" role="tab" id="settings-tab-btn-campaign" aria-selected="true" aria-controls="settings-tab-campaign" data-settings-tab="campaign">Campaign</button>
-              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-candidates" aria-selected="false" aria-controls="settings-tab-candidates" data-settings-tab="candidates">Candidates</button>
-              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-data" aria-selected="false" aria-controls="settings-tab-data" data-settings-tab="data">Data</button>
-              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-security" aria-selected="false" aria-controls="settings-tab-security" data-settings-tab="security">Security</button>
-              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-agents" aria-selected="false" aria-controls="settings-tab-agents" data-settings-tab="agents">Agents</button>
-              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-users" aria-selected="false" aria-controls="settings-tab-users" data-settings-tab="users">User management</button>
+              <button type="button" class="settings-tabs__tab is-active" role="tab" id="settings-tab-btn-campaign" aria-selected="true" aria-controls="settings-tab-campaign" data-settings-tab="campaign" data-settings-scope="admin">Campaign</button>
+              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-candidates" aria-selected="false" aria-controls="settings-tab-candidates" data-settings-tab="candidates" data-settings-scope="admin">Candidates</button>
+              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-data" aria-selected="false" aria-controls="settings-tab-data" data-settings-tab="data" data-settings-scope="admin">Data</button>
+              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-security" aria-selected="false" aria-controls="settings-tab-security" data-settings-tab="security" data-settings-scope="admin">Security</button>
+              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-agents" aria-selected="false" aria-controls="settings-tab-agents" data-settings-tab="agents" data-settings-scope="admin">Agents</button>
+              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-users" aria-selected="false" aria-controls="settings-tab-users" data-settings-tab="users" data-settings-scope="admin">User management</button>
+              <button type="button" class="settings-tabs__tab" role="tab" id="settings-tab-btn-candidate-csv" aria-selected="false" aria-controls="settings-tab-candidate-csv" data-settings-tab="candidate-csv" data-settings-scope="candidate" hidden>Pledge &amp; agents (CSV)</button>
             </div>
 
-            <div id="settings-tab-campaign" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-campaign">
+            <div id="settings-tab-campaign" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-campaign" data-settings-scope="admin">
               <div class="grid grid--two-column">
                 <section class="card">
                   <header class="card-header">
@@ -1347,7 +1348,7 @@
               </div>
             </div>
 
-            <div id="settings-tab-candidates" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-candidates" hidden>
+            <div id="settings-tab-candidates" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-candidates" hidden data-settings-scope="admin">
               <div class="grid grid--two-column">
                 <section class="card">
                   <header class="card-header card-header--split">
@@ -1392,7 +1393,7 @@
               </div>
             </div>
 
-            <div id="settings-tab-data" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-data" hidden>
+            <div id="settings-tab-data" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-data" hidden data-settings-scope="admin">
               <div class="grid grid--two-column">
                 <section class="card">
                   <header class="card-header">
@@ -1441,7 +1442,7 @@
               </div>
             </div>
 
-            <div id="settings-tab-security" class="settings-tabs__panel settings-panel--security" role="tabpanel" aria-labelledby="settings-tab-btn-security" hidden>
+            <div id="settings-tab-security" class="settings-tabs__panel settings-panel--security" role="tabpanel" aria-labelledby="settings-tab-btn-security" hidden data-settings-scope="admin">
               <div class="grid grid--two-column">
                 <section class="card card--settings-accent">
                   <header class="card-header card-header--split">
@@ -1501,7 +1502,7 @@
               </div>
             </div>
 
-            <div id="settings-tab-agents" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-agents" hidden>
+            <div id="settings-tab-agents" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-agents" hidden data-settings-scope="admin">
               <div class="grid grid--two-column">
                 <section class="card">
                   <header class="card-header card-header--split">
@@ -1594,7 +1595,7 @@
               </div>
             </div>
 
-            <div id="settings-tab-users" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-users" hidden>
+            <div id="settings-tab-users" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-users" hidden data-settings-scope="admin">
               <div class="grid grid--two-column">
                 <section class="card">
                   <header class="card-header card-header--split">
@@ -1634,6 +1635,40 @@
                         </tbody>
                       </table>
                     </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div id="settings-tab-candidate-csv" class="settings-tabs__panel" role="tabpanel" aria-labelledby="settings-tab-btn-candidate-csv" hidden data-settings-scope="candidate">
+              <div class="grid grid--two-column">
+                <section class="card">
+                  <header class="card-header">
+                    <h2>Upload pledge &amp; assigned agent</h2>
+                    <p class="card-subtitle">CSV columns: <strong>Name</strong>, <strong>ID Number</strong>, <strong>Pledge</strong>, <strong>Assigned Agent</strong>. Rows are matched to the voter list by ID Number. Pledge: yes / no / undecided. Assigned Agent names should match agents your campaign has assigned to your candidacy.</p>
+                  </header>
+                  <div class="card-body">
+                    <div class="upload-zone-wrap">
+                      <input type="file" id="candidatePledgeAgentCsvFile" accept=".csv,text/csv" class="upload-zone__input">
+                      <label for="candidatePledgeAgentCsvFile" class="upload-zone">
+                        <span class="upload-zone__icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" class="icon-svg"><path d="M12 3v12m0 0 4-4m-4 4L8 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                        </span>
+                        <span class="upload-zone__text">Choose CSV file</span>
+                        <span class="upload-zone__hint">or drag and drop</span>
+                        <span id="candidatePledgeAgentCsvFileName" class="upload-zone__filename"></span>
+                      </label>
+                    </div>
+                    <div class="form-actions form-actions--upload">
+                      <button type="button" class="primary-button primary-button--upload" id="importCandidatePledgeAgentCsvButton">
+                        <span class="primary-button__icon">
+                          <svg viewBox="0 0 24 24" class="icon-svg"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M7 9l5-5 5 5M12 4v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </span>
+                        Import CSV
+                      </button>
+                      <button type="button" class="ghost-button" id="downloadCandidatePledgeAgentCsvTemplate">Download column template</button>
+                    </div>
+                    <p class="helper-text" style="margin-top:12px">Only voters already on the campaign list are updated. IDs not found are reported in the notification. Staff manage the full voter list.</p>
                   </div>
                 </section>
               </div>

@@ -18,6 +18,7 @@ import {
   filterAgentsForViewer,
   getAgentsFromStorage,
   candidatePledgedAgentStorageKey,
+  parseViewerFromStorage,
 } from "./agents-context.js";
 import {
   ballotSequenceText,
@@ -3512,6 +3513,111 @@ export function updateVoterDoorToDoorFields(voterId, fields) {
       document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
+}
+
+/**
+ * Bulk apply this candidate’s pledge and assigned agent from CSV (candidate login only).
+ * Expected columns include ID Number; Pledge (yes / no / undecided); Assigned Agent (name).
+ */
+export async function importCandidatePledgeAgentFromCsvRows(rows, candidateId) {
+  const u = parseViewerFromStorage();
+  if (
+    !candidateId ||
+    u.role !== "candidate" ||
+    String(u.candidateId || "") !== String(candidateId)
+  ) {
+    return { ok: false, error: "forbidden" };
+  }
+  const cid = String(candidateId).trim();
+  loadVotersFromStorage();
+  const agents = filterAgentsForViewer(getAgentsFromStorage());
+  const normalize = normalizeNationalIdForDedup;
+  const changed = new Map();
+  const notFound = [];
+  const invalid = [];
+
+  for (const row of rows) {
+    const idNum = String(row["ID Number"] ?? row["ID"] ?? "").trim();
+    if (!idNum) {
+      if (String(row["Name"] ?? "").trim()) invalid.push({ reason: "missing-id" });
+      continue;
+    }
+    const target = normalize(idNum);
+    const voter =
+      currentVoters.find((v) => normalize(v.nationalId) === target) ||
+      currentVoters.find((v) => normalize(String(v.id)) === target);
+    if (!voter) {
+      notFound.push(idNum);
+      continue;
+    }
+
+    const pledgeRaw = String(row["Pledge"] ?? "").trim().toLowerCase();
+    let pledge = "undecided";
+    if (pledgeRaw === "yes" || pledgeRaw === "y") pledge = "yes";
+    else if (pledgeRaw === "no" || pledgeRaw === "n") pledge = "no";
+    else if (pledgeRaw === "undecided" || pledgeRaw === "") pledge = "undecided";
+
+    if (!voter.candidatePledges || typeof voter.candidatePledges !== "object") {
+      voter.candidatePledges = {};
+    }
+    voter.candidatePledges[cid] = pledge;
+
+    const agentCell = String(row["Assigned Agent"] ?? row["Assigned agent"] ?? "").trim();
+    if (agentCell) {
+      if (!voter.candidateAgentAssignments) voter.candidateAgentAssignments = {};
+      if (!voter.candidateAgentAssignmentIds) voter.candidateAgentAssignmentIds = {};
+      const lower = agentCell.toLowerCase();
+      const agent =
+        agents.find((a) => String(a?.name || "").trim().toLowerCase() === lower) ||
+        agents.find((a) => String(a?.name || "").toLowerCase().includes(lower));
+      if (agent) {
+        voter.candidateAgentAssignments[cid] = String(agent.name || "").trim();
+        voter.candidateAgentAssignmentIds[cid] = String(agent.id ?? "").trim();
+      } else {
+        voter.candidateAgentAssignments[cid] = agentCell;
+        voter.candidateAgentAssignmentIds[cid] = "";
+      }
+    }
+
+    normalizeVoterCandidateFields(voter);
+    changed.set(String(voter.id), voter);
+  }
+
+  const toSave = [...changed.values()];
+  if (toSave.length === 0) {
+    return {
+      ok: true,
+      updated: 0,
+      notFoundCount: notFound.length,
+      notFound: notFound.slice(0, 80),
+      invalid,
+    };
+  }
+
+  saveVotersToStorage();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && typeof api.setVotersBatchFs === "function") {
+      await api.setVotersBatchFs(toSave.map(normalizeVoterCandidateFields));
+    }
+  } catch (err) {
+    console.warn("[Voters] importCandidatePledgeAgentFromCsvRows", err);
+  }
+
+  for (const v of toSave) {
+    const an = v.candidateAgentAssignments && v.candidateAgentAssignments[cid];
+    if (an) mirrorCandidatePledgedAgentLocalMap(cid, v.id, an);
+  }
+
+  renderVotersTable();
+  document.dispatchEvent(new CustomEvent("voters-updated"));
+  return {
+    ok: true,
+    updated: toSave.length,
+    notFoundCount: notFound.length,
+    notFound: notFound.slice(0, 80),
+    invalid,
+  };
 }
 
 export async function importVotersFromTemplateRows(rows) {

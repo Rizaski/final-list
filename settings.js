@@ -7,6 +7,7 @@ import {
   removeDuplicateVotersByNationalId,
   syncLocalVotersToFirebase,
   AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY,
+  importCandidatePledgeAgentFromCsvRows,
 } from "./voters.js";
 import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
 import { firebaseInitPromise } from "./firebase.js";
@@ -17,6 +18,32 @@ import {
   formatAgentNameHint,
   parseViewerFromStorage,
 } from "./agents-context.js";
+
+/** Set by initSettingsTabs; used to switch tab when viewer role changes. */
+let switchSettingsTabFn = null;
+
+/**
+ * Show admin-only or candidate-only settings tabs and activate the default tab.
+ * Call after login/logout (see main.js applyUserToShell).
+ */
+export function applySettingsTabsVisibility() {
+  if (typeof switchSettingsTabFn !== "function") return;
+  const u = parseViewerFromStorage();
+  const isCandidate = u.role === "candidate" && u.candidateId;
+  document.querySelectorAll('[data-settings-scope="admin"]').forEach((el) => {
+    el.hidden = !!isCandidate;
+  });
+  document.querySelectorAll('[data-settings-scope="candidate"]').forEach((el) => {
+    el.hidden = !isCandidate;
+  });
+  const settingsDesc = document.querySelector("#module-settings .module-description");
+  if (settingsDesc) {
+    settingsDesc.textContent = isCandidate
+      ? "Upload pledge and assigned agent data from a CSV (matched by voter ID number)."
+      : "Configure system parameters, candidates, data, security, and users.";
+  }
+  switchSettingsTabFn(isCandidate ? "candidate-csv" : "campaign");
+}
 import { compareBallotSequence, sequenceAsImportedFromCsv } from "./sequence-utils.js";
 
 /**
@@ -2439,13 +2466,15 @@ function initSettingsTabs() {
     });
   }
 
+  switchSettingsTabFn = switchToTab;
+
   tabButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       switchToTab(btn.getAttribute("data-settings-tab"));
     });
   });
 
-  switchToTab("campaign");
+  applySettingsTabsVisibility();
 }
 
 function initSecurityTab() {
@@ -3076,6 +3105,144 @@ export function initSettingsModule() {
     };
     reader.readAsText(file);
   });
+
+  const candidatePledgeAgentCsvFile = document.getElementById("candidatePledgeAgentCsvFile");
+  const candidatePledgeAgentCsvFileName = document.getElementById("candidatePledgeAgentCsvFileName");
+  const importCandidatePledgeAgentCsvButton = document.getElementById(
+    "importCandidatePledgeAgentCsvButton"
+  );
+  const downloadCandidatePledgeAgentCsvTemplate = document.getElementById(
+    "downloadCandidatePledgeAgentCsvTemplate"
+  );
+
+  if (candidatePledgeAgentCsvFile) {
+    candidatePledgeAgentCsvFile.addEventListener("change", () => {
+      const file = candidatePledgeAgentCsvFile.files?.[0];
+      if (candidatePledgeAgentCsvFileName) {
+        candidatePledgeAgentCsvFileName.textContent = file ? file.name : "";
+      }
+    });
+  }
+
+  if (downloadCandidatePledgeAgentCsvTemplate) {
+    downloadCandidatePledgeAgentCsvTemplate.addEventListener("click", () => {
+      const header = "Name,ID Number,Pledge,Assigned Agent";
+      const example = "Jane Doe,A12345678,yes,Agent Full Name";
+      const blob = new Blob(["\uFEFF" + header + "\r\n" + example + "\r\n"], {
+        type: "text/csv;charset=utf-8",
+      });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "pledge-agent-template.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  }
+
+  if (importCandidatePledgeAgentCsvButton && candidatePledgeAgentCsvFile) {
+    importCandidatePledgeAgentCsvButton.addEventListener("click", () => {
+      const u = parseViewerFromStorage();
+      if (u.role !== "candidate" || !u.candidateId) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Not available",
+            meta: "Candidate login only.",
+          });
+        }
+        return;
+      }
+      const file = candidatePledgeAgentCsvFile.files?.[0];
+      if (!file) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Choose a file",
+            meta: "Select a CSV file first.",
+          });
+        }
+        return;
+      }
+      if (file.size > MAX_VOTERS_FILE_BYTES) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "File too large",
+            meta: "Use a CSV under 15MB.",
+          });
+        }
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const text = String(e.target?.result || "");
+        const lines = text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        if (lines.length < 2) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Empty file",
+              meta: "Add a header row and at least one data row.",
+            });
+          }
+          return;
+        }
+        const rawHeader = parseCSVLine(lines[0]);
+        const header = rawHeader.map((h) => String(h).trim());
+        let dataLines = lines.slice(1);
+        if (dataLines.length > MAX_VOTER_ROWS) {
+          dataLines = dataLines.slice(0, MAX_VOTER_ROWS);
+        }
+        const rows = dataLines.map((line) => {
+          const cols = parseCSVLine(line);
+          const obj = {};
+          header.forEach((h, idx) => {
+            const key = h || `Column${idx + 1}`;
+            obj[key] = cols[idx] != null ? String(cols[idx]).trim() : "";
+          });
+          return obj;
+        });
+        const prevLabel = importCandidatePledgeAgentCsvButton.textContent;
+        importCandidatePledgeAgentCsvButton.disabled = true;
+        importCandidatePledgeAgentCsvButton.textContent = "Importing…";
+        try {
+          const result = await importCandidatePledgeAgentFromCsvRows(rows, u.candidateId);
+          if (result.ok && window.appNotifications) {
+            const nf = result.notFoundCount || 0;
+            const nfSample = (result.notFound || []).slice(0, 5).filter(Boolean).join(", ");
+            window.appNotifications.push({
+              title: "Import finished",
+              meta: `Updated ${result.updated.toLocaleString("en-MV")} voter(s).${
+                nf
+                  ? ` ${nf.toLocaleString("en-MV")} ID number(s) not on the list.${
+                      nfSample ? ` Examples: ${nfSample}.` : ""
+                    }`
+                  : ""
+              }`,
+            });
+          } else if (result.error === "forbidden") {
+            window.appNotifications.push({
+              title: "Not allowed",
+              meta: "Use your candidate account.",
+            });
+          }
+        } catch (err) {
+          console.error("[Settings] Candidate pledge CSV import failed", err);
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Import failed",
+              meta: err?.message || String(err),
+            });
+          }
+        } finally {
+          importCandidatePledgeAgentCsvButton.disabled = false;
+          importCandidatePledgeAgentCsvButton.textContent = prevLabel;
+        }
+        if (candidatePledgeAgentCsvFileName) candidatePledgeAgentCsvFileName.textContent = "";
+        candidatePledgeAgentCsvFile.value = "";
+      };
+      reader.readAsText(file);
+    });
+  }
 
   if (exportVotersCsvButton) {
     exportVotersCsvButton.addEventListener("click", async () => {

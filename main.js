@@ -17,6 +17,7 @@ import {
   refreshAgentsFromFirestore,
   refreshCandidatesFromFirestore,
   openAddAgentModal,
+  applySettingsTabsVisibility,
 } from "./settings.js";
 import { initCallsModule } from "./calls.js";
 import {
@@ -265,10 +266,12 @@ function applyUserToShell(user) {
     '.nav-item[data-module="settings"]'
   );
   if (settingsNavItem) {
-    settingsNavItem.style.display = user?.isAdmin ? "flex" : "none";
+    const showSettings =
+      user?.isAdmin || (user?.role === "candidate" && user?.candidateId);
+    settingsNavItem.style.display = showSettings ? "flex" : "none";
   }
 
-  // Candidate users: Voters and Reports only (no Pledges module)
+  // Candidate users: Voters, Reports, and Settings (pledge CSV only)
   const isCandidateOnly = user?.role === "candidate" && user?.candidateId;
   navButtons.forEach((btn) => {
     const moduleKey = btn.dataset.module;
@@ -295,6 +298,9 @@ function applyUserToShell(user) {
   if (user) {
     resetLoginStepsUi();
   }
+  try {
+    applySettingsTabsVisibility();
+  } catch (_) {}
 }
 
 function notifyAdminOfLockout(email) {
@@ -310,16 +316,21 @@ function notifyAdminOfLockout(email) {
 
 function switchModule(key) {
   const currentUser = getCurrentUser();
-  if (key === SETTINGS_MODULE_KEY && !currentUser?.isAdmin) {
-    // Guard against programmatic attempts to open settings
+  const candidateOk =
+    currentUser?.role === "candidate" &&
+    currentUser?.candidateId &&
+    (key === "reports" || key === "voters" || key === SETTINGS_MODULE_KEY);
+  if (
+    key === SETTINGS_MODULE_KEY &&
+    !currentUser?.isAdmin &&
+    !(currentUser?.role === "candidate" && currentUser?.candidateId)
+  ) {
     return;
   }
-  // Candidate users can only open Voters or Reports
   if (
     currentUser?.role === "candidate" &&
     currentUser?.candidateId &&
-    key !== "reports" &&
-    key !== "voters"
+    !candidateOk
   ) {
     return;
   }
