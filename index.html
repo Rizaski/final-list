@@ -512,7 +512,7 @@
                   <div class="field-group field-group--inline">
                     <label for="voterSort">Sort</label>
                     <select id="voterSort">
-                      <option value="sequence">Seq</option>
+                      <option value="sequence">Seq (ballot box order)</option>
                       <option value="name-asc">Name A–Z</option>
                       <option value="name-desc">Name Z–A</option>
                       <option value="id">ID Number</option>
@@ -548,7 +548,7 @@
                 <table class="data-table" id="votersTable">
                   <thead>
                     <tr>
-                      <th class="th-sortable data-table-col--seq" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable data-table-col--seq" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
                       <th>Image</th>
                       <th class="th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
                       <th class="th-sortable data-table-col--name" data-sort-key="name">Name<span class="sort-indicator"></span></th>
@@ -1399,7 +1399,7 @@
                     <h2>Bulk Voter Upload</h2>
                   </header>
                   <div class="card-body">
-                    <p class="card-subtitle">Upload a CSV file using the exact columns: Sequence, Ballot Box, ID Number, Name, Permanent Address, Date of Birth, Age, Pledge, Gender, Island, Current Location, Phone, Call Comments.</p>
+                    <p class="card-subtitle">Upload a CSV file using the exact columns: Sequence, Ballot Box, ID Number, Name, Permanent Address, Date of Birth, Age, Pledge, Gender, Island, Current Location, Phone, Call Comments. Each row’s Sequence is stored exactly as in the file (per ballot box), including blanks.</p>
                     <div class="upload-zone-wrap">
                       <input type="file" id="votersUploadFile" accept=".csv,text/csv" class="upload-zone__input">
                       <label for="votersUploadFile" class="upload-zone">
@@ -1421,13 +1421,20 @@
                       <button type="button" class="ghost-button" id="exportVotersCsvButton" title="Download full voters list with latest data">
                         Download voters CSV
                       </button>
-                      <button type="button" class="ghost-button" id="syncVotersToFirebaseButton" title="One-time sync of local voters to Firebase">
+                      <button type="button" class="ghost-button" id="syncVotersToFirebaseButton" title="Merge every voter in this browser into Firestore (safe with offline copies; sign in required)">
                         Sync local voters to Firebase
+                      </button>
+                      <label class="settings-checkbox-row" style="display:flex;align-items:flex-start;gap:10px;margin-top:10px;max-width:42rem;">
+                        <input type="checkbox" id="autoSyncLocalVotersWhenOnline" style="margin-top:3px" />
+                        <span class="helper-text" style="margin:0">When internet reconnects, automatically merge this browser’s local voters to Firebase (stay signed in).</span>
+                      </label>
+                      <button type="button" class="ghost-button" id="removeDuplicateVotersByNationalIdButton" title="Delete extra rows that share the same national ID (keeps the best row per ID)">
+                        Remove duplicate voters (by national ID)
                       </button>
                       <button type="button" class="ghost-button ghost-button--danger" id="deleteAllVotersButton" title="Remove all voters from this campaign">
                         Delete existing voters list
                       </button>
-                      <span class="helper-text">Existing voters in this session will be replaced by the uploaded list. Use sync to push current local voters to Firebase. Use delete to completely clear the current voters list.</span>
+                      <span class="helper-text">Existing voters in this session will be replaced by the uploaded list. Use <strong>Sync local voters to Firebase</strong> to merge this device’s cached voters into the cloud (for laptops that were offline). Remove duplicates to drop extra rows with the same national ID. Use delete to completely clear the current voters list.</span>
                     </div>
                   </div>
                 </section>

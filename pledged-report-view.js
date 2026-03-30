@@ -3,6 +3,7 @@
  */
 import { firebaseInitPromise } from "./firebase.js";
 import { initTableViewMenus } from "./table-view-menu.js";
+import { compareBallotSequence, sequenceAsImportedFromCsv } from "./sequence-utils.js";
 
 function getTokenFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -31,12 +32,12 @@ function renderTable() {
   }
   if (emptyEl) emptyEl.style.display = "none";
 
-  const sorted = [...voters].sort((a, b) => (Number(a.sequence) || 0) - (Number(b.sequence) || 0));
+  const sorted = [...voters].sort((a, b) => compareBallotSequence(a.sequence, b.sequence));
   tbody.innerHTML = "";
   sorted.forEach((v) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="data-table-col--seq">${escapeHtml(v.sequence ?? "")}</td>
+      <td class="data-table-col--seq">${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
       <td>${escapeHtml(v.nationalId ?? "")}</td>
       <td class="data-table-col--name">${escapeHtml(v.fullName ?? v.id ?? "—")}</td>
       <td>${escapeHtml(v.permanentAddress ?? "")}</td>

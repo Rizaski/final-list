@@ -7,6 +7,12 @@ import { getVotedTimeMarked } from "./zeroDay.js";
 import { openModal, closeModal } from "./ui.js";
 import { candidatePledgedAgentStorageKey } from "./agents-context.js";
 import { initTableViewMenus } from "./table-view-menu.js";
+import {
+  compareBallotSequence,
+  sequenceAsImportedFromCsv,
+  compareVotersByBallotBoxThenSequenceThenName,
+  compareVotersByBallotSequenceThenName,
+} from "./sequence-utils.js";
 
 const REPORT_PLEDGED_PAGE_SIZE = 20;
 
@@ -215,7 +221,7 @@ export function openCandidatePledgedVotersModal({
     const cmp = (a, b) => {
       switch (sortBy) {
         case "sequence":
-          return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
+          return compareVotersByBallotSequenceThenName(a, b);
         case "name-desc":
           return (b.fullName || "").localeCompare(a.fullName || "", "en");
         case "name-asc":
@@ -227,7 +233,7 @@ export function openCandidatePledgedVotersModal({
         case "pledge":
           return candidatePledgeForRow(a).localeCompare(candidatePledgeForRow(b), "en");
         case "box":
-          return (a.ballotBox || "").localeCompare(b.ballotBox || "", "en");
+          return compareVotersByBallotBoxThenSequenceThenName(a, b);
         case "voted": {
           const ta = String(getVotedTimeMarked(a.id) || a.votedAt || "");
           const tb = String(getVotedTimeMarked(b.id) || b.votedAt || "");
@@ -238,6 +244,10 @@ export function openCandidatePledgedVotersModal({
       }
     };
     list = list.slice().sort(cmp);
+
+    if (groupBy === "box") {
+      list.sort(compareVotersByBallotBoxThenSequenceThenName);
+    }
 
     if (groupBy === "none") return list.map((v) => ({ type: "row", voter: v }));
     const out = [];
@@ -320,7 +330,7 @@ export function openCandidatePledgedVotersModal({
         const assignedAgentName = getAssignedAgentName(v);
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td class="data-table-col--seq">${v.sequence ?? ""}</td>
+            <td class="data-table-col--seq">${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
             <td>${photoCell}</td>
             <td>${escapeHtml(v.nationalId ?? "")}</td>
             <td class="data-table-col--name">${escapeHtml(v.fullName ?? "")}</td>
@@ -403,7 +413,7 @@ export function openCandidatePledgedVotersModal({
     lastFilteredVoters.forEach((v) => {
       const votedAt = getVotedTimeMarked(v.id) || v.votedAt || "";
       const cols = [
-        v.sequence != null ? String(v.sequence) : "",
+        sequenceAsImportedFromCsv(v),
         v.fullName || "",
         v.nationalId || v.id || "",
         v.phone || "",
@@ -436,13 +446,8 @@ export function openCandidatePledgedVotersModal({
       const boxB = reportBallotBoxLabel(b);
       const boxCmp = boxA.localeCompare(boxB, "en");
       if (boxCmp !== 0) return boxCmp;
-      const sa = Number(a.sequence != null ? a.sequence : NaN);
-      const sb = Number(b.sequence != null ? b.sequence : NaN);
-      const aHas = Number.isFinite(sa);
-      const bHas = Number.isFinite(sb);
-      if (aHas && bHas && sa !== sb) return sa - sb;
-      if (aHas && !bHas) return -1;
-      if (!aHas && bHas) return 1;
+      const seqCmp = compareBallotSequence(a.sequence, b.sequence);
+      if (seqCmp !== 0) return seqCmp;
       return String(a.fullName || "").localeCompare(String(b.fullName || ""), "en");
     });
     const rowsHtml = printRows
@@ -450,7 +455,7 @@ export function openCandidatePledgedVotersModal({
         const votedAt = getVotedTimeMarked(v.id) || v.votedAt || "";
         return `
           <tr>
-            <td>${escapeHtml(v.sequence != null ? String(v.sequence) : "")}</td>
+            <td>${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
             <td>${escapeHtml(v.fullName || "")}</td>
             <td>${escapeHtml(v.nationalId || v.id || "")}</td>
             <td>${escapeHtml(v.phone || "")}</td>

@@ -5,6 +5,11 @@ import { firebaseInitPromise } from "./firebase.js";
 import { getList, getListFromServer, saveList, createShareLink, getListStatusValues, getListStatusLabel } from "./lists.js";
 import { openModal, closeModal } from "./ui.js";
 import { initTableViewMenus } from "./table-view-menu.js";
+import {
+  compareBallotSequence,
+  sequenceAsImportedFromCsv,
+  compareVotersByBallotBoxThenSequenceThenName,
+} from "./sequence-utils.js";
 
 const PAGE_SIZE = 20;
 const VOTER_IMAGES_BASE = "photos/";
@@ -95,7 +100,7 @@ function getFilteredSortedGrouped() {
 
   const cmp = (a, b) => {
     switch (sortBy) {
-      case "sequence": return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
+      case "sequence": return compareBallotSequence(a.sequence, b.sequence);
       case "name-desc": return (b.fullName || "").localeCompare(a.fullName || "", "en");
       case "name-asc": return (a.fullName || "").localeCompare(b.fullName || "", "en");
       case "id": return (a.nationalId || "").localeCompare(b.nationalId || "", "en");
@@ -105,6 +110,10 @@ function getFilteredSortedGrouped() {
     }
   };
   rows = rows.slice().sort(cmp);
+
+  if (groupBy === "island") {
+    rows.sort(compareVotersByBallotBoxThenSequenceThenName);
+  }
 
   if (groupBy === "none") return rows.map((v) => ({ type: "row", voter: v }));
   const getGroupKey = (v) => {
@@ -166,6 +175,8 @@ function renderTable() {
         td.innerHTML = photoCellHtml;
       } else if (key === "pledgeStatus") {
         td.innerHTML = `<span class="${pledgePillClass(voter.pledgeStatus)}">${voter.pledgeStatus || "No"}</span>`;
+      } else if (key === "sequence") {
+        td.textContent = sequenceAsImportedFromCsv(voter);
       } else {
         td.textContent = voter[key] ?? "";
       }

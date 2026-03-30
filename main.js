@@ -4,20 +4,27 @@ import {
   initVotersModule,
   getVoterStats,
   getPledgeByBallotBox,
-  refreshVotersFromStorage,
+  refreshVotersFromFirestore,
   syncCandidateAssignmentsToFirebase,
 } from "./voters.js";
 import { initPledgesModule, getPledgeStatsFromPledges } from "./pledges.js";
-import { initEventsModule, getUpcomingEventsSummary } from "./events.js";
+import { initEventsModule, getUpcomingEventsSummary, refreshEventsFromFirestore } from "./events.js";
 import { initReportsModule } from "./reports.js";
 import {
   initSettingsModule,
   getCampaignConfig,
   syncCampaignConfigFromFirestore,
+  refreshAgentsFromFirestore,
+  refreshCandidatesFromFirestore,
   openAddAgentModal,
 } from "./settings.js";
 import { initCallsModule } from "./calls.js";
-import { initZeroDayModule, initMonitorView, syncVotedFromFirestore } from "./zeroDay.js";
+import {
+  initZeroDayModule,
+  initMonitorView,
+  syncVotedFromFirestore,
+  refreshTransportTripsFromFirestore,
+} from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
 import { initTableViewMenus } from "./table-view-menu.js";
 
@@ -656,12 +663,26 @@ globalSearchInput.addEventListener("input", () => {
 
 function renderDashboardStats(stats) {
   const totalVotersEl = document.getElementById("statTotalVoters");
+  const totalVotersMetaEl = document.getElementById("statTotalVotersMeta");
   const pledgedVotersEl = document.getElementById("statPledgedVoters");
   const pledgePercentEl = document.getElementById("statPledgePercentage");
   const ballotBoxesEl = document.getElementById("statBallotBoxes");
   const upcomingEventsEl = document.getElementById("statUpcomingEvents");
 
   totalVotersEl.textContent = stats.totalVoters.toLocaleString("en-MV");
+  if (totalVotersMetaEl) {
+    const dup = stats.duplicateNationalIdRows || 0;
+    const distinct = stats.distinctNationalIds;
+    if (dup > 0 && typeof distinct === "number") {
+      totalVotersMetaEl.textContent = `${dup.toLocaleString(
+        "en-MV"
+      )} extra row(s): same national ID appears more than once · ${distinct.toLocaleString(
+        "en-MV"
+      )} unique national IDs`;
+    } else {
+      totalVotersMetaEl.textContent = "Across selected scope";
+    }
+  }
   pledgedVotersEl.textContent = stats.pledgedCount.toLocaleString("en-MV");
   pledgePercentEl.textContent = `${stats.pledgePercentage.toFixed(1)}%`;
 
@@ -756,6 +777,8 @@ function refreshDashboard(scope) {
         : (pledgeStats.pledgedCount / voterStats.totalVoters) * 100,
     ballotBoxes: pledgeByBox.length,
     upcomingEvents: upcomingEvents.length,
+    distinctNationalIds: voterStats.distinctNationalIds,
+    duplicateNationalIdRows: voterStats.duplicateNationalIdRows,
   };
   renderDashboardStats(combinedStats);
 
@@ -836,8 +859,18 @@ async function startAppModules(firebaseApi) {
       refreshBtn.classList.add("topbar__refresh-btn--spinning");
       try {
         await syncCampaignConfigFromFirestore();
+        applyElectionTypeFromCampaign();
+        handleScopeChange();
+        applyPledgesNavVisibility();
         await syncCandidateAssignmentsToFirebase();
-        refreshVotersFromStorage();
+        await Promise.all([
+          refreshVotersFromFirestore(),
+          refreshAgentsFromFirestore(),
+          refreshCandidatesFromFirestore(),
+          refreshEventsFromFirestore(),
+          refreshTransportTripsFromFirestore(),
+        ]);
+        await syncVotedFromFirestore();
         const scope = {
           electionType: electionTypeSelect.value,
           constituency: constituencySelect.value,
@@ -948,14 +981,29 @@ async function boot() {
   const loginPassword = document.getElementById("loginPassword");
   const loginError = document.getElementById("loginError");
   const loginSubmit = document.getElementById("loginSubmit");
+  const appLoaderBoot = document.getElementById("appLoaderOverlay");
+  const cachedUser = getCurrentUser();
 
-  if (appShell) {
-    appShell.hidden = true;
-    appShell.style.display = "none";
-  }
-  if (loginView) {
-    loginView.hidden = false;
-    loginView.style.display = "";
+  if (cachedUser && cachedUser.email) {
+    if (appShell) {
+      appShell.hidden = false;
+      appShell.style.display = "";
+    }
+    if (loginView) {
+      loginView.hidden = true;
+      loginView.style.display = "none";
+    }
+    applyUserToShell(cachedUser);
+    if (appLoaderBoot) appLoaderBoot.hidden = false;
+  } else {
+    if (appShell) {
+      appShell.hidden = true;
+      appShell.style.display = "none";
+    }
+    if (loginView) {
+      loginView.hidden = false;
+      loginView.style.display = "";
+    }
   }
 
   // React to auth state
@@ -972,6 +1020,8 @@ async function boot() {
           loginView.hidden = false;
           loginView.style.display = "";
         }
+        const appLoader = document.getElementById("appLoaderOverlay");
+        if (appLoader) appLoader.hidden = true;
       }
     });
   }

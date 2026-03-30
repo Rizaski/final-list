@@ -59,12 +59,16 @@ export const firebaseInitPromise = (async () => {
     // Firestore-backed collections for core data (default to no-op so callers can always call these safely)
     let getAllVotersFs = async () => [];
     let setVoterFs = async () => {};
+    /** Write many voter docs using Firestore batches (500 ops/batch) — used for CSV import. */
+    let setVotersBatchFs = async () => {};
     /** Merge only `referendumVote` on the voter doc (small payload, reliable field write). */
     let setVoterReferendumVoteFs = async () => {};
     /** Merge only `referendumNotes` on the voter doc. */
     let setVoterReferendumNotesFs = async () => {};
     let setVoterVotedAtFs = async () => {};
     let deleteVoterFs = async () => {};
+    /** Delete every document in the voters collection using Firestore batches (max 500 writes/batch). */
+    let deleteAllVotersFs = async () => {};
     let onVotersSnapshotFs = () => noopUnsubscribe;
 
     let getAllAgentsFs = async () => [];
@@ -218,13 +222,48 @@ export const firebaseInitPromise = (async () => {
 
       getAllVotersFs = async () => {
         const snap = await firestoreMod.getDocs(votersColRef);
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // Document id must win — stored `id` in data would overwrite d.id and break updates/deduping.
+        return snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
       };
 
       setVoterFs = async (voter) => {
         if (!voter || !voter.id) return;
         const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voter.id));
         await firestoreMod.setDoc(ref, voter, { merge: true });
+      };
+
+      setVotersBatchFs = async (voters) => {
+        if (!Array.isArray(voters) || voters.length === 0) return;
+        const sanitize = (v) => {
+          const o = {};
+          for (const [k, val] of Object.entries(v || {})) {
+            if (val !== undefined) o[k] = val;
+          }
+          return o;
+        };
+        if (typeof firestoreMod.writeBatch === "function") {
+          const MAX_BATCH = 500;
+          for (let i = 0; i < voters.length; i += MAX_BATCH) {
+            const batch = firestoreMod.writeBatch(db);
+            voters.slice(i, i + MAX_BATCH).forEach((v) => {
+              if (!v || v.id == null || v.id === "") return;
+              const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(v.id));
+              batch.set(ref, sanitize(v), { merge: true });
+            });
+            await batch.commit();
+          }
+          return;
+        }
+        const chunkSize = 40;
+        for (let i = 0; i < voters.length; i += chunkSize) {
+          await Promise.all(
+            voters.slice(i, i + chunkSize).map((v) => {
+              if (!v || !v.id) return Promise.resolve();
+              const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(v.id));
+              return firestoreMod.setDoc(ref, sanitize(v), { merge: true });
+            })
+          );
+        }
       };
 
       setVoterReferendumVoteFs = async (voterId, referendumVote) => {
@@ -254,12 +293,34 @@ export const firebaseInitPromise = (async () => {
         await firestoreMod.deleteDoc(ref);
       };
 
+      deleteAllVotersFs = async () => {
+        const snap = await firestoreMod.getDocs(votersColRef);
+        const docs = snap.docs;
+        if (typeof firestoreMod.writeBatch === "function") {
+          const MAX_BATCH = 500;
+          for (let i = 0; i < docs.length; i += MAX_BATCH) {
+            const batch = firestoreMod.writeBatch(db);
+            docs.slice(i, i + MAX_BATCH).forEach((docSnap) => {
+              batch.delete(docSnap.ref);
+            });
+            await batch.commit();
+          }
+          return;
+        }
+        const chunkSize = 25;
+        for (let i = 0; i < docs.length; i += chunkSize) {
+          await Promise.all(
+            docs.slice(i, i + chunkSize).map((docSnap) => firestoreMod.deleteDoc(docSnap.ref))
+          );
+        }
+      };
+
       onVotersSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
           votersColRef,
           (snap) => {
-            const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const items = snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
             handler(items);
           },
           "voters"
@@ -659,10 +720,12 @@ export const firebaseInitPromise = (async () => {
       // Firestore-backed core collections
       getAllVotersFs,
       setVoterFs,
+      setVotersBatchFs,
       setVoterReferendumVoteFs,
       setVoterReferendumNotesFs,
       setVoterVotedAtFs,
       deleteVoterFs,
+      deleteAllVotersFs,
       onVotersSnapshotFs,
       getAllAgentsFs,
       setAgentFs,

@@ -1,5 +1,10 @@
 import { openModal, closeModal } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
+import {
+  compareBallotSequence,
+  sequenceAsImportedFromCsv,
+  compareVotersByBallotBoxThenSequenceThenName,
+} from "./sequence-utils.js";
 
 const PAGE_SIZE = 15;
 
@@ -222,6 +227,7 @@ async function openEventParticipantsModal(event) {
       <table class="data-table" id="eventParticipantsTable">
         <thead>
           <tr>
+            <th class="data-table-col--seq">Seq</th>
             <th>Image</th>
             <th class="data-table-col--name">Full Name</th>
             <th>ID Number</th>
@@ -444,8 +450,13 @@ async function openEventParticipantsModal(event) {
           return String(a.nationalId || "").localeCompare(String(b.nationalId || ""), "en");
         case "support":
           return String(a.supportStatus || "unknown").localeCompare(String(b.supportStatus || "unknown"), "en");
-        case "box":
-          return String(a.ballotBox || "").localeCompare(String(b.ballotBox || ""), "en");
+        case "box": {
+          const boxCmp = String(a.ballotBox || "").localeCompare(String(b.ballotBox || ""), "en");
+          if (boxCmp !== 0) return boxCmp;
+          const sc = compareBallotSequence(a.sequence, b.sequence);
+          if (sc !== 0) return sc;
+          return String(a.name || "").localeCompare(String(b.name || ""), "en");
+        }
         case "island":
           return String(a.island || "").localeCompare(String(b.island || ""), "en");
         case "pledge":
@@ -454,18 +465,21 @@ async function openEventParticipantsModal(event) {
           return String(b.votedAt || "").localeCompare(String(a.votedAt || ""), "en");
         case "sequence":
         default: {
-          const sa = Number(a.sequence != null ? a.sequence : NaN);
-          const sb = Number(b.sequence != null ? b.sequence : NaN);
-          const aHas = Number.isFinite(sa);
-          const bHas = Number.isFinite(sb);
-          if (aHas && bHas) return sa - sb;
-          if (aHas) return -1;
-          if (bHas) return 1;
+          const c = compareBallotSequence(a.sequence, b.sequence);
+          if (c !== 0) return c;
           return String(a.name || "").localeCompare(String(b.name || ""), "en");
         }
       }
     };
     list = [...list].sort(cmp);
+    if (groupBy === "box") {
+      list.sort((a, b) =>
+        compareVotersByBallotBoxThenSequenceThenName(
+          { ballotBox: a.ballotBox, sequence: a.sequence, fullName: a.name },
+          { ballotBox: b.ballotBox, sequence: b.sequence, fullName: b.name }
+        )
+      );
+    }
     if (groupBy === "none") return list.map((r) => ({ type: "row", row: r }));
     const out = [];
     let last = null;
@@ -492,14 +506,14 @@ async function openEventParticipantsModal(event) {
 
     tbody.innerHTML = "";
     if (!onlyRows.length) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-muted" style="text-align:center;padding:16px;">No participants match filters.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="text-muted" style="text-align:center;padding:16px;">No participants match filters.</td></tr>`;
       return;
     }
     displayList.forEach((item) => {
       if (item.type === "group") {
         const tr = document.createElement("tr");
         tr.className = "list-toolbar__group-header";
-        tr.innerHTML = `<td colspan="9">${escapeHtml(item.label)}</td>`;
+        tr.innerHTML = `<td colspan="10">${escapeHtml(item.label)}</td>`;
         tbody.appendChild(tr);
         return;
       }
@@ -536,6 +550,7 @@ async function openEventParticipantsModal(event) {
       const pledgeText = pledgeLabel(pledge);
       const tr = document.createElement("tr");
       tr.innerHTML = `
+        <td class="data-table-col--seq">${escapeHtml(sequenceAsImportedFromCsv(row) || "—")}</td>
         <td>${imageCell}</td>
         <td class="data-table-col--name">${escapeHtml(row.name || "—")}</td>
         <td>${escapeHtml(row.nationalId || "—")}</td>
@@ -590,7 +605,7 @@ async function openEventParticipantsModal(event) {
       </div>
         <div class="form-group">
           <label for="epSequence">Seq</label>
-          <input id="epSequence" class="input" value="${escapeHtml(seed.sequence != null ? String(seed.sequence) : "")}" placeholder="Sequence">
+          <input id="epSequence" class="input" value="${escapeHtml(sequenceAsImportedFromCsv(seed))}" placeholder="Sequence">
         </div>
       <div class="form-group">
         <label for="epAddress">Address</label>
@@ -669,7 +684,7 @@ async function openEventParticipantsModal(event) {
         existingRowId || "p-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
       const row = {
         id: rowId,
-        sequence: sequenceRaw === "" ? "" : Number(sequenceRaw) || sequenceRaw,
+        sequence: sequenceRaw,
         name,
         nationalId,
         phone,
@@ -1065,3 +1080,29 @@ export function getUpcomingEventsSummary(scope) {
   }));
 }
 
+export async function refreshEventsFromFirestore() {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getAllEventsFs) return;
+    const initial = await api.getAllEventsFs();
+    if (!Array.isArray(initial)) return;
+    events = initial.map((ev) => ({
+      id: ev.id,
+      name: ev.name || "",
+      location: ev.location || "",
+      scope: ev.scope || "",
+      dateTime: ev.dateTime || new Date().toISOString(),
+      team: ev.team || "",
+      expectedAttendees: ev.expectedAttendees ?? 0,
+      participantsShareToken: ev.participantsShareToken || "",
+      participantCount: Number(ev.participantCount || 0),
+    }));
+    renderEventsTable();
+    renderEventsTimeline();
+    document.dispatchEvent(
+      new CustomEvent("events-updated", { detail: { events: [...events] } })
+    );
+  } catch (e) {
+    console.warn("[Events] refreshEventsFromFirestore", e);
+  }
+}

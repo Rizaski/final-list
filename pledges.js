@@ -2,6 +2,11 @@ import * as votersApi from "./voters.js";
 import { getCandidates, openAddAgentModal } from "./settings.js";
 import { getAgentsFromStorage } from "./agents-context.js";
 import { initPledgesTableViewInColumnMenu } from "./table-view-menu.js";
+import {
+  compareBallotSequence,
+  sequenceAsImportedFromCsv,
+  compareVotersByBallotBoxThenSequenceThenName,
+} from "./sequence-utils.js";
 
 const PAGE_SIZE = 15;
 /** Pledges page table: Seq, Image, ID, Name, Permanent Address, Ballot Box, Transport Required, Overall Pledge. */
@@ -282,7 +287,7 @@ function getFilteredSortedGroupedPledges() {
     const rb = b.row;
     switch (sortBy) {
       case "sequence":
-        return (Number(ra.sequence) || 0) - (Number(rb.sequence) || 0);
+        return compareBallotSequence(ra.sequence, rb.sequence);
       case "name-asc":
         return (ra.name || "").localeCompare(rb.name || "", "en");
       case "name-desc":
@@ -293,9 +298,13 @@ function getFilteredSortedGroupedPledges() {
         return (ra.permanentAddress || "").localeCompare(rb.permanentAddress || "", "en");
       case "pledge":
         return (ra.pledgeStatus || "").localeCompare(rb.pledgeStatus || "", "en");
-      case "island":
-        // On the Pledges page, "Ballot box" sort should sort by the voter row's `ballotBox`.
-        return (ra.ballotBox || "").localeCompare(rb.ballotBox || "", "en");
+      case "island": {
+        const boxCmp = (ra.ballotBox || "").localeCompare(rb.ballotBox || "", "en");
+        if (boxCmp !== 0) return boxCmp;
+        const seqCmp = compareBallotSequence(ra.sequence, rb.sequence);
+        if (seqCmp !== 0) return seqCmp;
+        return (ra.name || "").localeCompare(rb.name || "", "en");
+      }
       case "volunteer":
         return (ra.volunteer || "").localeCompare(rb.volunteer || "", "en");
       case "met":
@@ -311,6 +320,15 @@ function getFilteredSortedGroupedPledges() {
     }
   };
   list.sort(cmp);
+
+  if (groupBy === "island") {
+    list.sort((a, b) =>
+      compareVotersByBallotBoxThenSequenceThenName(
+        { ballotBox: a.row.ballotBox, sequence: a.row.sequence, fullName: a.row.name },
+        { ballotBox: b.row.ballotBox, sequence: b.row.sequence, fullName: b.row.name }
+      )
+    );
+  }
 
   if (groupBy === "none") {
     return list.map(({ row, index }) => ({ type: "row", row, index }));
@@ -406,7 +424,7 @@ function renderPledgesTable() {
     const transportText = row.transportNeeded === true ? "Yes" : "No";
 
     tr.innerHTML = `
-      <td class="pledge-cell pledge-cell--sequence data-table-col--seq">${escapeHtml(String(row.sequence ?? ""))}</td>
+      <td class="pledge-cell pledge-cell--sequence data-table-col--seq">${escapeHtml(sequenceAsImportedFromCsv(row))}</td>
       <td class="pledge-cell pledge-cell--photo">${photoCell}</td>
       <td class="pledge-cell pledge-cell--name data-table-col--name">${escapeHtml(row.name)}</td>
       <td class="pledge-cell pledge-cell--id">${escapeHtml(row.nationalId || "")}</td>
@@ -539,7 +557,7 @@ function exportPledgesCSV() {
   for (const row of dataRows) {
     const cp = row.candidatePledges || {};
     const base = [
-      row.sequence ?? "",
+      sequenceAsImportedFromCsv(row),
       row.photoUrl || "",
       row.nationalId || "",
       row.name || "",

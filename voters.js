@@ -19,21 +19,122 @@ import {
   getAgentsFromStorage,
   candidatePledgedAgentStorageKey,
 } from "./agents-context.js";
+import {
+  ballotSequenceText,
+  sequenceAsImportedFromCsv,
+  compareVotersByBallotSequenceThenName,
+  compareVotersByBallotBoxThenSequenceThenName,
+} from "./sequence-utils.js";
 const PAGE_SIZE = 15;
 const CANDIDATES_STORAGE_KEY = "candidates-data";
 const VOTERS_STORAGE_KEY = "voters-data";
 
 // Dynamic data: starts empty and is populated via bulk upload and in-app actions.
 let currentVoters = [];
+/** While true, ignore Firestore snapshot updates so partial bulk uploads don't replace the full local list. */
+let votersBulkImportInProgress = false;
+
+function sameVoterId(a, b) {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
+/** Normalize per-candidate maps from Firestore (string keys, valid pledge values). */
+function normalizeVoterCandidateFields(v) {
+  if (!v || typeof v !== "object") return v;
+  const out = { ...v };
+  if (out.candidatePledges != null && typeof out.candidatePledges === "object" && !Array.isArray(out.candidatePledges)) {
+    const next = {};
+    for (const [k, val] of Object.entries(out.candidatePledges)) {
+      const key = String(k);
+      if (val === "yes" || val === "no" || val === "undecided") next[key] = val;
+    }
+    out.candidatePledges = next;
+  } else if (out.candidatePledges == null) {
+    out.candidatePledges = {};
+  }
+  return out;
+}
+
+/** Stable key for matching voter rows (trim + internal spaces collapsed). */
+function normalizeNationalIdForDedup(nid) {
+  return String(nid || "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Firestore document id derived from national ID — stable across CSV re-imports when Seq changes.
+ * Empty string if no usable ID (caller falls back to generated id).
+ */
+export function voterDocumentIdFromNationalId(raw) {
+  const n = normalizeNationalIdForDedup(raw);
+  if (!n) return "";
+  const id = n.replace(/\//g, "-");
+  if (!id) return "";
+  return id.length > 800 ? id.slice(0, 800) : id;
+}
+
+/** Keys used for legacy localStorage agent maps: internal id + normalized national ID. */
+function localStorageAgentMapKeysForVoter(voter) {
+  const keys = new Set();
+  if (voter?.id != null && String(voter.id).trim()) keys.add(String(voter.id).trim());
+  const nid = normalizeNationalIdForDedup(voter?.nationalId);
+  if (nid) keys.add(nid);
+  return Array.from(keys);
+}
+
+function mergeImportedVoterWithExistingFirestore(mappedRow, existing) {
+  if (!existing || typeof existing !== "object") return mappedRow;
+  const norm = normalizeVoterCandidateFields({ ...existing });
+  const out = { ...mappedRow };
+  const copyKeys = [
+    "candidatePledges",
+    "candidateAgentAssignments",
+    "candidateAgentAssignmentIds",
+    "transportNeeded",
+    "transportRoute",
+    "transportType",
+    "votedAt",
+    "referendumVote",
+    "referendumNotes",
+    "volunteer",
+    "metStatus",
+    "persuadable",
+    "pledgedAt",
+    "notes",
+    "callComments",
+  ];
+  for (const k of copyKeys) {
+    const val = norm[k];
+    if (val === undefined || val === null) continue;
+    if (k === "candidatePledges" && typeof val === "object" && !Array.isArray(val)) {
+      out.candidatePledges = { ...norm.candidatePledges };
+    } else if (
+      (k === "candidateAgentAssignments" || k === "candidateAgentAssignmentIds") &&
+      typeof val === "object" &&
+      !Array.isArray(val)
+    ) {
+      out[k] = { ...val };
+    } else {
+      out[k] = val;
+    }
+  }
+  return out;
+}
 
 function loadVotersFromStorage() {
   try {
     const raw = localStorage.getItem(VOTERS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) currentVoters = parsed;
+    if (!raw) {
+      currentVoters = [];
+      return;
     }
-  } catch (_) {}
+    const parsed = JSON.parse(raw);
+    currentVoters = Array.isArray(parsed) ? parsed.map(normalizeVoterCandidateFields) : [];
+  } catch (_) {
+    currentVoters = [];
+  }
 }
 
 function saveVotersToStorage() {
@@ -54,7 +155,14 @@ function mirrorCandidatePledgedAgentLocalMap(candidateId, voterId, agentName) {
       if (p && typeof p === "object") map = p;
     }
   } catch (_) {}
-  map[String(voterId)] = agentName || "";
+  const val = agentName || "";
+  map[String(voterId)] = val;
+  const v = findVoterById(voterId);
+  if (v) {
+    for (const k of localStorageAgentMapKeysForVoter(v)) {
+      if (String(k) !== String(voterId)) map[k] = val;
+    }
+  }
   try {
     localStorage.setItem(key, JSON.stringify(map));
   } catch (_) {}
@@ -90,6 +198,10 @@ async function saveVoterToFirestoreWithNotification(v, errorTitle) {
 let selectedVoterId = null;
 let votersCurrentPage = 1;
 let unsubscribeVotersFs = null;
+
+function findVoterById(id) {
+  return currentVoters.find((v) => sameVoterId(v.id, id));
+}
 
 /** Set by initVotersModule — used for candidate-only UI and pledge column logic. */
 let getCurrentUserFn = () => null;
@@ -139,12 +251,24 @@ function getCandidateContext() {
   }
 }
 
+/** Read Yes/No/Undecided for one candidate from voter.candidatePledges (flexible key shapes from Firestore). */
+function readCandidatePledgeMap(voter, candidateId) {
+  const cp = voter?.candidatePledges;
+  if (!cp || typeof cp !== "object" || Array.isArray(cp)) return undefined;
+  const want = String(candidateId);
+  const d = cp[want];
+  if (d === "yes" || d === "no" || d === "undecided") return d;
+  for (const [k, val] of Object.entries(cp)) {
+    if (String(k) === want && (val === "yes" || val === "no" || val === "undecided")) return val;
+  }
+  return undefined;
+}
+
 /** Pledge shown in list / filters: per-candidate for candidate users, overall pledge otherwise. */
 function getEffectivePledgeStatus(voter) {
   const ctx = getCandidateContext();
   if (ctx && voter) {
-    const cp = voter.candidatePledges || {};
-    const s = cp[String(ctx.candidateId)];
+    const s = readCandidatePledgeMap(voter, ctx.candidateId);
     if (s === "yes" || s === "no" || s === "undecided") return s;
     return "undecided";
   }
@@ -184,21 +308,54 @@ function getCandidateScopedAssignedAgentNameWithMap(voter, candidateId, map) {
       ? voter.candidateAgentAssignments[cid]
       : "";
   const fromDoc = pickAgentAssignmentVal(fromObj);
-  const fromMap = pickAgentAssignmentVal(map[String(voter.id)]);
+  let fromMap = "";
+  for (const key of localStorageAgentMapKeysForVoter(voter)) {
+    const v = pickAgentAssignmentVal(map[key]);
+    if (v) {
+      fromMap = v;
+      break;
+    }
+  }
   return (fromDoc || fromMap).trim();
 }
 
 /** `voterFilterAgent` value for voters with no agent (candidate list filter). */
 const AGENT_FILTER_UNASSIGNED = "__unassigned__";
 
+/** In-memory list synced from Settings / Firebase via `candidates-updated` (avoids stale labels for candidate UI). */
+let candidatesCacheForVoters = null;
+
+function seedCandidatesCacheFromStorage() {
+  try {
+    const raw = localStorage.getItem(CANDIDATES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) candidatesCacheForVoters = parsed;
+    }
+  } catch (_) {}
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("candidates-updated", (e) => {
+    const d = e?.detail?.candidates;
+    if (Array.isArray(d)) candidatesCacheForVoters = d.slice();
+    else seedCandidatesCacheFromStorage();
+  });
+}
+
 /** Local read only — avoids circular import with settings.js */
 function getCandidateRecordById(candidateId) {
+  const cid = String(candidateId);
+  if (Array.isArray(candidatesCacheForVoters) && candidatesCacheForVoters.length) {
+    const hit = candidatesCacheForVoters.find((c) => String(c.id) === cid);
+    if (hit) return hit;
+  }
   try {
     const raw = localStorage.getItem(CANDIDATES_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    return parsed.find((c) => String(c.id) === String(candidateId)) || null;
+    return parsed.find((c) => String(c.id) === cid) || null;
   } catch (_) {
     return null;
   }
@@ -445,6 +602,7 @@ function getFilteredSortedGroupedVoters() {
       const address = (voter.permanentAddress || "").toLowerCase();
       const island = (voter.island || "").toLowerCase();
       const notes = (voter.notes || "").toLowerCase();
+      const seq = sequenceAsImportedFromCsv(voter).toLowerCase();
       const agentName = candCtx
         ? getCandidateScopedAssignedAgentNameWithMap(voter, candCtx.candidateId, agentMap).toLowerCase()
         : "";
@@ -456,6 +614,7 @@ function getFilteredSortedGroupedVoters() {
         !address.includes(query) &&
         !island.includes(query) &&
         !notes.includes(query) &&
+        !seq.includes(query) &&
         !agentName.includes(query)
       )
         return false;
@@ -465,12 +624,12 @@ function getFilteredSortedGroupedVoters() {
 
   const cmp = (a, b) => {
     switch (sortBy) {
-      case "sequence":
-        return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
       case "name-desc":
         return (b.fullName || "").localeCompare(a.fullName || "", "en");
+      case "sequence":
+        return compareVotersByBallotSequenceThenName(a, b);
       case "island":
-        return (a.island || "").localeCompare(b.island || "", "en");
+        return compareVotersByBallotBoxThenSequenceThenName(a, b);
       case "pledge":
         return getEffectivePledgeStatus(a).localeCompare(getEffectivePledgeStatus(b), "en");
       case "assignedAgent":
@@ -491,6 +650,10 @@ function getFilteredSortedGroupedVoters() {
     }
   };
   list = list.slice().sort(cmp);
+
+  if (groupBy === "island") {
+    list.sort(compareVotersByBallotBoxThenSequenceThenName);
+  }
 
   if (groupBy === "none") {
     return list.map((voter) => ({ type: "row", voter }));
@@ -524,12 +687,12 @@ function renderVotersTable() {
   if (!votersTableBody) return;
   const ctx = getCandidateContext();
   if (!ctx && voterSortEl?.value === "assignedAgent") {
-    voterSortEl.value = "sequence";
+    voterSortEl.value = "name-asc";
   }
   const agentMapForRows = ctx ? loadCandidateAgentAssignmentMap(ctx.candidateId) : null;
   let clearedSelectionForCandidate = false;
   if (ctx && selectedVoterId) {
-    const sel = currentVoters.find((v) => v.id === selectedVoterId);
+    const sel = findVoterById(selectedVoterId);
     if (!sel) {
       selectedVoterId = null;
       clearedSelectionForCandidate = true;
@@ -581,7 +744,7 @@ function renderVotersTable() {
     const voter = item.voter;
     const tr = document.createElement("tr");
     tr.dataset.voterId = voter.id;
-    if (voter.id === selectedVoterId) {
+    if (sameVoterId(voter.id, selectedVoterId)) {
       tr.classList.add("is-selected");
     }
     const initials = (voter.fullName || "")
@@ -620,7 +783,7 @@ function renderVotersTable() {
         })()
       : '<span class="text-muted">—</span>';
     tr.innerHTML = `
-      <td class="data-table-col--seq">${voter.sequence ?? ""}</td>
+      <td class="data-table-col--seq">${escapeHtml(sequenceAsImportedFromCsv(voter) || "")}</td>
       <td>${photoCell}</td>
       <td>${voter.nationalId ?? ""}</td>
       <td class="data-table-col--name">${voter.fullName}</td>
@@ -807,7 +970,7 @@ function openVoterDetailAddTransportRouteModal(voter) {
       return;
     }
     closeModal();
-    const v = currentVoters.find((x) => x.id === voter.id);
+    const v = findVoterById(voter.id);
     if (v) {
       v.transportNeeded = true;
       v.transportRoute = result.route;
@@ -818,7 +981,7 @@ function openVoterDetailAddTransportRouteModal(voter) {
       } catch (_) {}
       saveVotersToStorage();
       renderVotersTable();
-      if (selectedVoterId === v.id) renderVoterDetails(v);
+      if (sameVoterId(selectedVoterId, v.id)) renderVoterDetails(v);
       document.dispatchEvent(new CustomEvent("voters-updated"));
     }
     if (window.appNotifications) {
@@ -1274,7 +1437,13 @@ function renderVoterDetails(voter) {
           if (raw) {
             const p = JSON.parse(raw);
             if (p && typeof p === "object") {
-              assignedName = p[String(voter.id)] || "";
+              for (const k of localStorageAgentMapKeysForVoter(voter)) {
+                const n = p[k];
+                if (n) {
+                  assignedName = n;
+                  break;
+                }
+              }
             }
           }
         } catch (_) {}
@@ -1420,10 +1589,6 @@ function renderVoterDetails(voter) {
           <div>
             <div class="detail-item-label">National ID</div>
             <div class="detail-item-value">${voter.nationalId}</div>
-          </div>
-          <div>
-            <div class="detail-item-label">Sequence</div>
-            <div class="detail-item-value">${voter.sequence ?? ""}</div>
           </div>
           <div>
             <div class="detail-item-label">Ballot box</div>
@@ -1641,7 +1806,7 @@ function renderVoterDetails(voter) {
     agentSearchInput?.addEventListener("change", applyAgentFromSearch);
     if (agentSel) {
       agentSel.addEventListener("change", async () => {
-        const v = currentVoters.find((x) => x.id === voter.id);
+        const v = findVoterById(voter.id);
         if (!v) {
           if (window.appNotifications) {
             window.appNotifications.push({
@@ -1709,8 +1874,8 @@ function renderVoterDetails(voter) {
         try {
           sessionStorage.setItem(VOTER_DETAIL_AGENT_SCOPE_KEY, scopeSel.value || "");
         } catch (_) {}
-        const v = currentVoters.find((x) => x.id === voter.id);
-        if (v && selectedVoterId === v.id) renderVoterDetails(v);
+        const v = findVoterById(voter.id);
+        if (v && sameVoterId(selectedVoterId, v.id)) renderVoterDetails(v);
       });
     }
     const agentSel = document.getElementById("candidateVoterAgentSelect");
@@ -1771,7 +1936,7 @@ function renderVoterDetails(voter) {
     if (agentSel) {
       agentSel.addEventListener("change", async () => {
         const scopeId = scopeSel?.value?.trim() || "";
-        const v = currentVoters.find((x) => x.id === voter.id);
+        const v = findVoterById(voter.id);
         if (!v) {
           if (window.appNotifications) {
             window.appNotifications.push({
@@ -1884,7 +2049,7 @@ function renderVoterDetails(voter) {
   );
   if (transportNeededEl && transportRouteEl) {
     const getRoutesForDropdown = () => {
-      const v = currentVoters.find((x) => x.id === voter.id) || voter;
+      const v = findVoterById(voter.id) || voter;
       const routes = getAvailableTransportRoutes();
       const cur = (v.transportRoute || "").trim();
       const set = new Set(routes);
@@ -1902,7 +2067,7 @@ function renderVoterDetails(voter) {
     };
 
     const persistTransport = () => {
-      const v = currentVoters.find((x) => x.id === voter.id);
+      const v = findVoterById(voter.id);
       if (!v) return;
       v.transportNeeded = !!transportNeededEl.checked;
       v.transportRoute = transportRouteEl.value || "";
@@ -1923,7 +2088,7 @@ function renderVoterDetails(voter) {
         } catch (_) {}
         saveVotersToStorage();
         renderVotersTable();
-        if (selectedVoterId === v.id) renderVoterDetails(v);
+        if (sameVoterId(selectedVoterId, v.id)) renderVoterDetails(v);
         document.dispatchEvent(new CustomEvent("voters-updated"));
       })();
     };
@@ -1955,7 +2120,7 @@ function renderVoterDetails(voter) {
   } else if (transportNeededEl && !transportRouteEl) {
     // No routes in list yet — still persist “transport needed” toggles
     transportNeededEl.addEventListener("change", () => {
-      const v = currentVoters.find((x) => x.id === voter.id);
+      const v = findVoterById(voter.id);
       if (!v) return;
       v.transportNeeded = !!transportNeededEl.checked;
       (async () => {
@@ -1965,7 +2130,7 @@ function renderVoterDetails(voter) {
         } catch (_) {}
         saveVotersToStorage();
         renderVotersTable();
-        if (selectedVoterId === v.id) renderVoterDetails(v);
+        if (sameVoterId(selectedVoterId, v.id)) renderVoterDetails(v);
         document.dispatchEvent(new CustomEvent("voters-updated"));
       })();
     });
@@ -1982,7 +2147,7 @@ function renderVoterDetails(voter) {
 function selectVoter(voterId) {
   selectedVoterId = voterId;
   renderVotersTable();
-  const voter = currentVoters.find((v) => v.id === voterId);
+  const voter = findVoterById(voterId);
   renderVoterDetails(voter);
 }
 
@@ -2009,7 +2174,7 @@ if (voterNotesTextarea) {
 if (saveVoterNotesButton) {
   saveVoterNotesButton.addEventListener("click", () => {
     if (!selectedVoterId) return;
-    const voter = currentVoters.find((v) => v.id === selectedVoterId);
+    const voter = findVoterById(selectedVoterId);
     if (!voter) return;
     voter.notes = voterNotesTextarea ? voterNotesTextarea.value : "";
     saveVoterNotesButton.disabled = true;
@@ -2019,7 +2184,7 @@ if (saveVoterNotesButton) {
         if (api.ready && api.setVoterFs) await api.setVoterFs(voter);
       } catch (_) {}
       saveVotersToStorage();
-      if (selectedVoterId === voter.id) renderVoterDetails(voter);
+      if (sameVoterId(selectedVoterId, voter.id)) renderVoterDetails(voter);
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Voter notes saved",
@@ -2079,10 +2244,10 @@ function buildVoterFormFields(voter = null) {
             )}" placeholder="Full name" required>
           </div>
           <div class="form-group">
-            <label for="voterFormSequence">Sequence</label>
-            <input id="voterFormSequence" type="number" value="${escapeHtml(
-              v.sequence ?? ""
-            )}" placeholder="Seq" min="1">
+            <label for="voterFormSequence">Sequence <span class="text-muted">(ballot box only, not an ID)</span></label>
+            <input id="voterFormSequence" type="text" value="${escapeHtml(
+              sequenceAsImportedFromCsv(v)
+            )}" placeholder="e.g. 47 or 582" inputmode="text" autocomplete="off">
           </div>
           <div class="form-group">
             <label for="voterFormDob">Date of birth</label>
@@ -2343,7 +2508,7 @@ function openVoterForm(existingVoter) {
     const name = (body.querySelector("#voterFormName").value || "").trim();
     const nationalId = (body.querySelector("#voterFormNationalId").value || "").trim();
     if (!name && !nationalId) return;
-    const sequence = parseInt(body.querySelector("#voterFormSequence").value, 10) || currentVoters.length + 1;
+    const sequence = ballotSequenceText(body.querySelector("#voterFormSequence")?.value ?? "");
     const ballotBox = (body.querySelector("#voterFormBallotBox").value || "").trim();
     const island = (body.querySelector("#voterFormIsland").value || "").trim();
     const permanentAddress = (body.querySelector("#voterFormAddress").value || "").trim();
@@ -2392,7 +2557,7 @@ function openVoterForm(existingVoter) {
       existingVoter.transportType = transportType;
       existingVoter.transportRoute = transportRoute;
       existingVoter.notes = notes;
-      if (selectedVoterId === existingVoter.id) renderVoterDetails(existingVoter);
+      if (sameVoterId(selectedVoterId, existingVoter.id)) renderVoterDetails(existingVoter);
     } else {
       const id = nationalId || `V-${Date.now()}`;
       const newVoter = {
@@ -2434,7 +2599,7 @@ function openVoterForm(existingVoter) {
       } catch (_) {}
       saveVotersToStorage();
       renderVotersTable();
-      if (isEdit && selectedVoterId === existingVoter?.id) renderVoterDetails(existingVoter);
+      if (isEdit && sameVoterId(selectedVoterId, existingVoter?.id)) renderVoterDetails(existingVoter);
       document.dispatchEvent(new CustomEvent("voters-updated"));
     })();
     closeModal();
@@ -2456,7 +2621,7 @@ function openVoterForm(existingVoter) {
 function deleteVoter(voterId) {
   const u = typeof getCurrentUserFn === "function" ? getCurrentUserFn() : null;
   if (u?.role === "candidate" && u?.candidateId) return;
-  const voter = currentVoters.find((v) => v.id === voterId);
+  const voter = findVoterById(voterId);
   if (!voter) return;
   (async () => {
     const ok = await confirmDialog({
@@ -2472,9 +2637,9 @@ function deleteVoter(voterId) {
     try {
       const api = await firebaseInitPromise;
       if (api.ready && api.deleteVoterFs) await api.deleteVoterFs(voterId);
-      const idx = currentVoters.findIndex((v) => v.id === voterId);
+      const idx = currentVoters.findIndex((v) => sameVoterId(v.id, voterId));
       if (idx !== -1) currentVoters.splice(idx, 1);
-      if (selectedVoterId === voterId) {
+      if (sameVoterId(selectedVoterId, voterId)) {
         selectedVoterId = null;
         renderVoterDetails(null);
       }
@@ -2492,6 +2657,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
   getCurrentUserFn = typeof getCurrentUser === "function" ? getCurrentUser : () => null;
   openAddAgentModalRef =
     typeof options.openAddAgentModal === "function" ? options.openAddAgentModal : null;
+  seedCandidatesCacheFromStorage();
   const votersTableLoader = document.getElementById("votersTableLoader");
   if (votersTableLoader) votersTableLoader.hidden = false;
 
@@ -2506,14 +2672,14 @@ export async function initVotersModule(getCurrentUser, options = {}) {
       renderVotersTable();
     }
     if (selectedVoterId) {
-      const v = currentVoters.find((x) => x.id === selectedVoterId);
+      const v = findVoterById(selectedVoterId);
       if (v) renderVoterDetails(v);
     }
   });
 
   document.addEventListener("transport-trips-updated", () => {
     if (selectedVoterId) {
-      const v = currentVoters.find((x) => x.id === selectedVoterId);
+      const v = findVoterById(selectedVoterId);
       if (v) renderVoterDetails(v);
     }
   });
@@ -2623,7 +2789,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
         e.preventDefault();
         e.stopPropagation();
         const id = editBtn.getAttribute("data-voter-edit");
-        const voter = currentVoters.find((v) => v.id === id);
+        const voter = findVoterById(id);
         if (voter) openVoterForm(voter);
       } else if (deleteBtn) {
         e.preventDefault();
@@ -2635,7 +2801,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
         e.stopPropagation();
         const id = unmarkBtn.getAttribute("data-voter-unmark");
         if (!id) return;
-        const voter = currentVoters.find((v) => v.id === id);
+        const voter = findVoterById(id);
         if (!voter) return;
         (async () => {
           const ok = await confirmDialog({
@@ -2653,7 +2819,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
           await clearVotedForVoter(id);
           saveVotersToStorage();
           renderVotersTable();
-          if (selectedVoterId === id) renderVoterDetails(voter);
+          if (sameVoterId(selectedVoterId, id)) renderVoterDetails(voter);
           document.dispatchEvent(new CustomEvent("voters-updated"));
         })();
       }
@@ -2665,7 +2831,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
       const initial = await api.getAllVotersFs();
       if (Array.isArray(initial)) {
-        currentVoters = initial;
+        currentVoters = initial.map(normalizeVoterCandidateFields);
         saveVotersToStorage();
         mergeVotedAtFromVoters(initial);
       } else {
@@ -2676,13 +2842,14 @@ export async function initVotersModule(getCurrentUser, options = {}) {
       renderVoterDetails(null);
 
       unsubscribeVotersFs = api.onVotersSnapshotFs((items) => {
+        if (votersBulkImportInProgress) return;
         if (Array.isArray(items)) {
-          currentVoters = items;
+          currentVoters = items.map(normalizeVoterCandidateFields);
           mergeVotedAtFromVoters(items);
           renderVotersTable();
           const selected =
             selectedVoterId &&
-            currentVoters.find((v) => v.id === selectedVoterId);
+            findVoterById(selectedVoterId);
           renderVoterDetails(selected || null);
           document.dispatchEvent(new CustomEvent("voters-updated"));
         }
@@ -2710,6 +2877,8 @@ export async function initVotersModule(getCurrentUser, options = {}) {
   // Backfill legacy candidate-local assignment maps into voter docs for cross-login visibility.
   syncCandidateAgentAssignmentsFromLocalMaps().catch(() => {});
 
+  registerAutoSyncLocalVotersWhenOnline();
+
   return {
     getAllVoters: () => [...currentVoters],
   };
@@ -2718,12 +2887,127 @@ export async function initVotersModule(getCurrentUser, options = {}) {
 /** Reload voters from storage and re-render; dispatches voters-updated for pledges etc. */
 export function refreshVotersFromStorage() {
   loadVotersFromStorage();
+  if (selectedVoterId && !currentVoters.some((v) => sameVoterId(v.id, selectedVoterId))) {
+    selectedVoterId = null;
+  }
   renderVotersTable();
   const selected = selectedVoterId
-    ? currentVoters.find((v) => v.id === selectedVoterId) || null
+    ? findVoterById(selectedVoterId) || null
     : null;
   renderVoterDetails(selected);
   document.dispatchEvent(new CustomEvent("voters-updated"));
+}
+
+/** Pull latest voter list from Firestore, persist, merge voted times, re-render (header hard refresh). */
+export async function refreshVotersFromFirestore() {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getAllVotersFs) {
+      refreshVotersFromStorage();
+      return;
+    }
+    const items = await api.getAllVotersFs();
+    if (!Array.isArray(items)) {
+      refreshVotersFromStorage();
+      return;
+    }
+    currentVoters = items.map(normalizeVoterCandidateFields);
+    saveVotersToStorage();
+    mergeVotedAtFromVoters(items);
+    renderVotersTable();
+    const selected = selectedVoterId
+      ? findVoterById(selectedVoterId) || null
+      : null;
+    renderVoterDetails(selected);
+    document.dispatchEvent(new CustomEvent("voters-updated"));
+  } catch (err) {
+    console.error("[Voters] refreshVotersFromFirestore", err);
+    refreshVotersFromStorage();
+  }
+}
+
+/** localStorage: when "1", reconnecting to the network triggers a merge sync (see registerAutoSyncLocalVotersWhenOnline). */
+export const AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY = "autoSyncLocalVotersWhenOnline";
+
+/**
+ * Push all voters from this browser’s local cache to Firestore (`setDoc` merge per voter id).
+ * Use after offline work or on a laptop that had not synced — requires signed-in user.
+ * @param {{ silent?: boolean, notify?: boolean }} [opts] — `notify: false` skips in-app toasts (for custom UI).
+ */
+export async function syncLocalVotersToFirebase(opts = {}) {
+  const { silent = false, notify = true } = opts;
+  loadVotersFromStorage();
+  const voters = currentVoters.filter((v) => v && v.id != null && String(v.id).trim() !== "");
+  if (voters.length === 0) {
+    if (!silent && notify && window.appNotifications) {
+      window.appNotifications.push({
+        title: "No local voters to sync",
+        meta: "There are no voters stored in this browser.",
+      });
+    }
+    return { ok: false, count: 0, error: "empty" };
+  }
+
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || typeof api.setVotersBatchFs !== "function") {
+      if (!silent && notify && window.appNotifications) {
+        window.appNotifications.push({
+          title: "Sync unavailable",
+          meta: "Firebase is not ready. Check your network or configuration.",
+        });
+      }
+      return { ok: false, count: 0, error: "firebase" };
+    }
+    if (!api.auth?.currentUser) {
+      if (!silent && notify && window.appNotifications) {
+        window.appNotifications.push({
+          title: "Sign in required",
+          meta: "Sign in to the campaign, then sync again.",
+        });
+      }
+      return { ok: false, count: 0, error: "auth" };
+    }
+
+    const normalized = voters.map(normalizeVoterCandidateFields);
+    await api.setVotersBatchFs(normalized);
+    await refreshVotersFromFirestore();
+
+    if (!silent && notify && window.appNotifications) {
+      window.appNotifications.push({
+        title: "Voters synced to Firebase",
+        meta: `${normalized.length.toLocaleString("en-MV")} local voters merged to Firestore.`,
+      });
+    }
+    return { ok: true, count: normalized.length };
+  } catch (err) {
+    console.error("[Voters] syncLocalVotersToFirebase", err);
+    if (!silent && notify && window.appNotifications) {
+      window.appNotifications.push({
+        title: "Sync failed",
+        meta: err?.message || String(err),
+      });
+    }
+    return { ok: false, count: 0, error: "exception", message: err?.message };
+  }
+}
+
+function registerAutoSyncLocalVotersWhenOnline() {
+  if (registerAutoSyncLocalVotersWhenOnline._done) return;
+  registerAutoSyncLocalVotersWhenOnline._done = true;
+  window.addEventListener("online", () => {
+    try {
+      if (localStorage.getItem(AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY) !== "1") return;
+      syncLocalVotersToFirebase({ silent: true, notify: false }).then((r) => {
+        if (r.ok && window.appNotifications) {
+          window.appNotifications.push({
+            title: "Back online — voters synced",
+            meta: `${r.count.toLocaleString("en-MV")} local records merged to Firebase.`,
+          });
+        }
+      });
+    } catch (_) {}
+  });
 }
 
 export function getVoterStats(scope) {
@@ -2731,10 +3015,152 @@ export function getVoterStats(scope) {
   const pledgedCount = currentVoters.filter(
     (v) => v.pledgeStatus === "yes"
   ).length;
+  const byNationalId = new Map();
+  currentVoters.forEach((v) => {
+    const nid = String(v.nationalId || "").trim();
+    if (!nid) return;
+    byNationalId.set(nid, (byNationalId.get(nid) || 0) + 1);
+  });
+  let duplicateNationalIdRows = 0;
+  byNationalId.forEach((c) => {
+    if (c > 1) duplicateNationalIdRows += c - 1;
+  });
   return {
     totalVoters,
     pledgedCount,
+    distinctNationalIds: byNationalId.size,
+    duplicateNationalIdRows,
   };
+}
+
+function scoreVoterForDuplicateKeep(v) {
+  let s = 0;
+  if (v.votedAt && String(v.votedAt).trim()) s += 1_000_000;
+  if (v.pledgeStatus === "yes") s += 10_000;
+  if (v.pledgeStatus === "no") s += 100;
+  if (v.fullName && String(v.fullName).trim()) s += 10;
+  if (v.phone && String(v.phone).trim()) s += 1;
+  if (v.permanentAddress && String(v.permanentAddress).trim()) s += 1;
+  return s;
+}
+
+function pickVoterToKeepDuplicateGroup(group) {
+  if (group.length === 0) return null;
+  if (group.length === 1) return group[0];
+  let best = group[0];
+  let bestScore = scoreVoterForDuplicateKeep(best);
+  for (let i = 1; i < group.length; i++) {
+    const v = group[i];
+    const sc = scoreVoterForDuplicateKeep(v);
+    if (sc > bestScore || (sc === bestScore && String(v.id) < String(best.id))) {
+      best = v;
+      bestScore = sc;
+    }
+  }
+  return best;
+}
+
+function analyzeDuplicateVotersByNationalId() {
+  const groups = new Map();
+  for (const v of currentVoters) {
+    const key = normalizeNationalIdForDedup(v.nationalId);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(v);
+  }
+  let duplicateGroups = 0;
+  const idsToRemove = [];
+  for (const [, arr] of groups) {
+    if (arr.length < 2) continue;
+    duplicateGroups += 1;
+    const keeper = pickVoterToKeepDuplicateGroup(arr);
+    for (const v of arr) {
+      if (String(v.id) !== String(keeper.id)) idsToRemove.push(String(v.id));
+    }
+  }
+  return { duplicateGroups, idsToRemove };
+}
+
+/**
+ * Deletes extra voter rows that share the same national ID (trimmed, internal spaces collapsed).
+ * Keeps one row per national ID: prefers voted status, pledge, and fuller records; tie-break by lowest internal id.
+ */
+export async function removeDuplicateVotersByNationalId() {
+  const u = typeof getCurrentUserFn === "function" ? getCurrentUserFn() : null;
+  if (u?.role === "candidate" && u?.candidateId) {
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Not available",
+        meta: "Only staff can remove duplicate voters.",
+      });
+    }
+    return { removed: 0, duplicateGroups: 0 };
+  }
+
+  const { duplicateGroups, idsToRemove } = analyzeDuplicateVotersByNationalId();
+  if (idsToRemove.length === 0) {
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "No duplicate voters",
+        meta: "No two rows share the same national ID (after trim).",
+      });
+    }
+    return { removed: 0, duplicateGroups: 0 };
+  }
+
+  const ok = await confirmDialog({
+    title: "Remove duplicate voters?",
+    message: `Found ${duplicateGroups} national ID(s) with more than one row. ${idsToRemove.length} duplicate row(s) will be deleted. For each national ID, one row is kept (preferring voted status, pledge, and more complete data).`,
+    confirmText: "Remove duplicates",
+    cancelText: "Cancel",
+    danger: true,
+  });
+  if (!ok) return { removed: 0, duplicateGroups };
+
+  const idsSet = new Set(idsToRemove);
+  try {
+    const api = await firebaseInitPromise;
+    const chunkSize = 25;
+    for (let i = 0; i < idsToRemove.length; i += chunkSize) {
+      const chunk = idsToRemove.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map((id) => {
+          if (api.ready && api.deleteVoterFs) return api.deleteVoterFs(id);
+          return Promise.resolve();
+        })
+      );
+    }
+  } catch (err) {
+    console.error("[Voters] removeDuplicateVotersByNationalId Firestore", err);
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Some remote deletes may have failed",
+        meta: "Duplicates were removed locally. Sync or check Firebase if counts do not match.",
+      });
+    }
+  }
+
+  currentVoters = currentVoters.filter((v) => !idsSet.has(String(v.id)));
+  if (selectedVoterId != null && idsSet.has(String(selectedVoterId))) {
+    selectedVoterId = null;
+  }
+  saveVotersToStorage();
+  renderVotersTable();
+  const selAfter =
+    selectedVoterId != null
+      ? currentVoters.find((v) => String(v.id) === String(selectedVoterId)) || null
+      : null;
+  renderVoterDetails(selAfter);
+  document.dispatchEvent(new CustomEvent("voters-updated"));
+
+  if (window.appNotifications) {
+    window.appNotifications.push({
+      title: "Duplicates removed",
+      meta: `${idsToRemove.length.toLocaleString("en-MV")} duplicate row(s) removed.`,
+    });
+  }
+
+  return { removed: idsToRemove.length, duplicateGroups };
 }
 
 export function getPledgeByBallotBox() {
@@ -2771,7 +3197,17 @@ async function syncCandidateAgentAssignmentsFromLocalMaps() {
   const agentsByNormName = new Map(
     filterAgentsForViewer(getAgentsFromStorage()).map((a) => [normalizeName(a?.name), String(a?.id ?? "")])
   );
-  const updatesByVoterId = new Map(); // voterId -> { [candidateId]: agentName }
+  const findVoterForLegacyMapKey = (mapKey) => {
+    const k = String(mapKey || "").trim();
+    if (!k) return null;
+    let voter = currentVoters.find((x) => String(x.id) === k);
+    if (voter) return voter;
+    const norm = normalizeNationalIdForDedup(k);
+    if (!norm) return null;
+    return currentVoters.find((x) => normalizeNationalIdForDedup(x.nationalId) === norm) || null;
+  };
+
+  const updatesByVoterId = new Map(); // canonical voter.id -> { [candidateId]: agentName }
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i) || "";
     if (!key.startsWith(CAND_ASSIGN_PREFIX)) continue;
@@ -2782,9 +3218,10 @@ async function syncCandidateAgentAssignmentsFromLocalMaps() {
       if (!raw) continue;
       const map = JSON.parse(raw);
       if (!map || typeof map !== "object") continue;
-      Object.entries(map).forEach(([voterId, assignedName]) => {
-        const vid = String(voterId || "").trim();
-        if (!vid) return;
+      Object.entries(map).forEach(([mapKey, assignedName]) => {
+        const voter = findVoterForLegacyMapKey(mapKey);
+        if (!voter) return;
+        const vid = String(voter.id);
         const name = String(assignedName || "");
         if (!updatesByVoterId.has(vid)) updatesByVoterId.set(vid, {});
         updatesByVoterId.get(vid)[String(candidateId)] = name;
@@ -2843,7 +3280,7 @@ export async function syncCandidateAssignmentsToFirebase() {
 }
 
 export function updateVoterPledgeStatus(voterId, pledgeStatus) {
-  const v = currentVoters.find((x) => x.id === voterId);
+  const v = findVoterById(voterId);
   if (!v) return;
   v.pledgeStatus = pledgeStatus;
   v.pledgedAt = pledgeStatus === "yes" ? new Date().toISOString().slice(0, 10) : "";
@@ -2853,14 +3290,14 @@ export function updateVoterPledgeStatus(voterId, pledgeStatus) {
       if (api.ready && api.setVoterFs) await api.setVoterFs(v);
       saveVotersToStorage();
       renderVotersTable();
-      if (selectedVoterId === voterId) renderVoterDetails(v);
+      if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
       document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
 }
 
 export function updateVoterTransportNeeded(voterId, transportNeeded) {
-  const v = currentVoters.find((x) => x.id === voterId);
+  const v = findVoterById(voterId);
   if (!v) return;
   v.transportNeeded = !!transportNeeded;
   (async () => {
@@ -2869,7 +3306,7 @@ export function updateVoterTransportNeeded(voterId, transportNeeded) {
       if (api.ready && api.setVoterFs) await api.setVoterFs(v);
       saveVotersToStorage();
       renderVotersTable();
-      if (selectedVoterId === voterId) renderVoterDetails(v);
+      if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
       document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
@@ -2877,14 +3314,14 @@ export function updateVoterTransportNeeded(voterId, transportNeeded) {
 
 /** Referendum position: yes | no | undecided (stored on voter as `referendumVote`). */
 export function updateVoterReferendumVote(voterId, referendumVote) {
-  const v = currentVoters.find((x) => x.id === voterId);
+  const v = findVoterById(voterId);
   if (!v) return;
   const next =
     referendumVote === "yes" || referendumVote === "no" ? referendumVote : "undecided";
   v.referendumVote = next;
   saveVotersToStorage();
   renderVotersTable();
-  if (selectedVoterId === voterId) renderVoterDetails(v);
+  if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
   document.dispatchEvent(new CustomEvent("voters-updated"));
   (async () => {
     try {
@@ -2900,12 +3337,12 @@ export function updateVoterReferendumVote(voterId, referendumVote) {
 
 /** Free-text comment for referendum (stored as `referendumNotes` on the voter). */
 export function updateVoterReferendumNotes(voterId, referendumNotes) {
-  const v = currentVoters.find((x) => x.id === voterId);
+  const v = findVoterById(voterId);
   if (!v) return;
   v.referendumNotes = referendumNotes == null ? "" : String(referendumNotes);
   saveVotersToStorage();
   renderVotersTable();
-  if (selectedVoterId === voterId) renderVoterDetails(v);
+  if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
   document.dispatchEvent(new CustomEvent("voters-updated"));
   (async () => {
     try {
@@ -2999,7 +3436,7 @@ export function openVoterDetailsPopup(voterId) {
 export function updateVoterCandidatePledge(voterId, candidateId, status) {
   const ctx = getCandidateContext();
   if (ctx && String(candidateId) !== String(ctx.candidateId)) return;
-  const v = currentVoters.find((x) => x.id === voterId);
+  const v = findVoterById(voterId);
   if (!v) return;
   if (!v.candidatePledges) v.candidatePledges = {};
   v.candidatePledges[String(candidateId)] = status;
@@ -3009,7 +3446,7 @@ export function updateVoterCandidatePledge(voterId, candidateId, status) {
       if (api.ready && api.setVoterFs) await api.setVoterFs(v);
       saveVotersToStorage();
       renderVotersTable();
-      if (selectedVoterId === voterId) renderVoterDetails(v);
+      if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
       document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
@@ -3021,7 +3458,7 @@ export function updateVoterCandidateAgentAssignment(voterId, candidateId, agentI
   // Candidate logins should not set assignments for other candidates.
   if (ctx && String(candidateId) !== String(ctx.candidateId)) return;
 
-  const v = currentVoters.find((x) => x.id === voterId);
+  const v = findVoterById(voterId);
   if (!v) return;
 
   const cid = String(candidateId);
@@ -3043,24 +3480,11 @@ export function updateVoterCandidateAgentAssignment(voterId, candidateId, agentI
       const api = await firebaseInitPromise;
       if (api.ready && api.setVoterFs) await api.setVoterFs(v);
 
-      // Keep legacy per-candidate localStorage map in sync after successful cloud write.
-      if (cid) {
-        try {
-          const key = candidatePledgedAgentStorageKey(cid);
-          let map = {};
-          const raw = localStorage.getItem(key);
-          if (raw) {
-            const p = JSON.parse(raw);
-            if (p && typeof p === "object") map = p;
-          }
-          map[String(voterId)] = nextName;
-          localStorage.setItem(key, JSON.stringify(map));
-        } catch (_) {}
-      }
+      if (cid) mirrorCandidatePledgedAgentLocalMap(cid, voterId, nextName);
 
       saveVotersToStorage();
       renderVotersTable();
-      if (selectedVoterId === voterId) renderVoterDetails(v);
+      if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
       document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
@@ -3068,7 +3492,7 @@ export function updateVoterCandidateAgentAssignment(voterId, candidateId, agentI
 
 /** Update door-to-door fields (assigned agent, met, persuadable, date pledged, notes). */
 export function updateVoterDoorToDoorFields(voterId, fields) {
-  const v = currentVoters.find((x) => x.id === voterId);
+  const v = findVoterById(voterId);
   if (!v) return;
   if (fields.volunteer !== undefined) v.volunteer = fields.volunteer;
   if (fields.metStatus !== undefined) v.metStatus = fields.metStatus;
@@ -3084,65 +3508,140 @@ export function updateVoterDoorToDoorFields(voterId, fields) {
       // Always keep local state and UI in sync, regardless of whether Firestore is used.
       saveVotersToStorage();
       renderVotersTable();
-      if (selectedVoterId === voterId) renderVoterDetails(v);
+      if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
       document.dispatchEvent(new CustomEvent("voters-updated"));
     } catch (_) {}
   })();
 }
 
-export function importVotersFromTemplateRows(rows) {
+export async function importVotersFromTemplateRows(rows) {
   const hasContent = (r) => {
     const name = String(r["Name"] ?? "").trim();
     const id = String(r["ID Number"] ?? r.id ?? "").trim();
     return name !== "" || id !== "";
   };
   const validRows = rows.filter(hasContent);
-  // Generate a stable unique internal ID per import row that does NOT rely on Sequence or ID Number.
   const importRunPrefix = `V-${Date.now()}-`;
-  const mapped = validRows.map((r, index) => ({
-    id: `${importRunPrefix}${index + 1}`,
-    sequence: Number(r["Sequence"]) || index + 1,
-    ballotBox: r["Ballot Box"] || "",
-    fullName: r["Name"] || "",
-    permanentAddress: r["Permanent Address"] || "",
-    dateOfBirth: r["Date of Birth"] || "",
-    age: r["Age"] ? Number(r["Age"]) : "",
-    pledgeStatus: (r["Pledge"] || "").toLowerCase() || "undecided",
-    gender: r["Gender"] || "",
-    island: r["Island"] || "",
-    currentLocation: r["Current Location"] || "",
-    nationalId: r["ID Number"] || "",
-    phone: r["Phone"] || "",
-    notes: r["Call Comments"] || "",
-    callComments: r["Call Comments"] || "",
-    supportStatus: "unknown",
-    interactions: [],
-    candidatePledges: {},
-    volunteer: "",
-    metStatus: "not-met",
-    persuadable: "unknown",
-    pledgedAt: "",
-    photoUrl: (r["Photo"] || r["Image"] || "").trim() || "",
-  }));
-  (async () => {
+
+  let existingFromFs = [];
+  try {
+    const api = await firebaseInitPromise;
+    if (api?.ready && typeof api.getAllVotersFs === "function") {
+      existingFromFs = await api.getAllVotersFs();
+    }
+  } catch (_) {}
+
+  const existingByNationalId = new Map();
+  (Array.isArray(existingFromFs) ? existingFromFs : []).forEach((v) => {
+    if (!v || typeof v !== "object") return;
+    const k = normalizeNationalIdForDedup(v.nationalId);
+    if (k) existingByNationalId.set(k, v);
+    const k2 = normalizeNationalIdForDedup(v.id);
+    if (k2 && k2 !== k) existingByNationalId.set(k2, v);
+  });
+
+  const usedDocIds = new Set();
+  const allocateDocId = (rawNational, index) => {
+    const fromNid = voterDocumentIdFromNationalId(rawNational);
+    if (fromNid) {
+      let id = fromNid;
+      let n = 2;
+      while (usedDocIds.has(id)) {
+        id = `${fromNid}__${n}`;
+        n += 1;
+      }
+      usedDocIds.add(id);
+      return id;
+    }
+    const fallback = `${importRunPrefix}${index + 1}`;
+    usedDocIds.add(fallback);
+    return fallback;
+  };
+
+  const mapped = validRows.map((r, index) => {
+    const rawNational = String(r["ID Number"] ?? "").trim();
+    const id = allocateDocId(rawNational, index);
+    const pledgeCell = String(r["Pledge"] ?? "").trim().toLowerCase();
+    const pledgeFromCsv =
+      pledgeCell === "yes" || pledgeCell === "no" || pledgeCell === "undecided" ? pledgeCell : "";
+
+    const base = {
+      id,
+      sequence: sequenceAsImportedFromCsv(r["Sequence"]),
+      ballotBox: r["Ballot Box"] || "",
+      fullName: r["Name"] || "",
+      permanentAddress: r["Permanent Address"] || "",
+      dateOfBirth: r["Date of Birth"] || "",
+      age: r["Age"] ? Number(r["Age"]) : "",
+      pledgeStatus: pledgeFromCsv || "undecided",
+      gender: r["Gender"] || "",
+      island: r["Island"] || "",
+      currentLocation: r["Current Location"] || "",
+      nationalId: rawNational || "",
+      phone: r["Phone"] || "",
+      notes: r["Call Comments"] || "",
+      callComments: r["Call Comments"] || "",
+      supportStatus: "unknown",
+      interactions: [],
+      candidatePledges: {},
+      volunteer: "",
+      metStatus: "not-met",
+      persuadable: "unknown",
+      pledgedAt: "",
+      photoUrl: (r["Photo"] || r["Image"] || "").trim() || "",
+    };
+
+    const norm = normalizeNationalIdForDedup(rawNational);
+    const existing = norm ? existingByNationalId.get(norm) : null;
+    let merged = mergeImportedVoterWithExistingFirestore(base, existing);
+    if (!pledgeFromCsv && existing && existing.pledgeStatus) {
+      merged = { ...merged, pledgeStatus: existing.pledgeStatus };
+    }
+    return merged;
+  });
+
+  currentVoters = mapped;
+  selectedVoterId = null;
+  saveVotersToStorage();
+  renderVotersTable();
+  renderVoterDetails(null);
+  document.dispatchEvent(new CustomEvent("voters-updated"));
+
+  let cloudSynced = false;
+  if (mapped.length > 0) {
+    votersBulkImportInProgress = true;
     try {
       const api = await firebaseInitPromise;
-      if (api.ready && api.setVoterFs) {
-        await Promise.all(mapped.map((v) => api.setVoterFs(v)));
+      if (api.ready && typeof api.setVotersBatchFs === "function") {
+        await api.setVotersBatchFs(mapped);
+        cloudSynced = true;
+      } else if (api.ready && api.setVoterFs) {
+        const chunk = 40;
+        for (let i = 0; i < mapped.length; i += chunk) {
+          await Promise.all(mapped.slice(i, i + chunk).map((v) => api.setVoterFs(v)));
+        }
+        cloudSynced = true;
       }
-      currentVoters = mapped;
-      selectedVoterId = null;
-      saveVotersToStorage();
-      renderVotersTable();
-      renderVoterDetails(null);
-      document.dispatchEvent(new CustomEvent("voters-updated"));
-      if (window.appNotifications) {
-        window.appNotifications.push({
-          title: "Voters imported",
-          meta: `${mapped.length.toLocaleString("en-MV")} voters in list`,
-        });
-      }
-    } catch (_) {}
-  })();
+    } catch (err) {
+      console.error("[Voters] Import: Firestore sync failed", err);
+    } finally {
+      votersBulkImportInProgress = false;
+    }
+  }
+
+  saveVotersToStorage();
+  renderVotersTable();
+
+  if (window.appNotifications) {
+    const n = mapped.length.toLocaleString("en-MV");
+    window.appNotifications.push({
+      title: mapped.length ? "Voters imported" : "Import finished",
+      meta: mapped.length
+        ? cloudSynced
+          ? `${n} voters saved locally and synced to Firebase.`
+          : `${n} voters saved on this device. Cloud sync failed or offline — use “Sync local voters to Firebase” in Settings → Data when online.`
+        : "No data rows matched (need Name or ID Number per row).",
+    });
+  }
 }
 

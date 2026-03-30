@@ -1,5 +1,13 @@
 import { openModal, closeModal, confirmDialog } from "./ui.js";
-import { importVotersFromTemplateRows, getVoterImageSrc, getVotersContextForStandalone } from "./voters.js";
+import {
+  importVotersFromTemplateRows,
+  getVoterImageSrc,
+  getVotersContextForStandalone,
+  refreshVotersFromStorage,
+  removeDuplicateVotersByNationalId,
+  syncLocalVotersToFirebase,
+  AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY,
+} from "./voters.js";
 import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
 import { firebaseInitPromise } from "./firebase.js";
 import {
@@ -9,6 +17,7 @@ import {
   formatAgentNameHint,
   parseViewerFromStorage,
 } from "./agents-context.js";
+import { compareBallotSequence, sequenceAsImportedFromCsv } from "./sequence-utils.js";
 
 /**
  * Resolve Firebase API for agent save — never rejects on timeout (local save must still run).
@@ -169,6 +178,9 @@ const votersUploadFileNameEl = document.getElementById("votersUploadFileName");
 const exportVotersCsvButton = document.getElementById("exportVotersCsvButton");
 const syncVotersToFirebaseButton = document.getElementById("syncVotersToFirebaseButton");
 const deleteAllVotersButton = document.getElementById("deleteAllVotersButton");
+const removeDuplicateVotersByNationalIdButton = document.getElementById(
+  "removeDuplicateVotersByNationalIdButton"
+);
 
 const electionTypes = [
   "Local Council Election",
@@ -273,6 +285,8 @@ async function refreshAgentModalCandidateScopeOptions(modalBodyRoot, existing) {
 }
 
 let agents = [];
+/** Primary agent id (string) → duplicate agent records (same display name, other candidate scopes). */
+let settingsAgentDuplicateAgentsByPrimaryId = new Map();
 let campaignUsers = [];
 let unsubscribeAgentsFs = null;
 
@@ -489,6 +503,41 @@ function getAgentCandidateScopeId(agent) {
   return String(raw).trim();
 }
 
+/** Normalize full name for duplicate detection (same person, multiple agent rows / scopes). */
+function normalizeAgentNameKey(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Keep first agent row per name (current sort order). Others become `duplicateAgents` for the ⋮ menu.
+ */
+function dedupeAgentsByNameInOrder(sortedAgents) {
+  const byKey = new Map();
+  sortedAgents.forEach((a) => {
+    const k = normalizeAgentNameKey(a.name);
+    if (!k) return;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(a);
+  });
+  const out = [];
+  const seen = new Set();
+  sortedAgents.forEach((a) => {
+    const k = normalizeAgentNameKey(a.name);
+    if (!k) {
+      out.push({ agent: a, duplicateAgents: [] });
+      return;
+    }
+    if (seen.has(k)) return;
+    seen.add(k);
+    const list = byKey.get(k) || [a];
+    out.push({ agent: list[0], duplicateAgents: list.slice(1) });
+  });
+  return out;
+}
+
 function getFilteredSortedGroupedAgents() {
   const list = Array.isArray(agents) ? [...agents] : [];
   const searchEl = document.getElementById("settingsAgentsSearch");
@@ -549,8 +598,14 @@ function getFilteredSortedGroupedAgents() {
   };
   filtered.sort(cmp);
 
+  const dedupedRows = dedupeAgentsByNameInOrder(filtered);
+
   if (groupBy === "none") {
-    return filtered.map((agent) => ({ type: "row", agent }));
+    return dedupedRows.map(({ agent, duplicateAgents }) => ({
+      type: "row",
+      agent,
+      duplicateAgents,
+    }));
   }
 
   const getGroupKey = (v) => {
@@ -561,13 +616,13 @@ function getFilteredSortedGroupedAgents() {
 
   const displayList = [];
   let lastKey = null;
-  filtered.forEach((agent) => {
+  dedupedRows.forEach(({ agent, duplicateAgents }) => {
     const key = getGroupKey(agent);
     if (key !== lastKey) {
       displayList.push({ type: "group", label: key });
       lastKey = key;
     }
-    displayList.push({ type: "row", agent });
+    displayList.push({ type: "row", agent, duplicateAgents });
   });
   return displayList;
 }
@@ -1327,6 +1382,58 @@ function openAgentViewModal(agent) {
   openModal({ title: "View agent", body, footer, dialogClass: "modal--wide" });
 }
 
+/** Same person may have multiple agent rows (per candidate). List other scopes and open per-scope voter list. */
+function openOtherCandidateScopesModal(primaryAgent, duplicateAgents) {
+  if (!primaryAgent || !Array.isArray(duplicateAgents) || duplicateAgents.length === 0) return;
+  const body = document.createElement("div");
+  body.className = "settings-other-scopes-modal";
+  body.innerHTML = duplicateAgents
+    .map((d) => {
+      const cid = getAgentCandidateScopeId(d);
+      const scope = cid ? candidateLabelById(cid) : "All campaigns (unscoped)";
+      const aid = String(d.id ?? "");
+      return `
+      <div class="settings-other-scopes-modal__row" data-scope-agent-id="${escapeHtml(aid)}">
+        <div class="settings-other-scopes-modal__row-head">
+          <strong>${escapeHtml(scope)}</strong>
+          <span class="text-muted"> · Agent ID <code>${escapeHtml(aid)}</code></span>
+        </div>
+        <div class="helper-text" style="margin: 4px 0 8px;">
+          ${escapeHtml(d.nationalId || "—")} · ${escapeHtml(d.phone || "—")} · ${escapeHtml(d.island || "—")}
+        </div>
+        <button type="button" class="ghost-button ghost-button--small" data-open-voters-for-scope="${escapeHtml(aid)}">
+          View assigned voters
+        </button>
+      </div>`;
+    })
+    .join("");
+
+  body.querySelectorAll("[data-open-voters-for-scope]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-open-voters-for-scope");
+      const agent = agents.find((x) => String(x.id) === String(id));
+      if (agent) openAgentAssignedVotersModal(agent);
+    });
+  });
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.justifyContent = "flex-end";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "ghost-button";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeModal());
+  footer.appendChild(closeBtn);
+
+  openModal({
+    title: `Other candidate scopes — ${primaryAgent.name || "Agent"}`,
+    body,
+    footer,
+    dialogClass: "modal--wide",
+  });
+}
+
 /** Read-only assigned voters list for an agent (global + per-candidate assignments). */
 async function openAgentAssignedVotersModal(agent) {
   if (!agent || agent.id == null) return;
@@ -1457,13 +1564,8 @@ async function openAgentAssignedVotersModal(agent) {
     })
     .filter(Boolean)
     .sort((a, b) => {
-      const sa = Number(a.voter && a.voter.sequence != null ? a.voter.sequence : NaN);
-      const sb = Number(b.voter && b.voter.sequence != null ? b.voter.sequence : NaN);
-      const aHas = Number.isFinite(sa);
-      const bHas = Number.isFinite(sb);
-      if (aHas && bHas) return sa - sb;
-      if (aHas) return -1;
-      if (bHas) return 1;
+      const c = compareBallotSequence(a.voter?.sequence, b.voter?.sequence);
+      if (c !== 0) return c;
       return String(a.voter?.fullName || "").localeCompare(String(b.voter?.fullName || ""), "en");
     });
 
@@ -1572,13 +1674,8 @@ async function openAgentAssignedVotersModal(agent) {
           return String(vb.votedAt || "").localeCompare(String(va.votedAt || ""), "en");
         case "sequence":
         default: {
-          const sa = Number(va.sequence != null ? va.sequence : NaN);
-          const sb = Number(vb.sequence != null ? vb.sequence : NaN);
-          const aHas = Number.isFinite(sa);
-          const bHas = Number.isFinite(sb);
-          if (aHas && bHas) return sa - sb;
-          if (aHas) return -1;
-          if (bHas) return 1;
+          const c = compareBallotSequence(va.sequence, vb.sequence);
+          if (c !== 0) return c;
           return String(va.fullName || "").localeCompare(String(vb.fullName || ""), "en");
         }
       }
@@ -1647,7 +1744,7 @@ async function openAgentAssignedVotersModal(agent) {
           : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
         return `
           <tr>
-            <td>${escapeHtml(v.sequence != null && v.sequence !== "" ? String(v.sequence) : "—")}</td>
+            <td>${escapeHtml(sequenceAsImportedFromCsv(v) || "—")}</td>
             <td>${photoCell}</td>
             <td class="data-table-col--name">${escapeHtml(v.fullName || "—")}</td>
             <td>${escapeHtml(v.nationalId || v.id || "—")}</td>
@@ -1723,7 +1820,7 @@ async function openAgentAssignedVotersModal(agent) {
     lastRenderedRows.forEach((row) => {
       const v = row.voter || {};
       const cols = [
-        v.sequence != null ? String(v.sequence) : "",
+        sequenceAsImportedFromCsv(v),
         v.fullName || "",
         v.nationalId || v.id || "",
         v.phone || "",
@@ -1760,13 +1857,8 @@ async function openAgentAssignedVotersModal(agent) {
       const boxB = reportBallotBoxLabel(vb);
       const boxCmp = boxA.localeCompare(boxB, "en");
       if (boxCmp !== 0) return boxCmp;
-      const sa = Number(va.sequence != null ? va.sequence : NaN);
-      const sb = Number(vb.sequence != null ? vb.sequence : NaN);
-      const aHas = Number.isFinite(sa);
-      const bHas = Number.isFinite(sb);
-      if (aHas && bHas && sa !== sb) return sa - sb;
-      if (aHas && !bHas) return -1;
-      if (!aHas && bHas) return 1;
+      const seqCmp = compareBallotSequence(va.sequence, vb.sequence);
+      if (seqCmp !== 0) return seqCmp;
       return String(va.fullName || "").localeCompare(String(vb.fullName || ""), "en");
     });
     const rowsHtml = printRows
@@ -1774,7 +1866,7 @@ async function openAgentAssignedVotersModal(agent) {
         const v = row.voter || {};
         return `
           <tr>
-            <td>${escapeHtml(v.sequence != null ? String(v.sequence) : "")}</td>
+            <td>${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
             <td>${escapeHtml(v.fullName || "")}</td>
             <td>${escapeHtml(v.nationalId || v.id || "")}</td>
             <td>${escapeHtml(v.phone || "")}</td>
@@ -1979,6 +2071,64 @@ export function openAddAgentModal(options) {
   openAgentModal(null, options || {});
 }
 
+function bindSettingsAgentRowMoreMenus(tbody) {
+  if (!tbody) return;
+
+  function closeAllAgentMenus(exceptMenu) {
+    tbody.querySelectorAll("[data-settings-agent-more-menu]").forEach((m) => {
+      if (m !== exceptMenu) {
+        m.hidden = true;
+        const toggle = m.closest(".settings-agent-row-menu")?.querySelector(".settings-agent-row-menu__toggle");
+        if (toggle) toggle.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
+
+  tbody.querySelectorAll(".settings-agent-row-menu").forEach((wrap) => {
+    const btn = wrap.querySelector(".settings-agent-row-menu__toggle");
+    const menu = wrap.querySelector("[data-settings-agent-more-menu]");
+    if (!btn || !menu || wrap.dataset.settingsAgentMoreBound) return;
+    wrap.dataset.settingsAgentMoreBound = "1";
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = menu.hidden;
+      closeAllAgentMenus(menu);
+      menu.hidden = !open;
+      btn.setAttribute("aria-expanded", String(!menu.hidden));
+      if (!menu.hidden) {
+        requestAnimationFrame(() => {
+          document.addEventListener("click", onDoc);
+        });
+      }
+    });
+
+    function onDoc(ev) {
+      if (wrap.contains(ev.target)) return;
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      document.removeEventListener("click", onDoc);
+    }
+  });
+
+  tbody.querySelectorAll("[data-other-scopes]").forEach((btn) => {
+    if (btn.dataset.settingsOtherScopesBound) return;
+    btn.dataset.settingsOtherScopesBound = "1";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-other-scopes");
+      const wrap = btn.closest(".settings-agent-row-menu");
+      const menu = wrap?.querySelector("[data-settings-agent-more-menu]");
+      const toggle = wrap?.querySelector(".settings-agent-row-menu__toggle");
+      if (menu) menu.hidden = true;
+      if (toggle) toggle.setAttribute("aria-expanded", "false");
+      const primary = agents.find((x) => String(x.id) === String(id));
+      const dups = settingsAgentDuplicateAgentsByPrimaryId.get(String(id)) || [];
+      if (primary && dups.length) openOtherCandidateScopesModal(primary, dups);
+    });
+  });
+}
+
 function renderAgentsTable() {
   const tbody = document.querySelector("#settingsAgentsTable tbody");
   if (!tbody) return;
@@ -1990,6 +2140,7 @@ function renderAgentsTable() {
   const showEdit = viewer.isAdmin;
   const votersList = getVotersForAgentModalSearch();
 
+  settingsAgentDuplicateAgentsByPrimaryId = new Map();
   tbody.innerHTML = "";
   if (!agents.length) {
     const tr = document.createElement("tr");
@@ -2009,7 +2160,11 @@ function renderAgentsTable() {
     return;
   }
 
-  function appendAgentRow(a) {
+  function appendAgentRow(a, duplicateAgents) {
+    const dups = Array.isArray(duplicateAgents) ? duplicateAgents : [];
+    if (dups.length) {
+      settingsAgentDuplicateAgentsByPrimaryId.set(String(a.id), dups);
+    }
     const tr = document.createElement("tr");
     const aid = a && a.id != null ? String(a.id) : "";
     const cid = a.candidateId != null && String(a.candidateId).trim() !== "" ? String(a.candidateId).trim() : "";
@@ -2020,6 +2175,15 @@ function renderAgentsTable() {
       showEdit
         ? `<button type="button" class="ghost-button ghost-button--small" data-edit-agent="${escapeHtml(aid)}" title="Update">Edit</button>
         <button type="button" class="ghost-button ghost-button--small settings-agents-crud__delete" data-delete-agent="${escapeHtml(aid)}" title="Delete">Delete</button>`
+        : "";
+    const moreMenu =
+      dups.length > 0
+        ? `<div class="dropdown-wrap settings-agent-row-menu" style="display:inline-block;vertical-align:middle;margin-left:4px;">
+  <button type="button" class="ghost-button ghost-button--small table-view-menu-btn settings-agent-row-menu__toggle" aria-label="More actions" aria-haspopup="true" aria-expanded="false" title="Other candidate scopes">⋮</button>
+  <div class="dropdown-menu" data-settings-agent-more-menu hidden role="menu" aria-label="More">
+    <button type="button" class="dropdown-menu__item" role="menuitem" data-other-scopes="${escapeHtml(aid)}">Other candidate scopes…</button>
+  </div>
+</div>`
         : "";
     tr.dataset.agentId = aid;
     tr.innerHTML = `
@@ -2035,6 +2199,7 @@ function renderAgentsTable() {
           <button type="button" class="ghost-button ghost-button--small" data-view-agent="${escapeHtml(aid)}" title="View details">View</button>
           <button type="button" class="ghost-button ghost-button--small" data-view-agent-voters="${escapeHtml(aid)}" title="View assigned voters">Voters</button>
           ${mutateActions}
+          ${moreMenu}
         </div>
       </td>
     `;
@@ -2049,7 +2214,7 @@ function renderAgentsTable() {
       tbody.appendChild(tr);
       continue;
     }
-    appendAgentRow(item.agent);
+    appendAgentRow(item.agent, item.duplicateAgents);
   }
 
   tbody.querySelectorAll("[data-view-agent]").forEach((btn) => {
@@ -2094,6 +2259,8 @@ function renderAgentsTable() {
       await deleteAgentRecord(agent);
     });
   });
+
+  bindSettingsAgentRowMoreMenus(tbody);
 
   updateAgentsSortIndicators();
 }
@@ -2680,15 +2847,30 @@ export function initSettingsModule() {
           candidates = items;
           saveCandidatesToStorage();
           renderCandidatesTable();
+          document.dispatchEvent(
+            new CustomEvent("candidates-updated", {
+              detail: { candidates: [...candidates] },
+            })
+          );
           return;
         }
       }
       loadCandidatesFromStorage();
       renderCandidatesTable();
+      document.dispatchEvent(
+        new CustomEvent("candidates-updated", {
+          detail: { candidates: [...candidates] },
+        })
+      );
     } catch (err) {
       console.error("Candidate load failed:", err);
       loadCandidatesFromStorage();
       renderCandidatesTable();
+      document.dispatchEvent(
+        new CustomEvent("candidates-updated", {
+          detail: { candidates: [...candidates] },
+        })
+      );
     }
   })();
 
@@ -2833,7 +3015,7 @@ export function initSettingsModule() {
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const text = String(e.target?.result || "");
       const lines = text
         .split(/\r?\n/)
@@ -2860,12 +3042,35 @@ export function initSettingsModule() {
         const obj = {};
         header.forEach((h, idx) => {
           const key = h || `Column${idx + 1}`;
-          obj[key] = cols[idx] != null ? String(cols[idx]).trim() : "";
+          const raw = cols[idx];
+          // Sequence: keep cell text exactly as in the CSV (per ballot box); other columns trimmed as before.
+          obj[key] =
+            raw != null
+              ? key === "Sequence"
+                ? String(raw)
+                : String(raw).trim()
+              : "";
         });
         return obj;
       });
 
-      importVotersFromTemplateRows(rows);
+      const prevImportLabel = importVotersButton.textContent;
+      importVotersButton.disabled = true;
+      importVotersButton.textContent = "Importing…";
+      try {
+        await importVotersFromTemplateRows(rows);
+      } catch (err) {
+        console.error("[Settings] Import voters failed", err);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Import failed",
+            meta: err?.message || String(err),
+          });
+        }
+      } finally {
+        importVotersButton.disabled = false;
+        importVotersButton.textContent = prevImportLabel;
+      }
       if (votersUploadFileNameEl) votersUploadFileNameEl.textContent = "";
       votersUploadFileInput.value = "";
     };
@@ -2926,7 +3131,7 @@ export function initSettingsModule() {
         const lines = [headers.map(csvEscape).join(",")];
         voters.forEach((v) => {
           const row = [
-            v.sequence ?? "",
+            sequenceAsImportedFromCsv(v),
             v.ballotBox || "",
             v.nationalId || "",
             v.fullName || v.name || "",
@@ -2971,61 +3176,54 @@ export function initSettingsModule() {
     });
   }
 
+  const autoSyncLocalVotersWhenOnlineEl = document.getElementById("autoSyncLocalVotersWhenOnline");
+  if (autoSyncLocalVotersWhenOnlineEl) {
+    try {
+      autoSyncLocalVotersWhenOnlineEl.checked =
+        localStorage.getItem(AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY) === "1";
+    } catch (_) {}
+    autoSyncLocalVotersWhenOnlineEl.addEventListener("change", () => {
+      try {
+        localStorage.setItem(
+          AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY,
+          autoSyncLocalVotersWhenOnlineEl.checked ? "1" : "0"
+        );
+      } catch (_) {}
+    });
+  }
+
   if (syncVotersToFirebaseButton) {
     syncVotersToFirebaseButton.addEventListener("click", async () => {
+      syncVotersToFirebaseButton.disabled = true;
+      const prevLabel = syncVotersToFirebaseButton.textContent;
+      syncVotersToFirebaseButton.textContent = "Syncing…";
       try {
-        const raw = localStorage.getItem("voters-data");
-        if (!raw) {
-          if (window.appNotifications) {
-            window.appNotifications.push({
-              title: "No local voters to sync",
-              meta: "There are no voters stored in this browser.",
-            });
-          }
-          return;
-        }
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed) || !parsed.length) {
-          if (window.appNotifications) {
-            window.appNotifications.push({
-              title: "No local voters to sync",
-              meta: "There are no voters stored in this browser.",
-            });
-          }
-          return;
-        }
-        const api = await firebaseInitPromise;
-        if (!api.ready || !api.setVoterFs) {
-          if (window.appNotifications) {
-            window.appNotifications.push({
-              title: "Sync unavailable",
-              meta: "Firebase is not ready. Check your network or configuration.",
-            });
-          }
-          return;
-        }
-        const voters = parsed;
-        const limited = voters.slice(0, 2000); // safety cap
-        await Promise.all(
-          limited.map((v) => {
-            if (!v || !v.id) return Promise.resolve();
-            return api.setVoterFs(v);
-          })
-        );
-        if (window.appNotifications) {
-          window.appNotifications.push({
-            title: "Voters synced to Firebase",
-            meta: `${limited.length.toLocaleString("en-MV")} local voters pushed to Firestore.`,
-          });
-        }
+        await syncLocalVotersToFirebase();
       } catch (err) {
         console.error("[Settings] Failed to sync local voters to Firebase", err);
         if (window.appNotifications) {
           window.appNotifications.push({
             title: "Sync failed",
-            meta: "Check the console for details.",
+            meta: err?.message || String(err),
           });
         }
+      } finally {
+        syncVotersToFirebaseButton.disabled = false;
+        syncVotersToFirebaseButton.textContent = prevLabel;
+      }
+    });
+  }
+
+  if (removeDuplicateVotersByNationalIdButton) {
+    removeDuplicateVotersByNationalIdButton.addEventListener("click", async () => {
+      removeDuplicateVotersByNationalIdButton.disabled = true;
+      const prevLabel = removeDuplicateVotersByNationalIdButton.textContent;
+      removeDuplicateVotersByNationalIdButton.textContent = "Working…";
+      try {
+        await removeDuplicateVotersByNationalId();
+      } finally {
+        removeDuplicateVotersByNationalIdButton.disabled = false;
+        removeDuplicateVotersByNationalIdButton.textContent = prevLabel;
       }
     });
   }
@@ -3042,35 +3240,58 @@ export function initSettingsModule() {
       });
       if (!ok) return;
 
-      // Clear local cache first.
-      try {
-        localStorage.removeItem("voters-data");
-      } catch (_) {}
+      deleteAllVotersButton.disabled = true;
+      const prevLabel = deleteAllVotersButton.textContent;
+      deleteAllVotersButton.textContent = "Deleting…";
 
-      // Best-effort Firestore delete of all voters.
       try {
-        const api = await firebaseInitPromise;
-        if (api.ready && api.getAllVotersFs && api.deleteVoterFs) {
-          const existing = await api.getAllVotersFs();
-          if (Array.isArray(existing) && existing.length) {
-            const limited = existing.slice(0, 20000);
-            await Promise.all(
-              limited.map((v) => api.deleteVoterFs(v.id))
-            );
+        // Clear local cache and in-memory list immediately so the UI is not stuck on old data.
+        try {
+          localStorage.removeItem("voters-data");
+        } catch (_) {}
+        refreshVotersFromStorage();
+
+        // Firestore: batched deletes (fast, avoids thousands of parallel single deletes).
+        try {
+          const api = await firebaseInitPromise;
+          if (api.ready && typeof api.deleteAllVotersFs === "function") {
+            await api.deleteAllVotersFs();
+          } else if (api.ready && api.deleteVoterFs && api.getAllVotersFs) {
+            const existing = await api.getAllVotersFs();
+            if (Array.isArray(existing) && existing.length) {
+              const chunkSize = 25;
+              for (let i = 0; i < existing.length; i += chunkSize) {
+                await Promise.all(
+                  existing.slice(i, i + chunkSize).map((v) => api.deleteVoterFs(v.id))
+                );
+              }
+            }
+          }
+        } catch (err) {
+          console.error("[Settings] Firestore delete all voters failed", err);
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Remote delete incomplete",
+              meta: "Local list was cleared. Check your connection and try again, or remove voters in Firebase Console.",
+            });
           }
         }
-      } catch (_) {}
 
-      // Let modules refresh themselves.
-      document.dispatchEvent(new CustomEvent("voters-updated"));
-      if (window.appNotifications) {
-        window.appNotifications.push({
-          title: "Voters list deleted",
-          meta: "All voters for this campaign have been removed.",
-        });
+        refreshVotersFromStorage();
+        document.dispatchEvent(new CustomEvent("voters-updated"));
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Voters list deleted",
+            meta: "All voters for this campaign have been removed from this device.",
+          });
+        }
+      } finally {
+        deleteAllVotersButton.disabled = false;
+        deleteAllVotersButton.textContent = prevLabel;
       }
     });
   }
+
   // Firestore-backed candidates: load and subscribe in real time
   (async () => {
     try {
@@ -3112,6 +3333,53 @@ export function initSettingsModule() {
       renderCandidatesTable();
     }
   })();
+}
+
+/**
+ * Pull latest agents from Firestore, merge rows pending sync, re-render and broadcast.
+ */
+export async function refreshAgentsFromFirestore() {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getAllAgentsFs) return;
+    const initial = await api.getAllAgentsFs();
+    if (!Array.isArray(initial)) return;
+    agents = mergeAgentsSnapshotWithLocal(initial, agents.slice());
+    saveAgentsToStorage();
+    renderAgentsTable();
+    try {
+      window.agentsCached = [...agents];
+    } catch (_) {}
+    document.dispatchEvent(
+      new CustomEvent("agents-updated", {
+        detail: { agents: [...agents] },
+      })
+    );
+  } catch (e) {
+    console.warn("[Settings] refreshAgentsFromFirestore", e);
+  }
+}
+
+/**
+ * Pull latest candidates from Firestore and re-render (pledge columns, modals, etc.).
+ */
+export async function refreshCandidatesFromFirestore() {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getAllCandidatesFs) return;
+    const items = await api.getAllCandidatesFs();
+    if (!Array.isArray(items)) return;
+    candidates = items;
+    saveCandidatesToStorage();
+    renderCandidatesTable();
+    document.dispatchEvent(
+      new CustomEvent("candidates-updated", {
+        detail: { candidates: [...candidates] },
+      })
+    );
+  } catch (e) {
+    console.warn("[Settings] refreshCandidatesFromFirestore", e);
+  }
 }
 
 loadCampaignConfig();

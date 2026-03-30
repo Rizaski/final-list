@@ -8,6 +8,11 @@ import {
   updateVoterPledgeStatus,
   getVoterImageSrc,
 } from "./voters.js";
+import {
+  compareBallotSequence,
+  sequenceAsImportedFromCsv,
+  compareVotersByBallotBoxThenSequenceThenName,
+} from "./sequence-utils.js";
 
 const PAGE_SIZE = 15;
 const doorToDoorTableBody = document.querySelector("#doorToDoorTable tbody");
@@ -62,6 +67,7 @@ function getFilteredVoters() {
       if (filterBox !== "all" && (row.ballotBox || "").trim() !== filterBox) return false;
       if (query) {
         const searchable = [
+          row.sequence,
           row.fullName,
           row.nationalId,
           row.id,
@@ -82,7 +88,7 @@ function getFilteredVoters() {
     const vb = b.row;
     switch (sortBy) {
       case "sequence":
-        return (Number(va.sequence) || 0) - (Number(vb.sequence) || 0);
+        return compareBallotSequence(va.sequence, vb.sequence);
       case "name-asc":
         return (va.fullName || "").localeCompare(vb.fullName || "", "en");
       case "name-desc":
@@ -93,8 +99,13 @@ function getFilteredVoters() {
         return (va.permanentAddress || "").localeCompare(vb.permanentAddress || "", "en");
       case "pledge":
         return (va.pledgeStatus || "").localeCompare(vb.pledgeStatus || "", "en");
-      case "box":
-        return (va.ballotBox || "").localeCompare(vb.ballotBox || "", "en");
+      case "box": {
+        const boxCmp = (va.ballotBox || "").localeCompare(vb.ballotBox || "", "en");
+        if (boxCmp !== 0) return boxCmp;
+        const seqCmp = compareBallotSequence(va.sequence, vb.sequence);
+        if (seqCmp !== 0) return seqCmp;
+        return (va.fullName || "").localeCompare(vb.fullName || "", "en");
+      }
       case "volunteer":
         return (va.volunteer || "").localeCompare(vb.volunteer || "", "en");
       case "met":
@@ -126,8 +137,13 @@ function syncBallotBoxFilter() {
 
 function renderDoorToDoorTable() {
   if (!doorToDoorTableBody) return;
-  const sortAndFiltered = getFilteredVoters();
   const groupBy = doorToDoorGroupByEl?.value || "none";
+  let sortAndFiltered = getFilteredVoters();
+  if (groupBy === "box") {
+    sortAndFiltered = [...sortAndFiltered].sort((a, b) =>
+      compareVotersByBallotBoxThenSequenceThenName(a.row, b.row)
+    );
+  }
 
   let displayList;
   if (groupBy === "none") {
@@ -226,7 +242,7 @@ function renderDoorToDoorTable() {
         '<option value="">Unassigned</option>' +
         agents.map((a) => `<option value="${escapeHtml(a.name)}"${a.name === volunteer ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("");
       tr.innerHTML = `
-        <td class="data-table-col--seq">${escapeHtml(String(v.sequence ?? ""))}</td>
+        <td class="data-table-col--seq">${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
         <td>${photoCell}</td>
         <td class="data-table-col--name">${escapeHtml(v.fullName || "")}</td>
         <td>${escapeHtml(v.nationalId || v.id || "")}</td>

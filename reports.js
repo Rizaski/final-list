@@ -3,6 +3,7 @@ import { getVotedVoterIds, getVotedTimeMarked } from "./zeroDay.js";
 import { openModal, closeModal } from "./ui.js";
 import { getCandidates } from "./settings.js";
 import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
+import { sequenceAsImportedFromCsv } from "./sequence-utils.js";
 
 function escapeHtml(str) {
   if (str == null) return "";
@@ -286,7 +287,7 @@ function buildVoterDetailTable(voters, options = {}) {
       : "";
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="data-table-col--seq">${v.sequence ?? ""}</td>
+      <td class="data-table-col--seq">${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
       <td>${photoCell}</td>
       <td>${escapeHtml(v.nationalId ?? "")}</td>
       <td class="data-table-col--name">${escapeHtml(v.fullName ?? v.id ?? "—")}</td>

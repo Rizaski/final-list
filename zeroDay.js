@@ -6,6 +6,7 @@
 import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import { getAgents } from "./settings.js";
+import { sequenceAsImportedFromCsv, compareVotersByBallotSequenceThenName } from "./sequence-utils.js";
 
 const zeroDayAddTripButton = document.getElementById("zeroDayAddTripButton");
 const zeroDayTransportMenuButton = document.getElementById("zeroDayTransportMenuButton");
@@ -32,7 +33,8 @@ const TRIPS_STORAGE_KEY = "zero-day-trips";
 let zeroDayTrips = [];
 let transportTripsUnsubscribe = null;
 let zeroDayVotedEntries = []; // { voterId, timeMarked }
-let zeroDayMonitors = []; // { id, name, mobile, ballotBox, voterIds: [], shareToken }
+let zeroDayMonitors = []; // { id, name, mobile, ballotBox, voterIds: [], shareToken, sequenceOffset? } — offset unused (legacy field)
+
 let votersContext = null;
 let pledgeContextRef = null; // optional: { getPledges() } for agent lookup and sync
 let zeroDayVoteCurrentPage = 1;
@@ -161,6 +163,26 @@ function normalizeTransportRouteKey(s) {
     .replace(/\s+/g, " ");
 }
 
+function findZeroDayTripById(id) {
+  if (id == null) return undefined;
+  const sid = String(id);
+  return zeroDayTrips.find((x) => String(x.id) === sid);
+}
+
+/** True when voter needs transport (Firestore may use non-boolean truthy values). */
+function voterTransportNeededFlag(v) {
+  if (!v) return false;
+  const x = v.transportNeeded;
+  if (x === true) return true;
+  if (x === false || x == null) return false;
+  if (typeof x === "string") {
+    const s = x.trim().toLowerCase();
+    return s === "true" || s === "yes" || s === "1";
+  }
+  if (typeof x === "number") return x === 1;
+  return false;
+}
+
 /** Passengers for a trip: explicit voterIds on trip + voters with transportNeeded matching route. */
 function collectAssignedVotersForTrip(trip) {
   const voters = votersContext ? votersContext.getAllVoters() : [];
@@ -174,7 +196,7 @@ function collectAssignedVotersForTrip(trip) {
   const routeKey = normalizeRoute(trip.route);
   const assignedByRoute = routeKey
     ? voters.filter((v) => {
-        if (!v || v.transportNeeded !== true) return false;
+        if (!v || !voterTransportNeededFlag(v)) return false;
         const r = normalizeRoute(v.transportRoute);
         if (!r) return false;
         return r === routeKey || r.includes(routeKey) || routeKey.includes(r);
@@ -187,15 +209,17 @@ function collectAssignedVotersForTrip(trip) {
     if (!k) return;
     byId.set(k, v);
   });
+  const list = Array.from(byId.values());
+  list.sort(compareVotersByBallotSequenceThenName);
   return {
-    list: Array.from(byId.values()),
+    list,
     byIdsCount: assignedByIds.length,
     byRouteCount: assignedByRoute.length,
   };
 }
 
 function mergeTripRowInputs(tripId) {
-  const t = zeroDayTrips.find((x) => x.id === tripId);
+  const t = findZeroDayTripById(tripId);
   if (!t) return null;
   const row = zeroDayTripsTableBody?.querySelector(`tr[data-trip-id="${tripId}"]`);
   const rateInp = row?.querySelector('[data-trip-meta-field="rate"]');
@@ -212,7 +236,7 @@ function getAllVisibleTripSnapshots() {
 }
 
 async function persistTripMetaField(tripId, field, value) {
-  const t = zeroDayTrips.find((x) => x.id === tripId);
+  const t = findZeroDayTripById(tripId);
   if (!t || (field !== "rate" && field !== "amount")) return;
   t[field] = value;
   saveTrips();
@@ -514,7 +538,7 @@ async function shareTransportTripsReport(tripSnapshots) {
 
 /** Toggle voter on-board status for a transport trip (persisted on trip + Firestore). */
 async function toggleTripVoterOnboarded(tripId, voterIdStr) {
-  const t = zeroDayTrips.find((x) => x.id === tripId);
+  const t = findZeroDayTripById(tripId);
   if (!t) return;
   const id = String(voterIdStr);
   let arr = Array.isArray(t.onboardedVoterIds) ? t.onboardedVoterIds.map(String) : [];
@@ -592,6 +616,21 @@ export async function syncVotedFromFirestore() {
     saveVotedEntries();
     notifyVotedEntriesUpdated();
   } catch (_) {}
+}
+
+/** One-shot pull of transport trips from Firestore (e.g. header hard refresh). */
+export async function refreshTransportTripsFromFirestore() {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getAllTransportTripsFs) return;
+    const remote = await api.getAllTransportTripsFs();
+    if (!Array.isArray(remote)) return;
+    zeroDayTrips = remote.map(normalizeTrip);
+    saveTrips();
+    renderZeroDayTripsTable();
+  } catch (e) {
+    console.warn("[ZeroDay] refreshTransportTripsFromFirestore", e);
+  }
 }
 
 /** Merges votedByMonitor (from real-time Firestore) with local zeroDayVotedEntries and refreshes UI. */
@@ -810,7 +849,7 @@ function getTripAssignedVoterCount(trip) {
   });
   if (routeKey) {
     voters.forEach((v) => {
-      if (!v || v.transportNeeded !== true) return;
+      if (!v || !voterTransportNeededFlag(v)) return;
       const r = normalizeRoute(v.transportRoute);
       if (!r) return;
       if (r === routeKey || r.includes(routeKey) || routeKey.includes(r)) {
@@ -979,7 +1018,7 @@ function openTripForm(existing, defaultType) {
 }
 
 function deleteTrip(id) {
-  const idx = zeroDayTrips.findIndex((t) => t.id === id);
+  const idx = zeroDayTrips.findIndex((t) => String(t.id) === String(id));
   if (idx === -1) return;
   zeroDayTrips.splice(idx, 1);
   saveTrips();
@@ -990,7 +1029,7 @@ function deleteTrip(id) {
 }
 
 function setTripStatus(tripId, status) {
-  const trip = zeroDayTrips.find((t) => t.id === tripId);
+  const trip = findZeroDayTripById(tripId);
   if (!trip || !TRIP_STATUSES.includes(status)) return;
   trip.status = status;
   saveTrips();
@@ -1001,7 +1040,7 @@ function setTripStatus(tripId, status) {
 }
 
 function openTripStatusModal(tripId) {
-  const trip = zeroDayTrips.find((t) => t.id === tripId);
+  const trip = findZeroDayTripById(tripId);
   if (!trip) return;
   const body = document.createElement("div");
   body.style.display = "flex";
@@ -1022,8 +1061,6 @@ function openTripStatusModal(tripId) {
 }
 
 function openTripVotersModal(trip) {
-  const { list: assigned, byIdsCount, byRouteCount } = collectAssignedVotersForTrip(trip);
-
   const title = `Assigned voters – ${trip.route || "Route"}`;
   const body = document.createElement("div");
   body.className = "modal-body-inner modal-body-inner--with-maximize";
@@ -1112,7 +1149,7 @@ function openTripVotersModal(trip) {
   }
 
   function isVoterOnboardedForTrip(v) {
-    const tLive = zeroDayTrips.find((x) => x.id === trip.id);
+    const tLive = findZeroDayTripById(trip.id);
     const set = new Set((tLive?.onboardedVoterIds || []).map(String));
     const id = String(v.id);
     const nid = String(v.nationalId || "").trim();
@@ -1120,7 +1157,8 @@ function openTripVotersModal(trip) {
   }
 
   function render() {
-    const tLive = zeroDayTrips.find((x) => x.id === trip.id);
+    const tLive = findZeroDayTripById(trip.id) || trip;
+    const { list: assigned, byIdsCount, byRouteCount } = collectAssignedVotersForTrip(tLive);
     const obCount = (tLive?.onboardedVoterIds || []).length;
     summary.textContent = `Matched ${assigned.length} voters (Trip assignment: ${byIdsCount}, By route: ${byRouteCount}) · On-board: ${obCount}`;
     const filterPledge = (body.querySelector("#zdTripVotersFilter") || {}).value || "all";
@@ -1163,6 +1201,19 @@ function openTripVotersModal(trip) {
   render();
 
   openModal({ title, body });
+
+  const onVotersUpdated = () => render();
+  document.addEventListener("voters-updated", onVotersUpdated);
+  const backdrop = document.getElementById("modalBackdrop");
+  const obs =
+    backdrop &&
+    new MutationObserver(() => {
+      if (backdrop.hidden) {
+        document.removeEventListener("voters-updated", onVotersUpdated);
+        obs.disconnect();
+      }
+    });
+  if (backdrop && obs) obs.observe(backdrop, { attributes: true, attributeFilter: ["hidden"] });
 }
 
 function getUniqueBallotBoxes() {
@@ -1417,6 +1468,7 @@ function openAddMonitorForm(existing) {
       existing.name = name;
       existing.mobile = mobile;
       existing.ballotBox = ballotBox;
+      existing.sequenceOffset = 0;
       saveMonitors();
       syncMonitorToFirestore(existing);
     } else {
@@ -1429,6 +1481,7 @@ function openAddMonitorForm(existing) {
         voterIds: [],
         shareToken: generateShareToken(),
         createdAt: new Date().toISOString(),
+        sequenceOffset: 0,
       };
       zeroDayMonitors.push(newMonitor);
       saveMonitors();
@@ -1477,6 +1530,7 @@ async function syncMonitorToFirestore(monitor) {
       mobile: monitor.mobile || "",
       voterIds,
       voters,
+      sequenceOffset: 0,
       monitoringEnabled,
       createdAt: monitor.createdAt || new Date().toISOString(),
     });
@@ -1585,6 +1639,8 @@ function getVotersByBoxSplitByVoted(boxKey) {
       notYet.push(v);
     }
   });
+  voted.sort(compareVotersByBallotSequenceThenName);
+  notYet.sort(compareVotersByBallotSequenceThenName);
   return { voted, notYet };
 }
 
@@ -1618,7 +1674,7 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
   const cmp = (a, b) => {
     switch (sortBy) {
       case "sequence":
-        return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
+        return compareVotersByBallotSequenceThenName(a, b);
       case "name-desc":
         return (b.fullName || "").localeCompare(a.fullName || "", "en");
       case "name-asc":
@@ -1637,7 +1693,7 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
       case "time":
         return (a._timeMarked || "").localeCompare(b._timeMarked || "", "en");
       default:
-        return (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
+        return compareVotersByBallotSequenceThenName(a, b);
     }
   };
   list = list.slice().sort(cmp);
@@ -1672,8 +1728,8 @@ function buildTableFromDisplayList(displayList, options = {}) {
   const usePledgePills = !!options.usePledgePills;
   const includeOnboardedColumn = typeof options.isOnboarded === "function";
   const columns = [
-    "Image",
     "Seq",
+    "Image",
     "Name",
     "ID Number",
     "Permanent Address",
@@ -1754,8 +1810,8 @@ function buildTableFromDisplayList(displayList, options = {}) {
           )}</div></div>`;
 
       const row = [
+        sequenceAsImportedFromCsv(v),
         imageCell,
-        v.sequence != null ? v.sequence : "",
         v.fullName != null ? v.fullName : "",
         v.nationalId != null ? v.nationalId : (v.id != null ? v.id : ""),
         v.permanentAddress != null ? v.permanentAddress : "",
@@ -1785,11 +1841,10 @@ function buildTableFromDisplayList(displayList, options = {}) {
         );
       }
       const tr = document.createElement("tr");
-      const [imageHtml, ...rest] = row;
+      const [seqVal, imageHtml, ...rest] = row;
       const restTds = rest.map((cell, idx) => {
         let colCls = "";
-        if (idx === 0) colCls = "data-table-col--seq";
-        else if (idx === 1) colCls = "data-table-col--name";
+        if (idx === 0) colCls = "data-table-col--name";
         const clsAttr = colCls ? ` class="${colCls}"` : "";
         if (typeof cell === "string" && cell.startsWith("<button")) {
           return `<td${clsAttr}>${cell}</td>`;
@@ -1799,7 +1854,9 @@ function buildTableFromDisplayList(displayList, options = {}) {
         }
         return `<td${clsAttr}>${escapeHtml(String(cell))}</td>`;
       });
-      tr.innerHTML = `<td>${imageHtml}</td>` + restTds.join("");
+      tr.innerHTML =
+        `<td class="data-table-col--seq">${escapeHtml(String(seqVal))}</td><td>${imageHtml}</td>` +
+        restTds.join("");
       tbody.appendChild(tr);
     });
   }
@@ -2131,7 +2188,7 @@ function openBoxVoterListModal(boxKey, kind) {
     rows.forEach((v) => {
       const agent = getAgentForVoter(v.id);
       const cols = [
-        v.sequence != null ? String(v.sequence) : "",
+        sequenceAsImportedFromCsv(v),
         v.fullName || "",
         v.nationalId || v.id || "",
         v.phone || "",
@@ -2168,16 +2225,7 @@ function openBoxVoterListModal(boxKey, kind) {
       }
       return;
     }
-    const printRows = [...rows].sort((a, b) => {
-      const sa = Number(a.sequence != null ? a.sequence : NaN);
-      const sb = Number(b.sequence != null ? b.sequence : NaN);
-      const aHas = Number.isFinite(sa);
-      const bHas = Number.isFinite(sb);
-      if (aHas && bHas && sa !== sb) return sa - sb;
-      if (aHas && !bHas) return -1;
-      if (!aHas && bHas) return 1;
-      return String(a.fullName || "").localeCompare(String(b.fullName || ""), "en");
-    });
+    const printRows = [...rows].sort(compareVotersByBallotSequenceThenName);
     const reportTitle = kind === "voted" ? "Voted report" : "Not yet voted report";
     const subtitle =
       kind === "voted"
@@ -2197,8 +2245,8 @@ function openBoxVoterListModal(boxKey, kind) {
             : escapeHtml("—");
         return `
           <tr>
+            <td>${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
             ${photoTd}
-            <td>${escapeHtml(v.sequence != null ? String(v.sequence) : "")}</td>
             <td>${escapeHtml(v.fullName || "")}</td>
             <td>${escapeHtml(v.nationalId || v.id || "")}</td>
             <td>${escapeHtml(v.phone || "")}</td>
@@ -2300,8 +2348,8 @@ function openBoxVoterListModal(boxKey, kind) {
             <table>
               <thead>
                 <tr>
-                  <th class="col-photo">Photo</th>
                   <th class="col-seq">Seq</th>
+                  <th class="col-photo">Photo</th>
                   <th class="col-name">Name</th>
                   <th class="col-id">ID Number</th>
                   <th class="col-phone">Phone</th>
@@ -2350,7 +2398,7 @@ function openBoxVoterListModal(boxKey, kind) {
     rows.forEach((v) => {
       const agent = getAgentForVoter(v.id);
       const cells = [
-        v.sequence != null ? String(v.sequence) : "",
+        sequenceAsImportedFromCsv(v),
         v.fullName || "",
         v.nationalId || v.id || "",
         v.phone || "",
@@ -2450,6 +2498,7 @@ function getOrEnsureMonitorForBallotBox(ballotBox) {
       ballotBox: boxKey,
       voterIds,
       shareToken: generateShareToken(),
+      sequenceOffset: 0,
     };
     zeroDayMonitors.push(monitor);
   } else {
@@ -2800,9 +2849,9 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       (e) => {
         const inp = e.target.closest("[data-trip-meta-field]");
         if (!inp || !transportPanel.contains(inp)) return;
-        const tid = Number(inp.getAttribute("data-trip-id"));
+        const tid = inp.getAttribute("data-trip-id");
         const field = inp.getAttribute("data-trip-meta-field");
-        if (!tid || (field !== "rate" && field !== "amount")) return;
+        if (tid == null || tid === "" || (field !== "rate" && field !== "amount")) return;
         persistTripMetaField(tid, field, inp.value.trim());
       },
       true
@@ -2813,19 +2862,15 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       const editBtn = e.target.closest("[data-edit-trip]");
       const deleteBtn = e.target.closest("[data-delete-trip]");
       if (statusBtn) {
-        const id = Number(statusBtn.getAttribute("data-trip-status"));
-        openTripStatusModal(id);
+        openTripStatusModal(statusBtn.getAttribute("data-trip-status"));
       } else if (viewBtn) {
-        const id = Number(viewBtn.getAttribute("data-view-trip-voters"));
-        const trip = zeroDayTrips.find((t) => t.id === id);
+        const trip = findZeroDayTripById(viewBtn.getAttribute("data-view-trip-voters"));
         if (trip) openTripVotersModal(trip);
       } else if (editBtn) {
-        const id = Number(editBtn.getAttribute("data-edit-trip"));
-        const trip = zeroDayTrips.find((t) => t.id === id);
+        const trip = findZeroDayTripById(editBtn.getAttribute("data-edit-trip"));
         if (trip) openTripForm(trip);
       } else if (deleteBtn) {
-        const id = Number(deleteBtn.getAttribute("data-delete-trip"));
-        deleteTrip(id);
+        deleteTrip(deleteBtn.getAttribute("data-delete-trip"));
       }
     });
   }
@@ -3068,6 +3113,10 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     }));
   }
 
+  assignedVoters.sort(compareVotersByBallotSequenceThenName);
+
+  loadMonitors();
+
   const monitorViewEl = document.getElementById("monitor-view");
   const gateEl = document.getElementById("monitor-view-gate");
   const contentEl = document.getElementById("monitor-view-content");
@@ -3149,13 +3198,16 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const q = (query || "").trim();
     if (!q) return [];
 
-    // Exact match by ID / National ID / Sequence
-    const exact = assignedVoters.find(
-      (v) =>
+    // Exact match by ID / National ID / ballot-box sequence (as imported / stored)
+    const exact = assignedVoters.find((v) => {
+      const qt = q.trim();
+      const seqDisplay = String(sequenceAsImportedFromCsv(v)).trim();
+      return (
         String(v.id || "").toLowerCase() === q.toLowerCase() ||
         String(v.nationalId || "").toLowerCase() === q.toLowerCase() ||
-        String(v.sequence != null ? v.sequence : "").trim() === q.trim()
-    );
+        seqDisplay === qt
+      );
+    });
     if (exact) return [exact];
 
     // Fuzzy match by name: contains query (case-insensitive)
@@ -3224,7 +3276,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       String(votedEntries.length) +
       "</span>" +
       "</div>" +
-      "<p class=\"monitor-view__subtitle\" id=\"monitorViewSubtitle\">Search by name, ID, or Sequence to find a voter.</p>";
+      "<p class=\"monitor-view__subtitle\" id=\"monitorViewSubtitle\">Search by name, ID, or ballot-box sequence (as shown).</p>";
     fragment.appendChild(main);
     header.innerHTML = "";
     header.appendChild(fragment);
@@ -3268,6 +3320,10 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         <div class="monitor-voter-card__row">
           <span class="monitor-voter-card__label">ID Number</span>
           <span class="monitor-voter-card__value">${escapeHtml(voter.nationalId || voter.id || "")}</span>
+        </div>
+        <div class="monitor-voter-card__row">
+          <span class="monitor-voter-card__label">Sequence</span>
+          <span class="monitor-voter-card__value">${escapeHtml(String(sequenceAsImportedFromCsv(voter)))}</span>
         </div>
         <div class="monitor-voter-card__row">
           <span class="monitor-voter-card__label">Permanent Address</span>
@@ -3331,9 +3387,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
           <span class="monitor-view-result__match-meta">${escapeHtml(
             v.nationalId || v.id || ""
           )}${
-            v.sequence != null && v.sequence !== ""
-              ? " • Seq " + escapeHtml(String(v.sequence))
-              : ""
+            " • Seq " + escapeHtml(String(sequenceAsImportedFromCsv(v)))
           }</span>
         </button>`
       )
