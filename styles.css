@@ -1111,6 +1111,7 @@ body.sidebar-collapsed .nav-item {
 .workspace {
   position: relative;
   flex: 1;
+  min-width: 0;
   overflow: auto;
   padding: 16px 20px 24px;
 }
@@ -1180,6 +1181,48 @@ body.sidebar-collapsed .nav-item {
 .settings-tabs .text-muted,
 .content-tabs .text-muted {
   color: var(--color-text-muted);
+}
+
+/* Settings (admin): tab strip and panels span full workspace width like Voters / Pledges */
+#module-settings {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+#module-settings .settings-tabs {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+#module-settings .settings-tabs__list {
+  width: 100%;
+}
+
+#module-settings .settings-tabs__panel {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Single-column layout for each tab (replaces grid--two-column so the card is not stuck in column 1) */
+#module-settings .settings-tab-grid {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  max-width: none;
+}
+
+#module-settings .settings-tab-grid > .card {
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+}
+
+#module-settings .table-wrapper {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 
 /* Settings → Security (navigation + session) */
