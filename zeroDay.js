@@ -39,8 +39,6 @@ let votersContext = null;
 let pledgeContextRef = null; // optional: { getPledges() } for agent lookup and sync
 let zeroDayVoteCurrentPage = 1;
 let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
-let transportTableSortKey = "pickup";
-let transportTableSortDir = "asc";
 let votedRealtimeUnsubscribes = []; // unsubscribe fns for Firestore voted listeners
 const votedByMonitor = {}; // token -> [{ voterId, timeMarked }] from real-time snapshots
 let zeroDaySyncInProgress = false;
@@ -861,55 +859,15 @@ function getFilteredTransportTrips() {
   let list = zeroDayTrips;
   if (transportViewFilter === "flight") list = list.filter((t) => t.tripType === "flight");
   else if (transportViewFilter === "speedboat") list = list.filter((t) => t.tripType === "speedboat");
-  return [...list];
+  return [...list].sort((a, b) => {
+    const ta = a.pickupTime ? new Date(a.pickupTime).getTime() : 0;
+    const tb = b.pickupTime ? new Date(b.pickupTime).getTime() : 0;
+    return ta - tb;
+  });
 }
 
 function getTripTypeLabel(trip) {
   return TRIP_TYPES.find((t) => t.value === trip.tripType)?.label || trip.tripType || "—";
-}
-
-function transportSortValue(trip, key) {
-  if (!trip) return "";
-  if (key === "type") return String(getTripTypeLabel(trip)).toLowerCase();
-  if (key === "route") return String(trip.route || "").toLowerCase();
-  if (key === "vehicle") return String(trip.vehicle || "").toLowerCase();
-  if (key === "driver") return String(trip.driver || "").toLowerCase();
-  if (key === "pickup") return trip.pickupTime ? new Date(trip.pickupTime).getTime() : 0;
-  if (key === "votersAssigned") return Number(getTripAssignedVoterCount(trip) || 0);
-  if (key === "status") return String(trip.status || "").toLowerCase();
-  if (key === "rate") return Number(String(trip.rate || "").replace(/[^\d.\-]/g, "")) || 0;
-  if (key === "amount") return Number(String(trip.amount || "").replace(/[^\d.\-]/g, "")) || 0;
-  if (key === "remarks") return String(trip.remarks || "").toLowerCase();
-  return "";
-}
-
-function sortTransportTrips(list) {
-  const key = transportTableSortKey || "pickup";
-  const dir = transportTableSortDir === "desc" ? -1 : 1;
-  return [...list].sort((a, b) => {
-    const av = transportSortValue(a, key);
-    const bv = transportSortValue(b, key);
-    if (typeof av === "number" && typeof bv === "number") {
-      if (av === bv) return 0;
-      return (av - bv) * dir;
-    }
-    const cmp = String(av).localeCompare(String(bv), "en", { numeric: true, sensitivity: "base" });
-    return cmp * dir;
-  });
-}
-
-function updateTransportTripsSortIndicators() {
-  const headers = document.querySelectorAll("#zeroDayTripsTable thead th.th-sortable");
-  headers.forEach((th) => {
-    const key = th.getAttribute("data-sort-key");
-    const isActive = key === transportTableSortKey;
-    th.classList.remove("is-sorted-asc", "is-sorted-desc");
-    th.removeAttribute("aria-sort");
-    if (!isActive) return;
-    const asc = transportTableSortDir !== "desc";
-    th.classList.add(asc ? "is-sorted-asc" : "is-sorted-desc");
-    th.setAttribute("aria-sort", asc ? "ascending" : "descending");
-  });
 }
 
 function tripStatusBadgeClass(status) {
@@ -958,7 +916,7 @@ function getTripAssignedVoterCount(trip) {
 
 function renderZeroDayTripsTable() {
   if (!zeroDayTripsTableBody) return;
-  const trips = sortTransportTrips(getFilteredTransportTrips());
+  const trips = getFilteredTransportTrips();
   zeroDayTripsTableBody.innerHTML = "";
   if (!trips.length) {
     zeroDayTripsTableBody.innerHTML = `
@@ -999,26 +957,6 @@ function renderZeroDayTripsTable() {
       </td>
     `;
     zeroDayTripsTableBody.appendChild(tr);
-  });
-  updateTransportTripsSortIndicators();
-}
-
-function bindTransportTripsHeaderSort() {
-  const thead = document.querySelector("#zeroDayTripsTable thead");
-  if (!thead || thead.dataset.transportSortBound === "1") return;
-  thead.dataset.transportSortBound = "1";
-  thead.addEventListener("click", (e) => {
-    const th = e.target.closest("th.th-sortable");
-    if (!th) return;
-    const key = th.getAttribute("data-sort-key");
-    if (!key) return;
-    if (transportTableSortKey === key) {
-      transportTableSortDir = transportTableSortDir === "asc" ? "desc" : "asc";
-    } else {
-      transportTableSortKey = key;
-      transportTableSortDir = "asc";
-    }
-    renderZeroDayTripsTable();
   });
 }
 
@@ -3174,7 +3112,6 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   loadTrips();
   initZeroDayTabs();
   bindTransportMenu();
-  bindTransportTripsHeaderSort();
   renderZeroDayTripsTable();
   renderZeroDayVoteTable();
   renderMonitorsTable();

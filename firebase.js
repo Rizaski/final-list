@@ -65,6 +65,8 @@ export const firebaseInitPromise = (async () => {
     let setVoterReferendumVoteFs = async () => {};
     /** Merge only `referendumNotes` on the voter doc. */
     let setVoterReferendumNotesFs = async () => {};
+    /** Merge one key inside `candidatePledges` without replacing the whole map (avoids losing other candidates). */
+    let setVoterCandidatePledgeFs = async () => {};
     let setVoterVotedAtFs = async () => {};
     let deleteVoterFs = async () => {};
     /** Delete every document in the voters collection using Firestore batches (max 500 writes/batch). */
@@ -230,6 +232,16 @@ export const firebaseInitPromise = (async () => {
         if (!voter || !voter.id) return;
         const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voter.id));
         await firestoreMod.setDoc(ref, voter, { merge: true });
+      };
+
+      setVoterCandidatePledgeFs = async (voterId, candidateId, status) => {
+        if (voterId == null || voterId === "") return;
+        const cid = String(candidateId);
+        const s =
+          status === "yes" || status === "no" || status === "undecided" ? status : "undecided";
+        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const fieldPath = `candidatePledges.${cid}`;
+        await firestoreMod.updateDoc(ref, { [fieldPath]: s });
       };
 
       setVotersBatchFs = async (voters) => {
@@ -723,6 +735,7 @@ export const firebaseInitPromise = (async () => {
       setVotersBatchFs,
       setVoterReferendumVoteFs,
       setVoterReferendumNotesFs,
+      setVoterCandidatePledgeFs,
       setVoterVotedAtFs,
       deleteVoterFs,
       deleteAllVotersFs,

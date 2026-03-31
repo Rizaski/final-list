@@ -34,6 +34,12 @@ const VOTERS_STORAGE_KEY = "voters-data";
 let currentVoters = [];
 /** While true, ignore Firestore snapshot updates so partial bulk uploads don't replace the full local list. */
 let votersBulkImportInProgress = false;
+/**
+ * While a candidate pledge write is in flight, stale snapshots can briefly re-apply old `candidatePledges`.
+ * We overlay this edit until Firestore matches or the window expires.
+ * @type {Map<string, { candidateId: string, status: string, until: number }>}
+ */
+const pendingCandidatePledgeEdits = new Map();
 
 function sameVoterId(a, b) {
   if (a == null || b == null) return false;
@@ -55,6 +61,42 @@ function normalizeVoterCandidateFields(v) {
     out.candidatePledges = {};
   }
   return out;
+}
+
+/**
+ * Merge `candidatePledges` when applying Firestore snapshots: server wins unless a pending
+ * local edit is still protected; then local wins for that candidate key until the server matches.
+ */
+function mergeCandidatePledgesForSnapshot(nPrev, nInc, voterId) {
+  const p = nPrev.candidatePledges || {};
+  const i = nInc.candidatePledges || {};
+  const pend = pendingCandidatePledgeEdits.get(String(voterId));
+  if (pend && Date.now() < pend.until) {
+    const out = { ...i, ...p, [String(pend.candidateId)]: pend.status };
+    if (i[String(pend.candidateId)] === pend.status) {
+      pendingCandidatePledgeEdits.delete(String(voterId));
+    }
+    return out;
+  }
+  return { ...p, ...i };
+}
+
+/** Merge incoming Firestore snapshot with previous in-memory list so stale snapshots do not overwrite recent candidate pledge edits. */
+function mergeVotersFromSnapshot(prevList, incomingList) {
+  const prevById = new Map(prevList.map((v) => [String(v.id), v]));
+  return incomingList.map((inc) => {
+    const id = String(inc.id);
+    const prev = prevById.get(id);
+    if (!prev) return normalizeVoterCandidateFields(inc);
+    const nInc = normalizeVoterCandidateFields(inc);
+    const nPrev = normalizeVoterCandidateFields(prev);
+    const mergedCp = mergeCandidatePledgesForSnapshot(nPrev, nInc, id);
+    return normalizeVoterCandidateFields({
+      ...nPrev,
+      ...nInc,
+      candidatePledges: mergedCp,
+    });
+  });
 }
 
 /** Stable key for matching voter rows (trim + internal spaces collapsed). */
@@ -2830,9 +2872,10 @@ export async function initVotersModule(getCurrentUser, options = {}) {
   try {
     const api = await firebaseInitPromise;
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
+      loadVotersFromStorage();
       const initial = await api.getAllVotersFs();
       if (Array.isArray(initial)) {
-        currentVoters = initial.map(normalizeVoterCandidateFields);
+        currentVoters = mergeVotersFromSnapshot(currentVoters, initial).map(normalizeVoterCandidateFields);
         saveVotersToStorage();
         mergeVotedAtFromVoters(initial);
       } else {
@@ -2845,7 +2888,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
       unsubscribeVotersFs = api.onVotersSnapshotFs((items) => {
         if (votersBulkImportInProgress) return;
         if (Array.isArray(items)) {
-          currentVoters = items.map(normalizeVoterCandidateFields);
+          currentVoters = mergeVotersFromSnapshot(currentVoters, items).map(normalizeVoterCandidateFields);
           mergeVotedAtFromVoters(items);
           renderVotersTable();
           const selected =
@@ -2912,7 +2955,7 @@ export async function refreshVotersFromFirestore() {
       refreshVotersFromStorage();
       return;
     }
-    currentVoters = items.map(normalizeVoterCandidateFields);
+    currentVoters = mergeVotersFromSnapshot(currentVoters, items).map(normalizeVoterCandidateFields);
     saveVotersToStorage();
     mergeVotedAtFromVoters(items);
     renderVotersTable();
@@ -3441,10 +3484,22 @@ export function updateVoterCandidatePledge(voterId, candidateId, status) {
   if (!v) return;
   if (!v.candidatePledges) v.candidatePledges = {};
   v.candidatePledges[String(candidateId)] = status;
+  const cid = String(candidateId);
+  const until = Date.now() + 15000;
+  pendingCandidatePledgeEdits.set(String(voterId), { candidateId: cid, status, until });
   (async () => {
     try {
       const api = await firebaseInitPromise;
-      if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+      if (api.ready && typeof api.setVoterCandidatePledgeFs === "function") {
+        try {
+          await api.setVoterCandidatePledgeFs(voterId, candidateId, status);
+        } catch (e) {
+          console.warn("[Voters] setVoterCandidatePledgeFs", e);
+          if (api.setVoterFs) await api.setVoterFs(v);
+        }
+      } else if (api.ready && api.setVoterFs) {
+        await api.setVoterFs(v);
+      }
       saveVotersToStorage();
       renderVotersTable();
       if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
