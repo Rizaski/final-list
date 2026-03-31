@@ -39,6 +39,8 @@ let votersContext = null;
 let pledgeContextRef = null; // optional: { getPledges() } for agent lookup and sync
 let zeroDayVoteCurrentPage = 1;
 let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
+let transportTableSortKey = "pickup";
+let transportTableSortDir = "asc";
 let votedRealtimeUnsubscribes = []; // unsubscribe fns for Firestore voted listeners
 const votedByMonitor = {}; // token -> [{ voterId, timeMarked }] from real-time snapshots
 let zeroDaySyncInProgress = false;
@@ -151,8 +153,12 @@ function normalizeTrip(t) {
     onboardedVoterIds: Array.isArray(t.onboardedVoterIds)
       ? t.onboardedVoterIds.map((x) => String(x))
       : [],
+    excludedVoterIds: Array.isArray(t.excludedVoterIds)
+      ? t.excludedVoterIds.map((x) => String(x))
+      : [],
     rate: t.rate != null ? String(t.rate) : "",
     amount: t.amount != null ? String(t.amount) : "",
+    remarks: t.remarks != null ? String(t.remarks) : "",
   };
 }
 
@@ -187,11 +193,13 @@ function voterTransportNeededFlag(v) {
 function collectAssignedVotersForTrip(trip) {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const ids = new Set((trip.voterIds || []).map(String));
+  const excluded = new Set((trip.excludedVoterIds || []).map((x) => String(x).trim()));
   const normalizeRoute = normalizeTransportRouteKey;
   const assignedByIds = voters.filter((v) => {
     const id = v && v.id != null ? String(v.id) : "";
     const nationalId = v && v.nationalId != null ? String(v.nationalId) : "";
-    return ids.has(id) || ids.has(nationalId);
+    if (!(ids.has(id) || ids.has(nationalId))) return false;
+    return !excluded.has(id) && !excluded.has(nationalId);
   });
   const routeKey = normalizeRoute(trip.route);
   const assignedByRoute = routeKey
@@ -205,6 +213,9 @@ function collectAssignedVotersForTrip(trip) {
   const byId = new Map();
   [...assignedByIds, ...assignedByRoute].forEach((v) => {
     if (!v) return;
+    const id = v.id != null ? String(v.id) : "";
+    const nationalId = v.nationalId != null ? String(v.nationalId) : "";
+    if (excluded.has(id) || excluded.has(nationalId)) return;
     const k = String(v.id || v.nationalId || "");
     if (!k) return;
     byId.set(k, v);
@@ -224,9 +235,11 @@ function mergeTripRowInputs(tripId) {
   const row = zeroDayTripsTableBody?.querySelector(`tr[data-trip-id="${tripId}"]`);
   const rateInp = row?.querySelector('[data-trip-meta-field="rate"]');
   const amountInp = row?.querySelector('[data-trip-meta-field="amount"]');
+  const remarksInp = row?.querySelector('[data-trip-meta-field="remarks"]');
   const rate = rateInp ? String(rateInp.value || "").trim() : String(t.rate || "");
   const amount = amountInp ? String(amountInp.value || "").trim() : String(t.amount || "");
-  return { ...t, rate, amount };
+  const remarks = remarksInp ? String(remarksInp.value || "").trim() : String(t.remarks || "");
+  return { ...t, rate, amount, remarks };
 }
 
 function getAllVisibleTripSnapshots() {
@@ -237,7 +250,7 @@ function getAllVisibleTripSnapshots() {
 
 async function persistTripMetaField(tripId, field, value) {
   const t = findZeroDayTripById(tripId);
-  if (!t || (field !== "rate" && field !== "amount")) return;
+  if (!t || (field !== "rate" && field !== "amount" && field !== "remarks")) return;
   t[field] = value;
   saveTrips();
   try {
@@ -269,6 +282,7 @@ function transportManagementReportRowCells(t) {
     status: t.status || "",
     rate: t.rate || "",
     amount: t.amount || "",
+    remarks: t.remarks || "",
   };
 }
 
@@ -297,6 +311,7 @@ function openTransportTripsReportWindow(tripSnapshots, autoPrint) {
             <td>${escapeHtml(c.status)}</td>
             <td>${escapeHtml(c.rate)}</td>
             <td>${escapeHtml(c.amount)}</td>
+            <td>${escapeHtml(c.remarks)}</td>
           </tr>`;
     })
     .join("");
@@ -314,6 +329,7 @@ function openTransportTripsReportWindow(tripSnapshots, autoPrint) {
               <th class="col-status">Status</th>
               <th class="col-rate">Rate</th>
               <th class="col-amount">Amount</th>
+              <th class="col-remarks">Remarks</th>
             </tr>
           </thead>
           <tbody>${tbodyHtml}</tbody>
@@ -382,6 +398,7 @@ function openTransportTripsReportWindow(tripSnapshots, autoPrint) {
           .col-status { width: 10%; }
           .col-rate { width: 7%; }
           .col-amount { width: 7%; }
+          .col-remarks { width: 11%; }
           @media print {
             @page { size: A4 landscape; margin: 9mm; }
             body { background: #fff; }
@@ -434,6 +451,7 @@ function downloadTransportTripsReportCsv(tripSnapshots) {
     "Status",
     "Rate",
     "Amount",
+    "Remarks",
   ];
   const lines = [headers.map(csvEscapeTransportCell).join(",")];
   list.forEach((t) => {
@@ -449,6 +467,7 @@ function downloadTransportTripsReportCsv(tripSnapshots) {
         c.status,
         c.rate,
         c.amount,
+        c.remarks,
       ]
         .map(csvEscapeTransportCell)
         .join(",")
@@ -488,6 +507,7 @@ async function shareTransportTripsReport(tripSnapshots) {
     "Status",
     "Rate",
     "Amount",
+    "Remarks",
   ].join("\t");
   const rowLines = [headerLine];
   list.forEach((t) => {
@@ -503,6 +523,7 @@ async function shareTransportTripsReport(tripSnapshots) {
         c.status,
         c.rate,
         c.amount,
+        c.remarks,
       ].join("\t")
     );
   });
@@ -546,6 +567,34 @@ async function toggleTripVoterOnboarded(tripId, voterIdStr) {
   if (ix >= 0) arr.splice(ix, 1);
   else arr.push(id);
   t.onboardedVoterIds = arr;
+  saveTrips();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
+  } catch (_) {}
+  renderZeroDayTripsTable();
+}
+
+/** Remove a voter from this route list (explicit + route-match exclusion). */
+async function removeAssignedVoterFromTrip(tripId, voterIdStr) {
+  const t = findZeroDayTripById(tripId);
+  if (!t) return;
+  const voterId = String(voterIdStr || "").trim();
+  if (!voterId) return;
+  const all = votersContext ? votersContext.getAllVoters() : [];
+  const voter = all.find((x) => String(x?.id || "").trim() === voterId);
+  const nationalId = String(voter?.nationalId || "").trim();
+  const removeKeys = new Set([voterId]);
+  if (nationalId) removeKeys.add(nationalId);
+  t.voterIds = (Array.isArray(t.voterIds) ? t.voterIds : [])
+    .map((x) => String(x).trim())
+    .filter((x) => x && !removeKeys.has(x));
+  t.onboardedVoterIds = (Array.isArray(t.onboardedVoterIds) ? t.onboardedVoterIds : [])
+    .map((x) => String(x).trim())
+    .filter((x) => x && !removeKeys.has(x));
+  const excluded = new Set((Array.isArray(t.excludedVoterIds) ? t.excludedVoterIds : []).map((x) => String(x).trim()));
+  removeKeys.forEach((k) => excluded.add(k));
+  t.excludedVoterIds = Array.from(excluded);
   saveTrips();
   try {
     const api = await firebaseInitPromise;
@@ -812,10 +861,54 @@ function getFilteredTransportTrips() {
   let list = zeroDayTrips;
   if (transportViewFilter === "flight") list = list.filter((t) => t.tripType === "flight");
   else if (transportViewFilter === "speedboat") list = list.filter((t) => t.tripType === "speedboat");
+  return [...list];
+}
+
+function getTripTypeLabel(trip) {
+  return TRIP_TYPES.find((t) => t.value === trip.tripType)?.label || trip.tripType || "—";
+}
+
+function transportSortValue(trip, key) {
+  if (!trip) return "";
+  if (key === "type") return String(getTripTypeLabel(trip)).toLowerCase();
+  if (key === "route") return String(trip.route || "").toLowerCase();
+  if (key === "vehicle") return String(trip.vehicle || "").toLowerCase();
+  if (key === "driver") return String(trip.driver || "").toLowerCase();
+  if (key === "pickup") return trip.pickupTime ? new Date(trip.pickupTime).getTime() : 0;
+  if (key === "votersAssigned") return Number(getTripAssignedVoterCount(trip) || 0);
+  if (key === "status") return String(trip.status || "").toLowerCase();
+  if (key === "rate") return Number(String(trip.rate || "").replace(/[^\d.\-]/g, "")) || 0;
+  if (key === "amount") return Number(String(trip.amount || "").replace(/[^\d.\-]/g, "")) || 0;
+  if (key === "remarks") return String(trip.remarks || "").toLowerCase();
+  return "";
+}
+
+function sortTransportTrips(list) {
+  const key = transportTableSortKey || "pickup";
+  const dir = transportTableSortDir === "desc" ? -1 : 1;
   return [...list].sort((a, b) => {
-    const ta = a.pickupTime ? new Date(a.pickupTime).getTime() : 0;
-    const tb = b.pickupTime ? new Date(b.pickupTime).getTime() : 0;
-    return ta - tb;
+    const av = transportSortValue(a, key);
+    const bv = transportSortValue(b, key);
+    if (typeof av === "number" && typeof bv === "number") {
+      if (av === bv) return 0;
+      return (av - bv) * dir;
+    }
+    const cmp = String(av).localeCompare(String(bv), "en", { numeric: true, sensitivity: "base" });
+    return cmp * dir;
+  });
+}
+
+function updateTransportTripsSortIndicators() {
+  const headers = document.querySelectorAll("#zeroDayTripsTable thead th.th-sortable");
+  headers.forEach((th) => {
+    const key = th.getAttribute("data-sort-key");
+    const isActive = key === transportTableSortKey;
+    th.classList.remove("is-sorted-asc", "is-sorted-desc");
+    th.removeAttribute("aria-sort");
+    if (!isActive) return;
+    const asc = transportTableSortDir !== "desc";
+    th.classList.add(asc ? "is-sorted-asc" : "is-sorted-desc");
+    th.setAttribute("aria-sort", asc ? "ascending" : "descending");
   });
 }
 
@@ -833,9 +926,11 @@ function getEmptyTransportMessage() {
 
 function getTripAssignedVoterCount(trip) {
   const byIds = Array.isArray(trip?.voterIds) ? trip.voterIds : [];
+  const excluded = new Set((trip?.excludedVoterIds || []).map((x) => String(x).trim()));
   const voters = votersContext ? votersContext.getAllVoters() : [];
   if (!voters.length) {
-    return trip?.voterCount != null ? trip.voterCount : byIds.length;
+    const explicit = byIds.map((x) => String(x).trim()).filter((x) => x && !excluded.has(x)).length;
+    return trip?.voterCount != null ? Math.max(0, explicit) : explicit;
   }
   const normalizeRoute = (s) =>
     String(s || "")
@@ -845,7 +940,7 @@ function getTripAssignedVoterCount(trip) {
   const routeKey = normalizeRoute(trip?.route || "");
   const dedup = new Set();
   byIds.forEach((id) => {
-    if (id != null && String(id).trim()) dedup.add(String(id));
+    if (id != null && String(id).trim() && !excluded.has(String(id).trim())) dedup.add(String(id));
   });
   if (routeKey) {
     voters.forEach((v) => {
@@ -854,7 +949,7 @@ function getTripAssignedVoterCount(trip) {
       if (!r) return;
       if (r === routeKey || r.includes(routeKey) || routeKey.includes(r)) {
         const key = v.id != null ? String(v.id) : v.nationalId != null ? String(v.nationalId) : "";
-        if (key) dedup.add(key);
+        if (key && !excluded.has(String(key).trim())) dedup.add(key);
       }
     });
   }
@@ -863,19 +958,18 @@ function getTripAssignedVoterCount(trip) {
 
 function renderZeroDayTripsTable() {
   if (!zeroDayTripsTableBody) return;
-  const trips = getFilteredTransportTrips();
+  const trips = sortTransportTrips(getFilteredTransportTrips());
   zeroDayTripsTableBody.innerHTML = "";
   if (!trips.length) {
     zeroDayTripsTableBody.innerHTML = `
       <tr>
-        <td colspan="10" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
+        <td colspan="11" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
       </tr>
     `;
     return;
   }
   trips.forEach((trip) => {
-    const tripTypeEntry = TRIP_TYPES.find((t) => t.value === trip.tripType);
-    const typeLabel = (tripTypeEntry && tripTypeEntry.label) != null ? tripTypeEntry.label : (trip.tripType != null ? trip.tripType : "–");
+    const typeLabel = getTripTypeLabel(trip);
     const count = getTripAssignedVoterCount(trip);
     const statusClass = tripStatusBadgeClass(trip.status);
     const tr = document.createElement("tr");
@@ -894,6 +988,9 @@ function renderZeroDayTripsTable() {
       <td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount">
         <input type="text" class="input input--trip-table-meta" data-trip-meta-field="amount" data-trip-id="${trip.id}" value="${escapeHtml(trip.amount || "")}" placeholder="—" aria-label="Route amount" title="Amount for this route">
       </td>
+      <td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks">
+        <input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-trip-meta-field="remarks" data-trip-id="${trip.id}" value="${escapeHtml(trip.remarks || "")}" placeholder="Notes / remarks" aria-label="Route remarks" title="Remarks for this route">
+      </td>
       <td class="transport-trips-table__actions">
         <button type="button" class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
         <button type="button" class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">Voters</button>
@@ -902,6 +999,26 @@ function renderZeroDayTripsTable() {
       </td>
     `;
     zeroDayTripsTableBody.appendChild(tr);
+  });
+  updateTransportTripsSortIndicators();
+}
+
+function bindTransportTripsHeaderSort() {
+  const thead = document.querySelector("#zeroDayTripsTable thead");
+  if (!thead || thead.dataset.transportSortBound === "1") return;
+  thead.dataset.transportSortBound = "1";
+  thead.addEventListener("click", (e) => {
+    const th = e.target.closest("th.th-sortable");
+    if (!th) return;
+    const key = th.getAttribute("data-sort-key");
+    if (!key) return;
+    if (transportTableSortKey === key) {
+      transportTableSortDir = transportTableSortDir === "asc" ? "desc" : "asc";
+    } else {
+      transportTableSortKey = key;
+      transportTableSortDir = "asc";
+    }
+    renderZeroDayTripsTable();
   });
 }
 
@@ -951,6 +1068,10 @@ function openTripForm(existing, defaultType) {
           ).join("")}
         </select>
       </div>
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="zdTripRemarks">Remarks</label>
+        <input id="zdTripRemarks" type="text" value="${escapeHtml(existing?.remarks || "")}" placeholder="Optional route notes">
+      </div>
     </div>
   `;
 
@@ -975,6 +1096,7 @@ function openTripForm(existing, defaultType) {
     const vehicle = body.querySelector("#zdTripVehicle").value.trim();
     const pickupTime = body.querySelector("#zdTripPickupTime").value;
     const status = body.querySelector("#zdTripStatus").value;
+    const remarks = body.querySelector("#zdTripRemarks").value.trim();
     if (!route) return;
     if (isEdit) {
       existing.tripType = type;
@@ -983,6 +1105,7 @@ function openTripForm(existing, defaultType) {
       existing.vehicle = vehicle;
       existing.pickupTime = pickupTime ? new Date(pickupTime).toISOString() : "";
       existing.status = status;
+      existing.remarks = remarks;
     } else {
       const nextId =
         zeroDayTrips.reduce((max, t) => Math.max(max, t.id), 0) + 1;
@@ -994,6 +1117,7 @@ function openTripForm(existing, defaultType) {
         vehicle,
         pickupTime: pickupTime ? new Date(pickupTime).toISOString() : "",
         status: status || "Scheduled",
+        remarks,
         voterCount: 0,
         voterIds: [],
       }));
@@ -1064,6 +1188,7 @@ function openTripVotersModal(trip) {
   const title = `Assigned voters – ${trip.route || "Route"}`;
   const body = document.createElement("div");
   body.className = "modal-body-inner modal-body-inner--with-maximize";
+  let lastRenderedRows = [];
 
   const summary = document.createElement("div");
   summary.className = "helper-text";
@@ -1167,15 +1292,243 @@ function openTripVotersModal(trip) {
     const searchQuery = (body.querySelector("#zdTripVotersSearch") || {}).value || "";
     let list = applySearchFilter(assigned, searchQuery);
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
+    lastRenderedRows = displayList.filter((x) => x.type === "row").map((x) => x.voter);
     const newTable = buildTableFromDisplayList(displayList, {
       includeVotedStatus: true,
       includeTimeVoted: false,
       showUnmarkAction: false,
       usePledgePills: true,
       isOnboarded: isVoterOnboardedForTrip,
+      includeTripRemoveAction: true,
     });
     tableWrap.innerHTML = "";
     tableWrap.appendChild(newTable.firstElementChild);
+  }
+
+  function getTripVoterRemarks(v) {
+    return String(v?.notes || v?.callComments || "").trim();
+  }
+
+  function shareTripVotersReport() {
+    if (!lastRenderedRows.length) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Nothing to share",
+          meta: "No voters match the current filters.",
+        });
+      }
+      return;
+    }
+    const routeLabel = String(trip.route || "Route");
+    const header = [
+      "Seq",
+      "Name",
+      "ID Number",
+      "Phone",
+      "Permanent address",
+      "Ballot box",
+      "Pledge",
+      "Agent",
+      "Voted status",
+      "On-board",
+      "Remarks",
+    ];
+    const lines = [header.join("\t")];
+    lastRenderedRows.forEach((v) => {
+      const voted = getVotedTimeMarked(v.id) ? "Voted" : "Not voted";
+      const onboard = isVoterOnboardedForTrip(v) ? "On-board" : "Pending";
+      lines.push(
+        [
+          sequenceAsImportedFromCsv(v),
+          v.fullName || "",
+          v.nationalId || v.id || "",
+          v.phone || "",
+          v.permanentAddress || "",
+          v.ballotBox || v.island || "",
+          getPledgeLabel(v.pledgeStatus),
+          getAgentForVoter(v.id),
+          voted,
+          onboard,
+          getTripVoterRemarks(v),
+        ].join("\t")
+      );
+    });
+    const reportTitle = `Assigned voters — ${routeLabel}`;
+    const text = `${reportTitle} (${lastRenderedRows.length} voters)\n\n${lines.join("\n")}`;
+    if (navigator.share) {
+      navigator
+        .share({ title: reportTitle, text })
+        .then(() => {})
+        .catch((err) => {
+          if (err && err.name === "AbortError") return;
+          navigator.clipboard.writeText(text).then(
+            () => {
+              if (typeof window.showToast === "function") window.showToast("Report copied to clipboard");
+            },
+            () => {
+              if (window.appNotifications) {
+                window.appNotifications.push({
+                  title: "Share failed",
+                  meta: "Could not copy to clipboard. Try Print.",
+                });
+              }
+            }
+          );
+        });
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => {
+        if (typeof window.showToast === "function") window.showToast("Report copied to clipboard");
+        else if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Copied",
+            meta: "Report text copied to the clipboard — paste into email or chat.",
+          });
+        }
+      },
+      () => {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Share failed",
+            meta: "Could not copy to clipboard. Try Print.",
+          });
+        }
+      }
+    );
+  }
+
+  function printTripVotersReport() {
+    if (!lastRenderedRows.length) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Nothing to print",
+          meta: "No voters match the current filters.",
+        });
+      }
+      return;
+    }
+    const rows = [...lastRenderedRows].sort(compareVotersByBallotSequenceThenName);
+    const rowsHtml = rows
+      .map((v) => {
+        const voted = getVotedTimeMarked(v.id) ? "Voted" : "Not voted";
+        const onboard = isVoterOnboardedForTrip(v) ? "On-board" : "Pending";
+        return `
+          <tr>
+            <td>${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
+            <td>${escapeHtml(v.fullName || "")}</td>
+            <td>${escapeHtml(v.nationalId || v.id || "")}</td>
+            <td>${escapeHtml(v.phone || "")}</td>
+            <td>${escapeHtml(v.permanentAddress || "")}</td>
+            <td>${escapeHtml(v.ballotBox || v.island || "")}</td>
+            <td>${escapeHtml(getPledgeLabel(v.pledgeStatus))}</td>
+            <td>${escapeHtml(getAgentForVoter(v.id))}</td>
+            <td>${escapeHtml(voted)}</td>
+            <td>${escapeHtml(onboard)}</td>
+            <td>${escapeHtml(getTripVoterRemarks(v))}</td>
+          </tr>
+        `;
+      })
+      .join("");
+    const w = window.open("about:blank", "_blank");
+    if (!w) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Popup blocked",
+          meta: "Allow popups for this site to open Print Preview.",
+        });
+      } else {
+        alert("Allow popups for this site to open Print Preview.");
+      }
+      return;
+    }
+    try {
+      w.opener = null;
+    } catch (_) {}
+    w.document.open();
+    w.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Assigned voters report</title>
+        <style>
+          :root { color-scheme: light; }
+          body { font-family: Arial, sans-serif; margin: 0; color: #111; background: #f5f7fb; }
+          .page { max-width: 1280px; margin: 20px auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.06); overflow: hidden; }
+          .report-head { padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+          .report-title { margin: 0; font-size: 20px; line-height: 1.2; }
+          .report-meta { margin: 4px 0 0; color: #4b5563; font-size: 13px; }
+          .report-actions { display: flex; gap: 8px; }
+          .btn { border: 1px solid #d1d5db; background: #fff; color: #111; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+          .btn--primary { border-color: #2563eb; background: #2563eb; color: #fff; }
+          .table-wrap { padding: 10px; overflow: auto; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: 1040px; }
+          th, td {
+            border: 1px solid #e5e7eb;
+            padding: 4px 5px;
+            text-align: left;
+            vertical-align: top;
+            line-height: 1.2;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            hyphens: auto;
+          }
+          th { background: #f9fafb; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+          tbody tr:nth-child(odd) { background: #fcfcfd; }
+          @media print {
+            @page { size: A4 landscape; margin: 9mm; }
+            body { background: #fff; }
+            .page { margin: 0; border: none; box-shadow: none; border-radius: 0; max-width: none; }
+            .report-actions { display: none !important; }
+            .table-wrap { padding: 0; overflow: visible; }
+            table { min-width: 0; width: 100%; font-size: 8.5px; table-layout: fixed; }
+            th, td { padding: 2px 3px; line-height: 1.12; }
+            th { position: static; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page">
+          <header class="report-head">
+            <div>
+              <h1 class="report-title">Assigned voters report</h1>
+              <p class="report-meta">Route: ${escapeHtml(
+                trip.route || "Route"
+              )} | Total: ${rows.length} | Generated: ${escapeHtml(new Date().toLocaleString("en-MV"))}</p>
+            </div>
+            <div class="report-actions">
+              <button type="button" class="btn" onclick="window.close()">Close</button>
+              <button type="button" class="btn btn--primary" onclick="window.print()">Print</button>
+            </div>
+          </header>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Seq</th>
+                  <th>Name</th>
+                  <th>ID Number</th>
+                  <th>Phone</th>
+                  <th>Permanent Address</th>
+                  <th>Ballot box</th>
+                  <th>Pledge</th>
+                  <th>Agent</th>
+                  <th>Voted status</th>
+                  <th>On-board</th>
+                  <th>Remarks</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    w.document.close();
+    w.focus();
   }
 
   body.appendChild(topBar);
@@ -1184,12 +1537,21 @@ function openTripVotersModal(trip) {
   body.appendChild(tableWrap);
 
   tableWrap.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-trip-onboard-toggle]");
-    if (!btn) return;
-    const voterId = btn.getAttribute("data-trip-onboard-toggle");
-    if (voterId == null || voterId === "") return;
-    e.preventDefault();
-    toggleTripVoterOnboarded(trip.id, voterId).then(() => render());
+    const onboardBtn = e.target.closest("[data-trip-onboard-toggle]");
+    if (onboardBtn) {
+      const voterId = onboardBtn.getAttribute("data-trip-onboard-toggle");
+      if (voterId == null || voterId === "") return;
+      e.preventDefault();
+      toggleTripVoterOnboarded(trip.id, voterId).then(() => render());
+      return;
+    }
+    const removeBtn = e.target.closest("[data-trip-remove-voter]");
+    if (removeBtn) {
+      const voterId = removeBtn.getAttribute("data-trip-remove-voter");
+      if (voterId == null || voterId === "") return;
+      e.preventDefault();
+      removeAssignedVoterFromTrip(trip.id, voterId).then(() => render());
+    }
   });
 
   listToolbar.querySelector("#zdTripVotersFilter").addEventListener("change", render);
@@ -1199,8 +1561,35 @@ function openTripVotersModal(trip) {
   if (searchEl) searchEl.addEventListener("input", render);
 
   render();
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.flexWrap = "wrap";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
 
-  openModal({ title, body });
+  const shareBtn = document.createElement("button");
+  shareBtn.type = "button";
+  shareBtn.className = "ghost-button";
+  shareBtn.textContent = "Share";
+  shareBtn.addEventListener("click", shareTripVotersReport);
+
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.className = "ghost-button";
+  printBtn.textContent = "Print";
+  printBtn.addEventListener("click", printTripVotersReport);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "ghost-button";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeModal());
+
+  footer.appendChild(shareBtn);
+  footer.appendChild(printBtn);
+  footer.appendChild(closeBtn);
+
+  openModal({ title, body, footer });
 
   const onVotersUpdated = () => render();
   document.addEventListener("voters-updated", onVotersUpdated);
@@ -1727,6 +2116,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
   const includeVotedStatus = !!options.includeVotedStatus;
   const usePledgePills = !!options.usePledgePills;
   const includeOnboardedColumn = typeof options.isOnboarded === "function";
+  const includeTripRemoveAction = !!options.includeTripRemoveAction;
   const columns = [
     "Seq",
     "Image",
@@ -1741,6 +2131,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
   if (includeVotedStatus) columns.push("Voted status");
   if (includeTimeVoted) columns.push("Time voted");
   if (includeOnboardedColumn) columns.push("On-board");
+  if (includeTripRemoveAction) columns.push("Actions");
   if (showUnmarkAction) columns.push("Actions");
   const colCount = columns.length;
 
@@ -1832,6 +2223,13 @@ function buildTableFromDisplayList(displayList, options = {}) {
             <button type="button" class="ghost-button ghost-button--small" data-trip-onboard-toggle="${escapeHtml(String(v.id))}">${on ? "Undo" : "Mark on-board"}</button>
           </div>`,
         });
+      }
+      if (includeTripRemoveAction) {
+        row.push(
+          `<button type="button" class="ghost-button ghost-button--small ghost-button--danger" data-trip-remove-voter="${escapeHtml(
+            String(v.id)
+          )}">Remove from route</button>`
+        );
       }
       if (showUnmarkAction) {
         row.push(
@@ -2776,6 +3174,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   loadTrips();
   initZeroDayTabs();
   bindTransportMenu();
+  bindTransportTripsHeaderSort();
   renderZeroDayTripsTable();
   renderZeroDayVoteTable();
   renderMonitorsTable();
@@ -2851,7 +3250,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         if (!inp || !transportPanel.contains(inp)) return;
         const tid = inp.getAttribute("data-trip-id");
         const field = inp.getAttribute("data-trip-meta-field");
-        if (tid == null || tid === "" || (field !== "rate" && field !== "amount")) return;
+        if (tid == null || tid === "" || (field !== "rate" && field !== "amount" && field !== "remarks")) return;
         persistTripMetaField(tid, field, inp.value.trim());
       },
       true

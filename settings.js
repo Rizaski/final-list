@@ -14,7 +14,6 @@ import { firebaseInitPromise } from "./firebase.js";
 import {
   AGENTS_STORAGE_KEY,
   filterAgentsForViewer,
-  isProperAgentFullName,
   formatAgentNameHint,
   parseViewerFromStorage,
 } from "./agents-context.js";
@@ -1116,12 +1115,14 @@ function openAgentModalCore(existing = null, options = {}) {
       saveBtn.textContent = labelDefault;
     }
 
-    if (!isProperAgentFullName(name)) {
+    // Support creating external/manual agents not present in voter records.
+    // Name must be present; strict voter-name formatting is no longer required.
+    if (!name) {
       resetSaveButton();
       if (window.appNotifications) {
         window.appNotifications.push({
-          title: "Invalid name",
-          meta: formatAgentNameHint(),
+          title: "Missing fields",
+          meta: "Full name, National ID and phone are required.",
         });
       }
       return;
@@ -1131,7 +1132,7 @@ function openAgentModalCore(existing = null, options = {}) {
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Missing fields",
-          meta: "National ID and phone are required.",
+          meta: "Full name, National ID and phone are required.",
         });
       }
       return;

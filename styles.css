@@ -5075,6 +5075,10 @@ textarea.voter-detail-referendum-notes:focus {
   border-left: 1px solid var(--color-border-subtle);
 }
 
+#zeroDayTripsTable .transport-trips-table__meta-cell--remarks {
+  border-left: 1px solid var(--color-border-subtle);
+}
+
 #zeroDayTripsTable .input--trip-table-meta {
   display: block;
   width: 100%;
@@ -5090,6 +5094,10 @@ textarea.voter-detail-referendum-notes:focus {
   background: #fff;
   color: var(--color-text);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#zeroDayTripsTable .input--trip-table-meta-remarks {
+  max-width: 220px;
 }
 
 #zeroDayTripsTable .input--trip-table-meta:hover {
