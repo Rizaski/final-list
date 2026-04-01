@@ -4632,9 +4632,6 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         pct +
         "%)</span>" +
         "</div>" +
-        '<button type="button" class="ballot-box-icon-tool ballot-box-icon-tool--print ballot-box-icon-tool--bordered" id="ballotBoxPrintBtn" aria-label="Print summary" title="Print summary">' +
-        '<svg class="ballot-box-icon-tool__svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>' +
-        "</button>" +
         "</div>";
     } else {
       main.innerHTML =
@@ -4666,9 +4663,6 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     fragment.appendChild(main);
     header.innerHTML = "";
     header.appendChild(fragment);
-    if (standaloneBallotPage) {
-      main.querySelector("#ballotBoxPrintBtn")?.addEventListener("click", () => window.print());
-    }
     if (standaloneBallotPage && typeof document !== "undefined") {
       const box = String(monitor.ballotBox || "").trim();
       const namePart = String(monitor.name || "").trim();

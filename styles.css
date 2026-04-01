@@ -2182,7 +2182,6 @@ body.list-workspace-page {
   --bb-accent-deep: #0f766e;
   --bb-border: rgba(15, 23, 42, 0.08);
   --bb-radius: 14px;
-  --bb-footer-slot: 5.25rem;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -2362,9 +2361,6 @@ body.list-workspace-page {
   flex-direction: column;
   min-height: 0;
 }
-.ballot-box-page .ballot-box-main {
-  padding-bottom: calc(var(--bb-footer-slot) + env(safe-area-inset-bottom, 0px));
-}
 .ballot-box-page .monitor-view {
   flex: 1;
   min-height: 0;
@@ -2376,36 +2372,6 @@ body.list-workspace-page {
 }
 .ballot-box-page .monitor-view[data-state="gate"] .monitor-view-gate {
   min-height: min(62vh, 560px);
-}
-.ballot-box-page .ballot-box-footer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 60;
-  flex-shrink: 0;
-  padding: 10px 16px max(12px, env(safe-area-inset-bottom, 0px));
-  text-align: center;
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 -4px 24px rgba(15, 23, 42, 0.06);
-}
-.ballot-box-footer__line {
-  margin: 0 0 4px;
-  font-size: 0.78rem;
-  line-height: 1.45;
-  color: var(--color-text-muted);
-  max-width: 560px;
-  margin-left: auto;
-  margin-right: auto;
-}
-.ballot-box-footer__line:last-child {
-  margin-bottom: 0;
-}
-.ballot-box-footer__muted {
-  opacity: 0.9;
-  font-size: 0.74rem;
 }
 .ballot-box-gate-outer {
   padding: 20px 16px;
@@ -2816,6 +2782,29 @@ body.list-workspace-page {
   border: 1px solid var(--bb-border);
   margin-bottom: 14px;
 }
+/* Vote marking: label above; search field + icon button on one row (overrides .monitor-view__toolbar flex row). */
+.ballot-box-toolbar.monitor-view__toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.ballot-box-toolbar__label.ballot-box-label {
+  margin-bottom: 0;
+}
+.ballot-box-toolbar__search-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  width: 100%;
+}
+.ballot-box-toolbar__search-row .ballot-box-icon-tool {
+  flex-shrink: 0;
+}
 .ballot-box-toolbar .ballot-box-search-field,
 .ballot-box-toolbar .monitor-view__search {
   flex: 1;
@@ -2825,6 +2814,13 @@ body.list-workspace-page {
   border-radius: 10px;
   border: 1px solid rgba(15, 23, 42, 0.1);
   font-size: 0.95rem;
+}
+.ballot-box-toolbar__search-row .ballot-box-search-field,
+.ballot-box-toolbar__search-row .monitor-view__search {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  max-width: none;
 }
 .ballot-box-toolbar .ballot-box-search-field:focus,
 .ballot-box-toolbar .monitor-view__search:focus {
@@ -2886,7 +2882,6 @@ body.list-workspace-page {
     background: #fff;
   }
   .ballot-box-appbar,
-  .ballot-box-footer,
   .ballot-box-help,
   .ballot-box-toolbar,
   .ballot-box-loading,
@@ -2906,8 +2901,7 @@ body.list-workspace-page {
     padding: 0;
     background: #fff;
   }
-  .ballot-dash-progress-row .ballot-box-btn,
-  .ballot-dash-progress-row .ballot-box-icon-tool {
+  .ballot-dash-progress-row .ballot-box-btn {
     display: none !important;
   }
 }
@@ -6568,9 +6562,6 @@ textarea.voter-detail-referendum-notes:focus {
   font-size: 0.8rem;
   color: var(--color-text-muted);
   text-align: right;
-}
-.ballot-box-page .monitor-mark-voted-toast {
-  bottom: calc(var(--bb-footer-slot) + env(safe-area-inset-bottom, 0px) + 10px);
 }
 .monitor-mark-voted-toast__actions--icons {
   margin-top: 10px;
