@@ -3999,7 +3999,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     renderPauseOverlay();
     updateMonitorSearchUi();
     const v = getCurrentDisplayedVoter();
-    if (v) renderMonitorViewResult(v);
+    if (v && !standaloneBallotPage) renderMonitorViewResult(v);
   }
 
   function applyBallotSessionState(state, opts = {}) {
@@ -4413,7 +4413,26 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const seq = sequenceAsImportedFromCsv(voter);
     const id = voter.nationalId || voter.id || "";
     const addr = voter.permanentAddress || "";
-    el.innerHTML = `
+    if (standaloneBallotPage) {
+      el.classList.add("monitor-mark-voted-toast--compact");
+      const line =
+        escapeHtml(voter.fullName || "") +
+        " · " +
+        escapeHtml(String(id)) +
+        " · " +
+        escapeHtml(addr);
+      el.innerHTML = `
+      <div class="monitor-mark-voted-toast__inner">
+        <div class="monitor-mark-voted-toast__line">${line}</div>
+        <div class="monitor-mark-voted-toast__actions monitor-mark-voted-toast__actions--compact">
+          <button type="button" class="monitor-mark-voted-toast__btn monitor-mark-voted-toast__btn--undo" data-toast-undo>Undo</button>
+          <button type="button" class="monitor-mark-voted-toast__btn monitor-mark-voted-toast__btn--dismiss" data-toast-dismiss>Dismiss</button>
+        </div>
+        <div class="monitor-mark-voted-toast__timer" aria-live="polite"><span data-toast-countdown>10</span>s</div>
+      </div>
+    `;
+    } else {
+      el.innerHTML = `
       <div class="monitor-mark-voted-toast__inner">
         <div class="monitor-mark-voted-toast__title">Marked as voted</div>
         <div class="monitor-mark-voted-toast__row"><span>Seq</span><strong>${escapeHtml(String(seq))}</strong></div>
@@ -4431,6 +4450,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         <div class="monitor-mark-voted-toast__timer" aria-live="polite"><span data-toast-countdown>10</span>s</div>
       </div>
     `;
+    }
     const mount = monitorViewEl || document.body;
     mount.appendChild(el);
     markVotedToastEl = el;
@@ -4464,7 +4484,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     if (isRemote && options.onRefreshVoted) await options.onRefreshVoted().catch(() => {});
     renderMonitorViewHeader();
     const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
-    if (v && monitorViewResult) renderMonitorViewResult(v);
+    if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
   }
 
   if (isBallotBoxOnly) {
@@ -4559,22 +4579,36 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     main.className =
       "monitor-view__header-main" +
       (standaloneBallotPage ? " monitor-view__header-main--standalone" : "");
-    const subtitleText = standaloneBallotPage
-      ? "Search by national ID, full name, or ballot sequence. Confirm identity before marking as voted."
-      : "Search by name, ID, or ballot-box sequence (as shown).";
+    const subtitleText = "Search by name, ID, or ballot-box sequence (as shown).";
     const titleEscaped = escapeHtml(monitor.ballotBox || "Ballot box");
     const subtitleEscaped = escapeHtml(subtitleText);
 
     if (standaloneBallotPage) {
+      const total = assignedVoters.length;
+      const voted = votedEntries.length;
+      const pct = total > 0 ? Math.min(100, Math.round((voted / total) * 100)) : 0;
       main.innerHTML =
         '<div class="ballot-dash-head">' +
         '<div class="ballot-dash-head__titles">' +
         '<h1 id="monitorViewTitle" class="monitor-view__title ballot-dash-title">' +
         titleEscaped +
         "</h1>" +
-        '<p class="monitor-view__subtitle ballot-dash-subtitle" id="monitorViewSubtitle">' +
-        subtitleEscaped +
-        "</p>" +
+        "</div>" +
+        '<div class="ballot-dash-progress-row">' +
+        '<div class="ballot-dash-progress">' +
+        '<div class="ballot-dash-progress__track">' +
+        '<div class="ballot-dash-progress__fill" style="width:' +
+        pct +
+        '%"></div>' +
+        "</div>" +
+        '<span class="ballot-dash-progress__text">' +
+        escapeHtml(String(voted)) +
+        " / " +
+        escapeHtml(String(total)) +
+        " voted (" +
+        escapeHtml(String(pct)) +
+        "%)</span>" +
+        "</div>" +
         "</div>" +
         "</div>";
     } else {
@@ -4624,12 +4658,21 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     else saveVotedEntries();
     renderMonitorViewHeader();
     const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
-    if (v && monitorViewResult) renderMonitorViewResult(v);
+    if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
     if (v) showMarkVotedToast(v);
   }
 
   function renderMonitorViewResult(voterOrNull) {
     if (!monitorViewResult) return;
+    if (standaloneBallotPage) {
+      if (!voterOrNull) {
+        monitorViewResult.innerHTML =
+          '<p class="monitor-view-result__empty" role="status">No voter found with that ID or sequence. Try again.</p>';
+        return;
+      }
+      monitorViewResult.innerHTML = "";
+      return;
+    }
     const pledgeLabel = (s) => (s === "yes" ? "Yes" : s === "no" ? "No" : "Undecided");
     const pledgePillClass = (s) =>
       s === "yes" ? "pledge-pill pledge-pill--pledged" : s === "no" ? "pledge-pill pledge-pill--not-pledged" : "pledge-pill pledge-pill--undecided";
@@ -4690,6 +4733,79 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         if (vid) markVoterVoted(vid);
       });
     }
+  }
+
+  function renderStandaloneMultiPick(matches) {
+    if (!monitorViewResult) return;
+    const rowsHtml = matches
+      .slice(0, 25)
+      .map((v) => {
+        const idPart = v.nationalId || v.id || "";
+        const addr = v.permanentAddress || "";
+        const line = [v.fullName || "", idPart, addr]
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+          .join(" · ");
+        return `<button type="button" class="monitor-view-result__match monitor-view-result__match--oneline" data-standalone-mark-id="${escapeHtml(
+          v.id
+        )}">${escapeHtml(line || v.fullName || idPart || "")}</button>`;
+      })
+      .join("");
+    monitorViewResult.innerHTML = `
+      <p class="monitor-view-result__hint" role="status">Several voters match—tap the correct row to mark voted, or narrow your entry.</p>
+      <div class="monitor-view-result__list monitor-view-result__list--compact" role="list">${rowsHtml}</div>
+    `;
+    monitorViewResult.querySelectorAll("[data-standalone-mark-id]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!canMarkVoted()) return;
+        const id = btn.getAttribute("data-standalone-mark-id");
+        const v = assignedVoters.find((x) => String(x.id) === String(id));
+        if (!v) return;
+        const timeMarked = votedEntries.find((e) => sameVoterId(e.voterId, v.id))?.timeMarked;
+        if (timeMarked) {
+          monitorViewResult.innerHTML =
+            '<p class="monitor-view-result__empty" role="status">That voter is already marked as voted.</p>';
+          return;
+        }
+        markVoterVoted(v.id);
+        if (monitorViewSearch) monitorViewSearch.value = "";
+        monitorViewResult.innerHTML = "";
+      });
+    });
+  }
+
+  function renderStandaloneFeedback(message) {
+    if (!monitorViewResult) return;
+    monitorViewResult.innerHTML = `<p class="monitor-view-result__empty" role="status">${escapeHtml(
+      message
+    )}</p>`;
+  }
+
+  function doStandaloneMarkVoted() {
+    if (!canMarkVoted()) return;
+    const query = (monitorViewSearch?.value || "").trim();
+    if (!query) {
+      if (monitorViewResult) monitorViewResult.innerHTML = "";
+      return;
+    }
+    const matches = searchVoters(query);
+    if (!matches.length) {
+      renderMonitorViewResult(null);
+      return;
+    }
+    if (matches.length === 1) {
+      const v = matches[0];
+      const timeMarked = votedEntries.find((e) => sameVoterId(e.voterId, v.id))?.timeMarked;
+      if (timeMarked) {
+        renderStandaloneFeedback("This voter is already marked as voted.");
+        return;
+      }
+      markVoterVoted(v.id);
+      if (monitorViewSearch) monitorViewSearch.value = "";
+      if (monitorViewResult) monitorViewResult.innerHTML = "";
+      return;
+    }
+    renderStandaloneMultiPick(matches);
   }
 
   function doSearch() {
@@ -4773,12 +4889,19 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       if (monitorViewResult) monitorViewResult.appendChild(msgEl);
     } else {
       updateMonitorSearchUi();
-      if (monitorViewSearchBtn) monitorViewSearchBtn.addEventListener("click", doSearch);
+      const markAction = standaloneBallotPage ? doStandaloneMarkVoted : doSearch;
+      if (monitorViewSearchBtn) monitorViewSearchBtn.addEventListener("click", markAction);
       if (monitorViewSearch) {
+        if (standaloneBallotPage) {
+          monitorViewSearch.addEventListener("focus", (e) => {
+            const t = e.target;
+            if (t && t.id === "monitorViewSearch") t.blur();
+          });
+        }
         monitorViewSearch.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            doSearch();
+            markAction();
           }
         });
       }

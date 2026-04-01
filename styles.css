@@ -2617,6 +2617,16 @@ body.list-workspace-page {
   display: block;
   pointer-events: none;
 }
+.ballot-box-icon-tool--mark-voted {
+  background: linear-gradient(145deg, #059669 0%, #047857 100%);
+}
+.ballot-box-page .ballot-box-search-display {
+  pointer-events: none;
+  user-select: none;
+  caret-color: transparent;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
 
 /* Standalone dashboard header (KPIs, progress, print) */
 .ballot-box-page .monitor-view__header {
@@ -2632,6 +2642,9 @@ body.list-workspace-page {
 }
 .ballot-dash-head {
   margin-bottom: 10px;
+}
+.ballot-dash-head .ballot-dash-progress-row {
+  margin-top: 8px;
 }
 .ballot-dash-head__titles {
   max-width: 52rem;
@@ -6631,6 +6644,72 @@ textarea.voter-detail-referendum-notes:focus {
   width: 38px;
   height: 38px;
   border-radius: 8px;
+}
+
+.monitor-mark-voted-toast--compact {
+  max-width: min(720px, calc(100vw - 24px));
+}
+.monitor-mark-voted-toast--compact .monitor-mark-voted-toast__inner {
+  padding: 12px 14px;
+}
+.monitor-mark-voted-toast__line {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--color-text);
+  word-break: break-word;
+}
+.monitor-mark-voted-toast__actions--compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+.monitor-mark-voted-toast__btn {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.monitor-mark-voted-toast__btn--undo {
+  background: rgba(5, 150, 105, 0.12);
+  border-color: rgba(5, 150, 105, 0.45);
+  color: #047857;
+}
+.monitor-mark-voted-toast__btn--undo:hover {
+  background: rgba(5, 150, 105, 0.2);
+}
+.monitor-mark-voted-toast__btn--dismiss {
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+.monitor-mark-voted-toast__btn--dismiss:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.ballot-box-page .monitor-view-result__hint {
+  font-size: 0.84rem;
+  color: var(--bb-ink-muted, var(--color-text-muted));
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+.ballot-box-page .monitor-view-result__list--compact {
+  gap: 8px;
+}
+.ballot-box-page .monitor-view-result__match--oneline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 0.86rem;
+  line-height: 1.35;
+  font-weight: 500;
+  gap: 0;
 }
 
 .monitor-voted-history__scroll {

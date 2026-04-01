@@ -88,28 +88,16 @@
         </div>
       </div>
       <div id="monitor-view-content" class="monitor-view__content ballot-box-workspace" aria-hidden="true" style="display: none;">
-        <details class="ballot-box-help">
-          <summary class="ballot-box-help__summary">Guide &amp; shortcuts</summary>
-          <ul class="ballot-box-help__list">
-            <li><strong>Session</strong> — Open, pause, or close. Pause requires a reason and blocks search until you resume.</li>
-            <li><strong>Search</strong> — National ID, ballot sequence, or name (partial name supported). Use the number pad for quick sequence entry.</li>
-            <li><strong>Mark voted</strong> — Only after the person matches the record. You’ll see a confirmation strip with undo.</li>
-            <li><strong>History</strong> — Voters marked from this link in the current session context.</li>
-          </ul>
-        </details>
         <div class="monitor-view__header monitor-view__header--search-only">
           <h1 id="monitorViewTitle">Ballot box</h1>
-          <p class="monitor-view__subtitle" id="monitorViewSubtitle">Search by ID or Sequence to find a voter.</p>
         </div>
         <div class="monitor-view__toolbar ballot-box-toolbar">
-          <label for="monitorViewSearch" class="ballot-box-label ballot-box-toolbar__label">Find voter</label>
-          <p class="ballot-box-search-hint" role="note">Official campaign use only. Confirm voter identity before marking. Do not share this URL or your access code.</p>
+          <span id="monitorViewSearchLabel" class="ballot-box-label ballot-box-toolbar__label">Find voter</span>
           <div class="ballot-box-toolbar__search-row">
-            <input type="text" id="monitorViewSearch" placeholder="National ID, sequence, or name" class="monitor-view__search ballot-box-search-field" autocomplete="off" inputmode="text">
-            <button type="button" id="monitorViewSearchBtn" class="ballot-box-icon-tool ballot-box-icon-tool--search" aria-label="Search" title="Search">
+            <input type="text" id="monitorViewSearch" placeholder="National ID or sequence" class="monitor-view__search ballot-box-search-field ballot-box-search-display" autocomplete="off" inputmode="none" readonly tabindex="-1" aria-labelledby="monitorViewSearchLabel">
+            <button type="button" id="monitorViewSearchBtn" class="ballot-box-icon-tool ballot-box-icon-tool--mark-voted" aria-label="Mark voted" title="Mark voted">
               <svg class="ballot-box-icon-tool__svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7"/>
-                <path d="M20 20l-4.3-4.3"/>
+                <path d="M20 6L9 17l-5-5"/>
               </svg>
             </button>
           </div>

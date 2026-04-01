@@ -78,7 +78,6 @@ function initBallotSeqKeypad() {
     const digBtn = e.target.closest("[data-digit]");
     if (back) {
       input.value = String(input.value || "").slice(0, -1);
-      input.focus();
       input.dispatchEvent(new Event("input", { bubbles: true }));
       return;
     }
@@ -86,7 +85,6 @@ function initBallotSeqKeypad() {
     const d = digBtn.getAttribute("data-digit");
     if (!/^\d$/.test(d)) return;
     input.value = String(input.value || "") + d;
-    input.focus();
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
