@@ -446,7 +446,8 @@ function getAgentScopeId(agent) {
 function getCandidateAssignableAgents(candidateId) {
   const cid = String(candidateId || "").trim();
   if (!cid) return [];
-  const scopedAgents = getAgentsFromStorage().filter((a) => {
+  const allAgents = getAgentsFromStorage();
+  const scopedAgents = allAgents.filter((a) => {
     const scopeId = getAgentScopeId(a);
     return scopeId === cid;
   });
@@ -455,6 +456,11 @@ function getCandidateAssignableAgents(candidateId) {
   // corresponding rows in settings agents-data. Include those names so detail dropdown is usable.
   const byNameKey = new Map();
   const keyOf = (name) => String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const byId = new Map();
+  allAgents.forEach((a) => {
+    const id = String(a?.id ?? "").trim();
+    if (id) byId.set(id, a);
+  });
 
   scopedAgents.forEach((a) => {
     const k = keyOf(a?.name);
@@ -462,23 +468,51 @@ function getCandidateAssignableAgents(candidateId) {
     byNameKey.set(k, a);
   });
 
-  const addNameAsScopedAgent = (rawName) => {
+  const resolveAgentDetails = (name, idHint = "") => {
+    const hinted = byId.get(String(idHint || "").trim());
+    if (hinted) return hinted;
+    const k = keyOf(name);
+    if (!k) return null;
+    // Prefer same-candidate scope, then any exact-name match.
+    const scoped = scopedAgents.find((a) => keyOf(a?.name) === k);
+    if (scoped) return scoped;
+    const any = allAgents.find((a) => keyOf(a?.name) === k);
+    return any || null;
+  };
+
+  const addNameAsScopedAgent = (rawName, idHint = "") => {
     const name = String(rawName || "").trim();
     if (!name) return;
     const k = keyOf(name);
-    if (!k || byNameKey.has(k)) return;
-    byNameKey.set(k, {
-      id: `csv-${cid}-${k}`,
-      name,
-      candidateId: cid,
-    });
+    if (!k) return;
+    const resolved = resolveAgentDetails(name, idHint);
+    const existing = byNameKey.get(k);
+    if (!existing) {
+      byNameKey.set(k, {
+        id: String(resolved?.id ?? "").trim() || `csv-${cid}-${k}`,
+        name: String(resolved?.name || name).trim(),
+        nationalId: String(resolved?.nationalId || "").trim(),
+        phone: String(resolved?.phone || "").trim(),
+        candidateId: cid,
+      });
+      return;
+    }
+    // Backfill ID/mobile/national ID if existing option came from plain CSV name.
+    if (resolved) {
+      if (!existing.id || String(existing.id).startsWith("csv-")) existing.id = String(resolved.id ?? existing.id);
+      if (!existing.nationalId) existing.nationalId = String(resolved.nationalId || "").trim();
+      if (!existing.phone) existing.phone = String(resolved.phone || "").trim();
+    }
   };
 
   // 1) Names from voter docs (candidateAgentAssignments[candidateId]).
   (Array.isArray(currentVoters) ? currentVoters : []).forEach((v) => {
-    const obj = v?.candidateAgentAssignments;
-    if (!obj || typeof obj !== "object") return;
-    addNameAsScopedAgent(obj[cid]);
+    const names = v?.candidateAgentAssignments;
+    const ids = v?.candidateAgentAssignmentIds;
+    if (!names || typeof names !== "object") return;
+    const name = names[cid];
+    const idHint = ids && typeof ids === "object" ? ids[cid] : "";
+    addNameAsScopedAgent(name, idHint);
   });
 
   // 2) Names from legacy/local per-candidate assignment map.
@@ -489,7 +523,8 @@ function getCandidateAssignableAgents(candidateId) {
       if (map && typeof map === "object") {
         Object.values(map).forEach((val) => {
           const n = val && typeof val === "object" ? val.name : val;
-          addNameAsScopedAgent(n);
+          const idHint = val && typeof val === "object" ? val.id : "";
+          addNameAsScopedAgent(n, idHint);
         });
       }
     }
