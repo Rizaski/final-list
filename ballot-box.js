@@ -63,6 +63,32 @@ function initBallotBoxChrome() {
     },
     { once: true }
   );
+
+  initBallotSeqKeypad();
+}
+
+/** Digits 0–9 append to search field; ⌫ removes last character (standalone vote marking). */
+function initBallotSeqKeypad() {
+  const input = document.getElementById("monitorViewSearch");
+  const pad = document.getElementById("ballotSeqKeypad");
+  if (!input || !pad || pad.dataset.keypadBound === "1") return;
+  pad.dataset.keypadBound = "1";
+  pad.addEventListener("click", (e) => {
+    const back = e.target.closest("[data-keypad-action='back']");
+    const digBtn = e.target.closest("[data-digit]");
+    if (back) {
+      input.value = String(input.value || "").slice(0, -1);
+      input.focus();
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    if (!digBtn) return;
+    const d = digBtn.getAttribute("data-digit");
+    if (!/^\d$/.test(d)) return;
+    input.value = String(input.value || "") + d;
+    input.focus();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 async function main() {

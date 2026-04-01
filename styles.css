@@ -2827,6 +2827,63 @@ body.list-workspace-page {
   border-color: var(--bb-accent);
   box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
 }
+.ballot-box-search-hint {
+  margin: 0;
+  padding: 0;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  font-weight: 500;
+  color: var(--bb-ink-muted);
+  max-width: 100%;
+}
+@media (min-width: 520px) {
+  .ballot-box-search-hint {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+.ballot-seq-keypad {
+  margin: -6px 0 16px;
+  max-width: min(320px, 100%);
+}
+.ballot-seq-keypad__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.ballot-seq-keypad__key {
+  min-height: 48px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 10px;
+  border: 1px solid var(--bb-border);
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--bb-ink);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ballot-seq-keypad__key:hover {
+  background: #fff;
+  border-color: rgba(13, 148, 136, 0.35);
+}
+.ballot-seq-keypad__key:active {
+  background: rgba(13, 148, 136, 0.08);
+}
+.ballot-seq-keypad__key:focus-visible {
+  outline: 2px solid var(--bb-accent);
+  outline-offset: 2px;
+}
+.ballot-seq-keypad__spacer {
+  visibility: hidden;
+  min-height: 48px;
+  pointer-events: none;
+}
+.ballot-seq-keypad__key--back {
+  font-size: 1rem;
+  font-weight: 700;
+}
 .ballot-box-page .monitor-voter-card {
   max-width: 560px;
   border-radius: 14px;
@@ -2888,6 +2945,7 @@ body.list-workspace-page {
   .monitor-pause-overlay,
   .monitor-session-bar,
   .monitor-mark-voted-toast,
+  .ballot-seq-keypad,
   .ballot-box-skip {
     display: none !important;
   }
@@ -6484,6 +6542,7 @@ textarea.voter-detail-referendum-notes:focus {
 }
 
 .ballot-box-page .monitor-session-bar {
+  margin-bottom: 14px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--bb-border, rgba(15, 23, 42, 0.08));
   border-radius: 12px;

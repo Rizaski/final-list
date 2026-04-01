@@ -92,7 +92,7 @@
           <summary class="ballot-box-help__summary">Guide &amp; shortcuts</summary>
           <ul class="ballot-box-help__list">
             <li><strong>Session</strong> — Open, pause, or close. Pause requires a reason and blocks search until you resume.</li>
-            <li><strong>Search</strong> — National ID, ballot sequence, or name (partial name supported).</li>
+            <li><strong>Search</strong> — National ID, ballot sequence, or name (partial name supported). Use the number pad for quick sequence entry.</li>
             <li><strong>Mark voted</strong> — Only after the person matches the record. You’ll see a confirmation strip with undo.</li>
             <li><strong>History</strong> — Voters marked from this link in the current session context.</li>
           </ul>
@@ -103,6 +103,7 @@
         </div>
         <div class="monitor-view__toolbar ballot-box-toolbar">
           <label for="monitorViewSearch" class="ballot-box-label ballot-box-toolbar__label">Find voter</label>
+          <p class="ballot-box-search-hint" role="note">Official campaign use only. Confirm voter identity before marking. Do not share this URL or your access code.</p>
           <div class="ballot-box-toolbar__search-row">
             <input type="text" id="monitorViewSearch" placeholder="National ID, sequence, or name" class="monitor-view__search ballot-box-search-field" autocomplete="off" inputmode="text">
             <button type="button" id="monitorViewSearchBtn" class="ballot-box-icon-tool ballot-box-icon-tool--search" aria-label="Search" title="Search">
@@ -111,6 +112,22 @@
                 <path d="M20 20l-4.3-4.3"/>
               </svg>
             </button>
+          </div>
+        </div>
+        <div class="ballot-seq-keypad" id="ballotSeqKeypad" role="group" aria-label="Number keys for ballot sequence">
+          <div class="ballot-seq-keypad__grid">
+            <button type="button" class="ballot-seq-keypad__key" data-digit="1" aria-label="1">1</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="2" aria-label="2">2</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="3" aria-label="3">3</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="4" aria-label="4">4</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="5" aria-label="5">5</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="6" aria-label="6">6</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="7" aria-label="7">7</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="8" aria-label="8">8</button>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="9" aria-label="9">9</button>
+            <span class="ballot-seq-keypad__spacer" aria-hidden="true"></span>
+            <button type="button" class="ballot-seq-keypad__key" data-digit="0" aria-label="0">0</button>
+            <button type="button" class="ballot-seq-keypad__key ballot-seq-keypad__key--back" data-keypad-action="back" aria-label="Backspace">⌫</button>
           </div>
         </div>
         <div id="monitorViewResult" class="monitor-view-result" aria-live="polite"></div>

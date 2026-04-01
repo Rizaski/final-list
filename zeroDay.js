@@ -4279,9 +4279,12 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       bar = document.createElement("div");
       bar.id = "monitor-view-session-bar";
       bar.className = "monitor-session-bar";
-      const header = contentEl.querySelector(".monitor-view__header");
-      if (header && header.parentNode) header.parentNode.insertBefore(bar, header);
-      else contentEl.insertBefore(bar, contentEl.firstChild);
+    }
+    const header = contentEl.querySelector(".monitor-view__header");
+    if (header && header.parentNode) {
+      header.insertAdjacentElement("afterend", bar);
+    } else if (!bar.parentNode) {
+      contentEl.insertBefore(bar, contentEl.firstChild);
     }
     const statusLabel =
       ballotSessionStatus === "open"
@@ -4563,21 +4566,6 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const subtitleEscaped = escapeHtml(subtitleText);
 
     if (standaloneBallotPage) {
-      const total = assignedVoters.length;
-      const voted = votedEntries.length;
-      const pct = total > 0 ? Math.min(100, Math.round((voted / total) * 100)) : 0;
-      const sessLabel =
-        ballotSessionStatus === "open"
-          ? "Open"
-          : ballotSessionStatus === "paused"
-            ? "Paused"
-            : "Closed";
-      const sessClass =
-        ballotSessionStatus === "open"
-          ? "ballot-dash-sess ballot-dash-sess--open"
-          : ballotSessionStatus === "paused"
-            ? "ballot-dash-sess ballot-dash-sess--paused"
-            : "ballot-dash-sess ballot-dash-sess--closed";
       main.innerHTML =
         '<div class="ballot-dash-head">' +
         '<div class="ballot-dash-head__titles">' +
@@ -4587,50 +4575,6 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         '<p class="monitor-view__subtitle ballot-dash-subtitle" id="monitorViewSubtitle">' +
         subtitleEscaped +
         "</p>" +
-        "</div>" +
-        "</div>" +
-        '<div class="ballot-dash-grid">' +
-        '<div class="ballot-dash-card">' +
-        '<span class="ballot-dash-card__k">Shift started</span>' +
-        '<span class="ballot-dash-card__v">' +
-        escapeHtml(formatDateTime(monitorViewStartedAt)) +
-        "</span>" +
-        "</div>" +
-        '<div class="ballot-dash-card">' +
-        '<span class="ballot-dash-card__k">On this list</span>' +
-        '<span class="ballot-dash-card__v">' +
-        String(total) +
-        "</span>" +
-        "</div>" +
-        '<div class="ballot-dash-card">' +
-        '<span class="ballot-dash-card__k">Session</span>' +
-        '<span class="ballot-dash-card__v ' +
-        sessClass +
-        '">' +
-        sessLabel +
-        "</span>" +
-        "</div>" +
-        '<div class="ballot-dash-card">' +
-        '<span class="ballot-dash-card__k">Marked voted</span>' +
-        '<span class="ballot-dash-card__v">' +
-        String(voted) +
-        "</span>" +
-        "</div>" +
-        "</div>" +
-        '<div class="ballot-dash-progress-row">' +
-        '<div class="ballot-dash-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
-        pct +
-        '" aria-label="Share of assigned voters marked voted">' +
-        '<div class="ballot-dash-progress__track"><div class="ballot-dash-progress__fill" style="width:' +
-        pct +
-        '%"></div></div>' +
-        '<span class="ballot-dash-progress__text">' +
-        String(voted) +
-        " / " +
-        String(total) +
-        " (" +
-        pct +
-        "%)</span>" +
         "</div>" +
         "</div>";
     } else {
