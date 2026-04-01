@@ -921,10 +921,10 @@ async function startAppModules(firebaseApi) {
     refreshBtn.addEventListener("click", () => {
       void runTopbarRefresh(false);
     });
-    // Auto-run the same top-header refresh flow every 15 seconds.
+    // Auto-run the same top-header refresh flow every 5 minutes.
     setInterval(() => {
       void runTopbarRefresh(true);
-    }, 15000);
+    }, 300000);
   }
 }
 
