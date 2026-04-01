@@ -1597,6 +1597,13 @@ async function openAgentAssignedVotersModal(agent) {
       return String(a.voter?.fullName || "").localeCompare(String(b.voter?.fullName || ""), "en");
     });
 
+  // Candidate-scoped agents: only voters assigned under that candidate (per-candidate maps),
+  // not the global volunteer field alone.
+  const agentScopedCandidateId = getAgentCandidateScopeId(agent);
+  const assignedForDisplay = agentScopedCandidateId
+    ? assigned.filter((x) => x.candidateIds.has(String(agentScopedCandidateId)))
+    : assigned;
+
   const body = document.createElement("div");
   body.className = "modal-body-inner";
   function reportBallotBoxLabel(v) {
@@ -1607,14 +1614,13 @@ async function openAgentAssignedVotersModal(agent) {
   }
   const toolbar = document.createElement("div");
   toolbar.className = "modal-list-toolbar list-toolbar";
-  const boxes = [...new Set(assigned.map((x) => reportBallotBoxLabel(x.voter)).filter(Boolean))].sort();
-  const hasGlobalAssignment = assigned.some((x) => x.metaGlobal);
+  const boxes = [...new Set(assignedForDisplay.map((x) => reportBallotBoxLabel(x.voter)).filter(Boolean))].sort();
+  const hasGlobalAssignment = assignedForDisplay.some((x) => x.metaGlobal);
   const candidateScopeIdsForFilter = new Set();
-  assigned.forEach((x) => {
+  assignedForDisplay.forEach((x) => {
     x.candidateIds.forEach((cid) => candidateScopeIdsForFilter.add(String(cid)));
   });
-  const agentScopeId = getAgentCandidateScopeId(agent);
-  if (agentScopeId) candidateScopeIdsForFilter.add(String(agentScopeId));
+  if (agentScopedCandidateId) candidateScopeIdsForFilter.add(String(agentScopedCandidateId));
   const candidateScopeFilterList = Array.from(candidateScopeIdsForFilter).sort((a, b) => {
     const la = candidateNameById.get(a) || a;
     const lb = candidateNameById.get(b) || b;
@@ -1670,6 +1676,12 @@ async function openAgentAssignedVotersModal(agent) {
     </div>
   `;
   body.appendChild(toolbar);
+  if (agentScopedCandidateId) {
+    const scopeSel = toolbar.querySelector("#agentAssignedFilterScope");
+    if (scopeSel && [...scopeSel.options].some((o) => o.value === String(agentScopedCandidateId))) {
+      scopeSel.value = String(agentScopedCandidateId);
+    }
+  }
 
   const summary = document.createElement("p");
   summary.className = "helper-text";
@@ -1718,7 +1730,7 @@ async function openAgentAssignedVotersModal(agent) {
     const filterBox = String(body.querySelector("#agentAssignedFilterBox")?.value || "all");
     const sortBy = String(body.querySelector("#agentAssignedSort")?.value || "sequence");
 
-    let list = assigned.filter((x) => {
+    let list = assignedForDisplay.filter((x) => {
       const v = x.voter || {};
       if (filterScope !== "all") {
         if (filterScope === "global") {
@@ -1748,10 +1760,16 @@ async function openAgentAssignedVotersModal(agent) {
     });
     list = sortRows(list, sortBy);
     lastRenderedRows = list;
-    summary.textContent = `Agent: ${agent.name || "—"} • Showing ${list.length} of ${assigned.length} assigned voters`;
+    const scopeNote = agentScopedCandidateId
+      ? ` • Only voters assigned under ${candidateLabelById(agentScopedCandidateId)}`
+      : "";
+    summary.textContent = `Agent: ${agent.name || "—"}${scopeNote} • Showing ${list.length} of ${assignedForDisplay.length} assigned voters`;
 
     if (!list.length) {
-      tableWrap.innerHTML = `<p class="helper-text" style="padding: 12px 0;">No assigned voters match your filters.</p>`;
+      const emptyHint = agentScopedCandidateId && !assignedForDisplay.length && assigned.length
+        ? "No voters are assigned to this agent under this candidate scope (global assignments are not counted for scoped agents)."
+        : "No assigned voters match your filters.";
+      tableWrap.innerHTML = `<p class="helper-text" style="padding: 12px 0;">${emptyHint}</p>`;
       return;
     }
 

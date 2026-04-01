@@ -58,12 +58,19 @@ service cloud.firestore {
       allow create, update: if signedIn() && sizeOk();
       allow delete: if signedIn();
 
+      // Session state (open / paused / closed) for ballot monitors; link token is the credential.
+      match /ballotSession/{docId} {
+        allow read: if true;
+        allow create, update: if sizeOk();
+        allow delete: if signedIn();
+      }
+
       match /voted/{voterId} {
         // Standalone ballot-box.html: anyone with the link can list/read/write marks (token is the credential).
         allow read: if true;
         allow create, update: if sizeOk();
-        // Clearing a mark from the main app (staff) still requires sign-in.
-        allow delete: if signedIn();
+        // Undo from the ballot link (delete) or staff signed in.
+        allow delete: if true;
       }
     }
 

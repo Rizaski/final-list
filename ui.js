@@ -7,7 +7,7 @@ const modalCloseButton = document.getElementById("modalCloseButton");
 /** Cleared on each open so the previous dialog’s width variant does not stick. */
 const MODAL_VARIANT_CLASSES = ["modal--wide"];
 
-export function openModal({ title, body, footer, startMaximized, dialogClass }) {
+export function openModal({ title, body, footer, startMaximized, dialogClass, hideMaximize }) {
   if (!modalBackdrop || !modalTitle || !modalBody || !modalFooter) {
     console.error("[Modal] Missing modal DOM nodes (modalBackdrop / modalTitle / modalBody / modalFooter).");
     if (window.appNotifications) {
@@ -34,14 +34,19 @@ export function openModal({ title, body, footer, startMaximized, dialogClass }) 
   }
   const maxBtn = document.getElementById("modalMaximizeButton");
   if (maxBtn) {
-    maxBtn.hidden = false;
-    maxBtn.style.removeProperty("display");
-    const isMax = modalDialog && modalDialog.classList.contains("modal--maximized");
-    maxBtn.setAttribute("aria-label", isMax ? "Restore" : "Maximize");
-    const iconMax = maxBtn.querySelector(".modal-icon-maximize");
-    const iconRestore = maxBtn.querySelector(".modal-icon-restore");
-    if (iconMax) iconMax.hidden = isMax;
-    if (iconRestore) iconRestore.hidden = !isMax;
+    if (hideMaximize) {
+      maxBtn.hidden = true;
+      maxBtn.style.display = "none";
+    } else {
+      maxBtn.hidden = false;
+      maxBtn.style.removeProperty("display");
+      const isMax = modalDialog && modalDialog.classList.contains("modal--maximized");
+      maxBtn.setAttribute("aria-label", isMax ? "Restore" : "Maximize");
+      const iconMax = maxBtn.querySelector(".modal-icon-maximize");
+      const iconRestore = maxBtn.querySelector(".modal-icon-restore");
+      if (iconMax) iconMax.hidden = isMax;
+      if (iconRestore) iconRestore.hidden = !isMax;
+    }
   }
   if (body) modalBody.appendChild(body);
   if (footer) modalFooter.appendChild(footer);

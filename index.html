@@ -97,6 +97,7 @@
       <div class="monitor-view-gate__card">
         <h2 class="monitor-view-gate__title">Ballot box access</h2>
         <p class="monitor-view-gate__hint">Enter the access code shared by your Campaign Manager to view the voter list.</p>
+        <p id="monitorGateBallotSession" class="monitor-view-gate__session-status" role="status" hidden></p>
         <form id="monitorViewGateForm" class="monitor-view-gate__form" autocomplete="off" method="dialog" action="javascript:void(0)">
           <label for="monitorViewAccessCode" class="sr-only">Code</label>
           <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input" placeholder="Code" autocomplete="off" inputmode="numeric" maxlength="20">
@@ -1105,7 +1106,7 @@
                   </div>
                 </header>
                 <div class="card-body">
-                  <div class="table-wrapper table-wrapper--sticky-header">
+                  <div class="table-wrapper table-wrapper--sticky-header table-wrapper--monitor-menus">
                     <table class="data-table data-table--monitors" id="zeroDayMonitorsTable">
                       <thead>
                         <tr>
@@ -1114,6 +1115,7 @@
                           <th scope="col">Mobile</th>
                           <th scope="col">Voters</th>
                           <th scope="col">Code</th>
+                          <th scope="col" class="monitor-session-col">Status</th>
                           <th scope="col" class="zero-day-monitors-actions-col">Actions</th>
                         </tr>
                       </thead>

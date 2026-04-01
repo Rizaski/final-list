@@ -446,10 +446,58 @@ function getAgentScopeId(agent) {
 function getCandidateAssignableAgents(candidateId) {
   const cid = String(candidateId || "").trim();
   if (!cid) return [];
-  return getAgentsFromStorage().filter((a) => {
+  const scopedAgents = getAgentsFromStorage().filter((a) => {
     const scopeId = getAgentScopeId(a);
     return scopeId === cid;
   });
+
+  // Candidate CSV import may write agent names onto voter assignment fields before/without
+  // corresponding rows in settings agents-data. Include those names so detail dropdown is usable.
+  const byNameKey = new Map();
+  const keyOf = (name) => String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+  scopedAgents.forEach((a) => {
+    const k = keyOf(a?.name);
+    if (!k) return;
+    byNameKey.set(k, a);
+  });
+
+  const addNameAsScopedAgent = (rawName) => {
+    const name = String(rawName || "").trim();
+    if (!name) return;
+    const k = keyOf(name);
+    if (!k || byNameKey.has(k)) return;
+    byNameKey.set(k, {
+      id: `csv-${cid}-${k}`,
+      name,
+      candidateId: cid,
+    });
+  };
+
+  // 1) Names from voter docs (candidateAgentAssignments[candidateId]).
+  (Array.isArray(currentVoters) ? currentVoters : []).forEach((v) => {
+    const obj = v?.candidateAgentAssignments;
+    if (!obj || typeof obj !== "object") return;
+    addNameAsScopedAgent(obj[cid]);
+  });
+
+  // 2) Names from legacy/local per-candidate assignment map.
+  try {
+    const raw = localStorage.getItem(candidatePledgedAgentStorageKey(cid));
+    if (raw) {
+      const map = JSON.parse(raw);
+      if (map && typeof map === "object") {
+        Object.values(map).forEach((val) => {
+          const n = val && typeof val === "object" ? val.name : val;
+          addNameAsScopedAgent(n);
+        });
+      }
+    }
+  } catch (_) {}
+
+  return Array.from(byNameKey.values()).sort((a, b) =>
+    String(a?.name || "").localeCompare(String(b?.name || ""), "en")
+  );
 }
 
 const VOTERS_MODULE_DESC_DEFAULT =

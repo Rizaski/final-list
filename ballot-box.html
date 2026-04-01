@@ -3,43 +3,119 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ballot box – Voter list</title>
+  <meta name="description" content="Authorized vote marking for campaign ballot monitors. Search voters, manage session, and record votes securely.">
+  <meta name="theme-color" content="#0f4c5c">
+  <title>Vote marking</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Sans:wght@600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-  <!-- Standalone ballot box: state=gate (code) | list (after code) | invalid -->
-  <div id="monitor-view" class="monitor-view" data-state="gate">
-    <div id="monitor-view-gate" class="monitor-view-gate">
-      <div class="monitor-view-gate__card">
-        <h2 class="monitor-view-gate__title">Ballot box access</h2>
-        <p class="monitor-view-gate__hint">Enter the code shared by your Campaign Manager to view the voter list.</p>
-        <form id="monitorViewGateForm" class="monitor-view-gate__form" autocomplete="off" method="dialog" action="javascript:void(0)">
-          <label for="monitorViewAccessCode" class="sr-only">Code</label>
-          <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input" placeholder="Code" autocomplete="off" inputmode="numeric" maxlength="20">
-          <p id="monitorViewGateError" class="monitor-view-gate__error" role="alert" hidden></p>
-          <button type="submit" class="primary-button monitor-view-gate__submit">Continue</button>
-        </form>
-      </div>
-    </div>
-    <div id="monitor-view-content" class="monitor-view__content" aria-hidden="true" style="display: none;">
-      <div class="monitor-view__header monitor-view__header--search-only">
-        <h1 id="monitorViewTitle">Ballot box</h1>
-        <p class="monitor-view__subtitle" id="monitorViewSubtitle">Search by ID or Sequence to find a voter.</p>
-      </div>
-      <div class="monitor-view__toolbar">
-        <label for="monitorViewSearch" class="sr-only">Search by ID or Sequence</label>
-        <input type="text" id="monitorViewSearch" placeholder="Enter ID or Sequence" class="monitor-view__search" autocomplete="off" inputmode="numeric">
-        <button type="button" id="monitorViewSearchBtn" class="primary-button">Search</button>
-      </div>
-      <div id="monitorViewResult" class="monitor-view-result" aria-live="polite">
-        <!-- Single voter detail box or "No voter found" rendered by JS -->
-      </div>
+<body class="ballot-box-page">
+  <a class="ballot-box-skip" href="#ballot-box-main">Skip to vote marking</a>
+
+  <div id="ballotBoxLoading" class="ballot-box-loading" aria-live="polite" aria-busy="true">
+    <div class="ballot-box-loading__panel">
+      <span class="ballot-box-loading__spinner" aria-hidden="true"></span>
+      <p class="ballot-box-loading__text">Preparing your workspace…</p>
     </div>
   </div>
+
+  <header class="ballot-box-appbar" role="banner">
+    <div class="ballot-box-appbar__inner">
+      <div class="ballot-box-appbar__brand">
+        <span class="ballot-box-appbar__mark" aria-hidden="true">
+          <svg class="ballot-box-appbar__icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false">
+            <rect x="4" y="6" width="24" height="20" rx="2" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M10 14h12M10 18h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="22" cy="22" r="5" fill="currentColor" opacity="0.2"/>
+            <path d="M20 22l1.5 1.5L25 20" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <div class="ballot-box-appbar__titles">
+          <span class="ballot-box-appbar__product">Vote marking</span>
+          <span class="ballot-box-appbar__tagline">Campaign · Secure monitor workspace</span>
+        </div>
+      </div>
+      <div class="ballot-box-appbar__meta" id="ballotBoxAppbarMeta">
+        <span class="ballot-box-pill ballot-box-pill--success" id="ballotBoxOnlineStatus">Online</span>
+        <time class="ballot-box-time" id="ballotBoxClock" datetime=""></time>
+      </div>
+    </div>
+  </header>
+
+  <main id="ballot-box-main" class="ballot-box-main" tabindex="-1">
+    <div id="monitor-view" class="monitor-view" data-state="gate">
+      <div id="monitor-view-gate" class="monitor-view-gate ballot-box-gate-outer">
+        <div class="monitor-view-gate__card ballot-box-gate-card">
+          <div class="ballot-box-gate-layout">
+            <div class="ballot-box-gate-aside">
+              <p class="ballot-box-gate__eyebrow">Authorized monitor access</p>
+              <h2 class="monitor-view-gate__title ballot-box-gate-title">Sign in to the ballot workspace</h2>
+              <p class="monitor-view-gate__hint ballot-box-gate-lead">Use the access code from your Campaign Manager. This link is for official vote marking only—treat it like a ballot key.</p>
+              <div class="ballot-box-gate-features">
+                <div class="ballot-box-gate-feature">
+                  <span class="ballot-box-gate-feature__icon" aria-hidden="true">✓</span>
+                  <span>Session control (open · pause · close)</span>
+                </div>
+                <div class="ballot-box-gate-feature">
+                  <span class="ballot-box-gate-feature__icon" aria-hidden="true">✓</span>
+                  <span>Search by ID, sequence, or name</span>
+                </div>
+                <div class="ballot-box-gate-feature">
+                  <span class="ballot-box-gate-feature__icon" aria-hidden="true">✓</span>
+                  <span>Mark voted, history, and undo window</span> 
+                </div>
+              </div>
+            </div>
+            <div class="ballot-box-gate-main">
+              <p class="ballot-box-gate-main__label">Quick start</p>
+              <ol class="ballot-box-gate-steps" aria-label="Steps after sign-in">
+                <li>Search the voter</li>
+                <li>Verify details on screen</li>
+                <li>Mark voted when correct</li>
+              </ol>
+              <form id="monitorViewGateForm" class="monitor-view-gate__form ballot-box-gate-form" autocomplete="off" method="dialog" action="javascript:void(0)">
+                <label for="monitorViewAccessCode" class="ballot-box-label">Access code</label>
+                <p id="monitorGateBallotSession" class="monitor-view-gate__session-status ballot-box-gate__session" role="status" hidden></p>
+                <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input ballot-box-gate-input" placeholder="Enter code" autocomplete="off" inputmode="numeric" maxlength="20">
+                <p id="monitorViewGateError" class="monitor-view-gate__error" role="alert" hidden></p>
+                <button type="submit" class="primary-button monitor-view-gate__submit ballot-box-gate-submit">Enter workspace</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="monitor-view-content" class="monitor-view__content ballot-box-workspace" aria-hidden="true" style="display: none;">
+        <details class="ballot-box-help">
+          <summary class="ballot-box-help__summary">Guide &amp; shortcuts</summary>
+          <ul class="ballot-box-help__list">
+            <li><strong>Session</strong> — Open, pause, or close. Pause requires a reason and blocks search until you resume.</li>
+            <li><strong>Search</strong> — National ID, ballot sequence, or name (partial name supported).</li>
+            <li><strong>Mark voted</strong> — Only after the person matches the record. You’ll see a confirmation strip with undo.</li>
+            <li><strong>History</strong> — Voters marked from this link in the current session context.</li>
+            <li><strong>Print</strong> — Use “Print summary” in the dashboard header for a paper copy of stats.</li>
+          </ul>
+        </details>
+        <div class="monitor-view__header monitor-view__header--search-only">
+          <h1 id="monitorViewTitle">Ballot box</h1>
+          <p class="monitor-view__subtitle" id="monitorViewSubtitle">Search by ID or Sequence to find a voter.</p>
+        </div>
+        <div class="monitor-view__toolbar ballot-box-toolbar">
+          <label for="monitorViewSearch" class="ballot-box-label ballot-box-label--inline">Find voter</label>
+          <input type="text" id="monitorViewSearch" placeholder="National ID, sequence, or name" class="monitor-view__search ballot-box-search-field" autocomplete="off" inputmode="text">
+          <button type="button" id="monitorViewSearchBtn" class="primary-button ballot-box-search-btn">Search</button>
+        </div>
+        <div id="monitorViewResult" class="monitor-view-result" aria-live="polite"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="ballot-box-footer" role="contentinfo">
+    <p class="ballot-box-footer__line">Official campaign use only. Confirm voter identity before marking. Do not share this URL or your access code.</p>
+    <p class="ballot-box-footer__line ballot-box-footer__muted">Support: contact your Campaign Manager.</p>
+  </footer>
 
   <div class="modal-backdrop" id="modalBackdrop" hidden aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">

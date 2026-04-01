@@ -29,6 +29,8 @@ const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
 const VOTED_STORAGE_KEY = "zero-day-voted";
 const TRIPS_STORAGE_KEY = "zero-day-trips";
+/** localStorage key prefix for ballot session when Firestore is unavailable */
+const MONITOR_BALLOT_SESSION_PREFIX = "monitor_ballot_session_";
 
 let zeroDayTrips = [];
 let transportTripsUnsubscribe = null;
@@ -41,6 +43,9 @@ let zeroDayVoteCurrentPage = 1;
 let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
 let votedRealtimeUnsubscribes = []; // unsubscribe fns for Firestore voted listeners
 const votedByMonitor = {}; // token -> [{ voterId, timeMarked }] from real-time snapshots
+let monitorBallotSessionUnsubs = []; // ballot session snapshots for Manage Monitors status column
+let monitorBallotSessionVisibilityBound = false;
+let monitorRowMenuDocClose = null;
 let zeroDaySyncInProgress = false;
 let zeroDaySyncIntervalId = null;
 const ZERO_DAY_SYNC_INTERVAL_MS = 5000;
@@ -1603,9 +1608,91 @@ function copyMonitorLink(monitorId) {
   }).catch(() => alert("Could not copy. Link: " + url + " (Code: " + accessCode + ")"));
 }
 
+function tearDownMonitorBallotSessionListeners() {
+  monitorBallotSessionUnsubs.forEach((u) => {
+    try {
+      u();
+    } catch (_) {}
+  });
+  monitorBallotSessionUnsubs = [];
+}
+
+function applyMonitorSessionCell(monitorId, state) {
+  const table = document.getElementById("zeroDayMonitorsTable");
+  const cell = table?.querySelector(`tbody [data-monitor-session-cell="${String(monitorId)}"]`);
+  if (!cell) return;
+  const st =
+    state && (state.status === "paused" || state.status === "closed") ? state.status : "open";
+  const label = st === "open" ? "Open" : st === "paused" ? "Paused" : "Closed";
+  cell.textContent = label;
+  cell.className = "monitor-session-cell monitor-session-cell--" + st;
+  const reason = state && String(state.pauseReason || "").trim();
+  if (st === "paused" && reason) cell.setAttribute("title", "Reason: " + reason);
+  else cell.removeAttribute("title");
+}
+
+function wireMonitorBallotSessionCells() {
+  tearDownMonitorBallotSessionListeners();
+  const table = document.getElementById("zeroDayMonitorsTable");
+  zeroDayMonitors.forEach((m) => {
+    const cell = table?.querySelector(`tbody [data-monitor-session-cell="${String(m.id)}"]`);
+    if (!cell) return;
+    if (!m.shareToken) {
+      cell.textContent = "—";
+      cell.className = "monitor-session-cell monitor-session-cell--na";
+      cell.removeAttribute("title");
+      return;
+    }
+    cell.textContent = "…";
+    cell.className = "monitor-session-cell monitor-session-cell--loading";
+    cell.removeAttribute("title");
+  });
+  firebaseInitPromise
+    .then((api) => {
+      if (!api.getBallotSessionFs || !api.onBallotSessionSnapshotFs) return;
+      zeroDayMonitors.forEach((m) => {
+        const token = m.shareToken;
+        if (!token) return;
+        api
+          .getBallotSessionFs(token)
+          .then((s) => applyMonitorSessionCell(m.id, s))
+          .catch(() => applyMonitorSessionCell(m.id, { status: "open" }));
+        const unsub = api.onBallotSessionSnapshotFs(token, (s) => applyMonitorSessionCell(m.id, s));
+        monitorBallotSessionUnsubs.push(unsub);
+      });
+    })
+    .catch(() => {});
+}
+
+function closeAllMonitorRowMenus(panel) {
+  if (monitorRowMenuDocClose) {
+    document.removeEventListener("click", monitorRowMenuDocClose);
+    monitorRowMenuDocClose = null;
+  }
+  const root = panel || document;
+  root.querySelectorAll("[data-monitor-row-dropdown]").forEach((menu) => {
+    menu.hidden = true;
+  });
+  root.querySelectorAll("[data-monitor-menu-trigger]").forEach((btn) => {
+    btn.setAttribute("aria-expanded", "false");
+  });
+}
+
+function openMonitorRowMenu(panel, wrap, menu, trigger) {
+  closeAllMonitorRowMenus(panel);
+  menu.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  monitorRowMenuDocClose = (ev) => {
+    if (wrap.contains(ev.target)) return;
+    closeAllMonitorRowMenus(panel);
+  };
+  requestAnimationFrame(() => document.addEventListener("click", monitorRowMenuDocClose));
+}
+
 function renderMonitorsTable() {
   if (!zeroDayMonitorsTableBody) return;
-  const emptyColspan = 6;
+  const emptyColspan = 7;
+  tearDownMonitorBallotSessionListeners();
   zeroDayMonitorsTableBody.innerHTML = "";
   if (!zeroDayMonitors.length) {
     zeroDayMonitorsTableBody.innerHTML = `
@@ -1635,17 +1722,22 @@ function renderMonitorsTable() {
           </span>
         </div>
       </td>
+      <td class="monitor-session-col"><span class="monitor-session-cell monitor-session-cell--loading" data-monitor-session-cell="${mid}">…</span></td>
       <td class="zero-day-monitors-actions-col">
-        <div class="zero-day-monitors-crud" role="group" aria-label="Monitor actions">
-          <button type="button" class="ghost-button ghost-button--small" data-view-monitor="${mid}" title="View details">View</button>
-          <button type="button" class="ghost-button ghost-button--small" data-assign-voters="${mid}" title="Assign voters from this ballot box">Assign</button>
-          <button type="button" class="ghost-button ghost-button--small" data-edit-monitor="${mid}" title="Edit monitor">Edit</button>
-          <button type="button" class="ghost-button ghost-button--small" data-delete-monitor="${mid}" title="Delete this monitor and its access link">Delete</button>
+        <div class="dropdown-wrap zero-day-monitor-row-menu">
+          <button type="button" class="icon-button zero-day-monitor-menu-trigger" data-monitor-menu-trigger aria-label="Monitor actions" aria-haspopup="true" aria-expanded="false" title="Actions">⋮</button>
+          <div class="dropdown-menu zero-day-monitor-row-dropdown" data-monitor-row-dropdown hidden role="menu" aria-label="Monitor actions">
+            <button type="button" class="dropdown-menu__item" role="menuitem" data-view-monitor="${mid}">View</button>
+            <button type="button" class="dropdown-menu__item" role="menuitem" data-assign-voters="${mid}">Assign voters</button>
+            <button type="button" class="dropdown-menu__item" role="menuitem" data-edit-monitor="${mid}">Edit</button>
+            <button type="button" class="dropdown-menu__item" role="menuitem" data-delete-monitor="${mid}">Delete</button>
+          </div>
         </div>
       </td>
     `;
     zeroDayMonitorsTableBody.appendChild(tr);
   });
+  wireMonitorBallotSessionCells();
 }
 
 /** Read-only details (R in CRUD), aligned with Settings → Agents. */
@@ -3117,6 +3209,28 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   renderMonitorsTable();
   bindZeroDayToolbar();
 
+  if (!monitorBallotSessionVisibilityBound) {
+    monitorBallotSessionVisibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      firebaseInitPromise
+        .then((api) => {
+          if (!api.getBallotSessionFs) return;
+          const tbl = document.getElementById("zeroDayMonitorsTable");
+          if (!tbl) return;
+          zeroDayMonitors.forEach((m) => {
+            if (!m.shareToken) return;
+            if (!tbl.querySelector(`tbody [data-monitor-session-cell="${String(m.id)}"]`)) return;
+            api
+              .getBallotSessionFs(m.shareToken)
+              .then((s) => applyMonitorSessionCell(m.id, s))
+              .catch(() => {});
+          });
+        })
+        .catch(() => {});
+    });
+  }
+
   firebaseInitPromise.then((api) => {
     if (!api.ready || !api.getAllTransportTripsFs) return;
     api.getAllTransportTripsFs().then((remote) => {
@@ -3148,6 +3262,21 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   const monitorsPanel = document.getElementById("zero-day-tab-monitors");
   if (monitorsPanel) {
     monitorsPanel.addEventListener("click", (e) => {
+      const menuTrigger = e.target.closest("[data-monitor-menu-trigger]");
+      if (menuTrigger) {
+        e.preventDefault();
+        e.stopPropagation();
+        const wrap = menuTrigger.closest(".zero-day-monitor-row-menu");
+        const menu = wrap?.querySelector("[data-monitor-row-dropdown]");
+        if (!menu) return;
+        if (!menu.hidden) {
+          closeAllMonitorRowMenus(monitorsPanel);
+          return;
+        }
+        openMonitorRowMenu(monitorsPanel, wrap, menu, menuTrigger);
+        return;
+      }
+
       const viewBtn = e.target.closest("[data-view-monitor]");
       const assignBtn = e.target.closest("[data-assign-voters]");
       const copyCodeBtn = e.target.closest("[data-copy-monitor-code]");
@@ -3155,10 +3284,12 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       const editBtn = e.target.closest("[data-edit-monitor]");
       const deleteBtn = e.target.closest("[data-delete-monitor]");
       if (viewBtn) {
+        closeAllMonitorRowMenus(monitorsPanel);
         const id = Number(viewBtn.getAttribute("data-view-monitor"));
         const monitor = zeroDayMonitors.find((m) => m.id === id);
         if (monitor) openMonitorViewModal(monitor);
       } else if (assignBtn) {
+        closeAllMonitorRowMenus(monitorsPanel);
         const id = Number(assignBtn.getAttribute("data-assign-voters"));
         assignVotersFromBallotBox(id);
       } else if (copyCodeBtn) {
@@ -3168,10 +3299,12 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         const id = Number(copyLinkBtn.getAttribute("data-copy-monitor-link"));
         copyMonitorListUrlOnly(id);
       } else if (editBtn) {
+        closeAllMonitorRowMenus(monitorsPanel);
         const id = Number(editBtn.getAttribute("data-edit-monitor"));
         const monitor = zeroDayMonitors.find((m) => m.id === id);
         if (monitor) openAddMonitorForm(monitor);
       } else if (deleteBtn) {
+        closeAllMonitorRowMenus(monitorsPanel);
         const id = Number(deleteBtn.getAttribute("data-delete-monitor"));
         deleteMonitorLink(id);
       }
@@ -3403,7 +3536,10 @@ function getMonitorAccessCode(monitor) {
 export function initMonitorView(token, votersContextParam, options = {}) {
   const isRemote = options.remoteMonitor != null;
   const isBallotBoxOnly = !!(options.ballotBoxOnly && votersContextParam);
+  const preventLocalMonitorFallback = options.preventLocalMonitorFallback === true;
   const monitoringDisabled = options.monitoringDisabled === true;
+  /** ballot-box.html standalone page — professional copy and document title */
+  const standaloneBallotPage = options.standaloneBallotPage === true;
   let monitor = options.remoteMonitor;
   let assignedVoters = [];
   let votedEntries = options.remoteVotedEntries != null ? options.remoteVotedEntries : [];
@@ -3418,6 +3554,11 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     monitor = { ballotBox: options.ballotBoxOnly, voterIds: assignedVoters.map((v) => v.id) };
     votedEntries = zeroDayVotedEntries;
   } else if (!isRemote) {
+    if (preventLocalMonitorFallback) {
+      monitor = null;
+      assignedVoters = [];
+      votedEntries = [];
+    } else {
     loadMonitors();
     loadVotedEntries();
     monitor = zeroDayMonitors.find((m) => m.shareToken === token);
@@ -3435,6 +3576,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       assignedVoters = [];
     }
     votedEntries = zeroDayVotedEntries;
+    }
   } else {
     const voters = options.remoteMonitor.voters || [];
     assignedVoters = voters.map((v) => ({
@@ -3474,6 +3616,10 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         title: "No ballot box link",
         hint: "Open the ballot box using the full link shared by your Campaign Manager (it should include the access code).",
       },
+      offline: {
+        title: "Cannot reach campaign data",
+        hint: "This ballot box link needs internet access to load monitor and voter records. Check your connection and try again.",
+      },
       not_found: {
         title: "Link not found",
         hint: "No ballot box link was found in the campaign database for this address. Ask your Campaign Manager to open Zero Day → Manage Monitors in the main app while online, create/refresh the monitor for this ballot box, then share the new link and access code with you.",
@@ -3484,6 +3630,10 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       },
     };
     const text = messages[invalidReason] || messages.default;
+    if (standaloneBallotPage) {
+      monitorViewEl.classList.add("monitor-view--standalone-ballot");
+      document.title = "Vote marking · Link unavailable";
+    }
     if (!existingMsg) {
       const msg = document.createElement("div");
       msg.id = "monitor-view-invalid-msg";
@@ -3510,21 +3660,582 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   const invalidMsg = document.getElementById("monitor-view-invalid-msg");
   if (invalidMsg) invalidMsg.remove();
 
+  if (standaloneBallotPage) {
+    monitorViewEl.classList.add("monitor-view--standalone-ballot");
+  }
+
+  let ballotSessionStatus = "open";
+  let ballotSessionPauseReason = "";
+  let ballotSessionPausedAt = "";
+  let ballotSessionUnsub = null;
+  let ballotSessionApi = options.ballotSession || null;
+  let markVotedToastTimer = null;
+  let markVotedToastHideTimer = null;
+  let markVotedToastEl = null;
+  let monitorWorkspaceOpened = false;
+
+  function loadLocalBallotSession() {
+    try {
+      if (!token) return;
+      const raw = localStorage.getItem(MONITOR_BALLOT_SESSION_PREFIX + token);
+      if (!raw) {
+        ballotSessionStatus = "open";
+        ballotSessionPauseReason = "";
+        ballotSessionPausedAt = "";
+        return;
+      }
+      const s = JSON.parse(raw);
+      ballotSessionStatus = s.status === "paused" || s.status === "closed" ? s.status : "open";
+      ballotSessionPauseReason = String(s.pauseReason || "");
+      ballotSessionPausedAt = String(s.pausedAt || "");
+    } catch (_) {}
+  }
+
+  function saveLocalBallotSession() {
+    try {
+      if (!token) return;
+      localStorage.setItem(
+        MONITOR_BALLOT_SESSION_PREFIX + token,
+        JSON.stringify({
+          status: ballotSessionStatus,
+          pauseReason: ballotSessionPauseReason,
+          pausedAt: ballotSessionPausedAt,
+        })
+      );
+    } catch (_) {}
+  }
+
+  async function ensureBallotSessionApi() {
+    if (ballotSessionApi) return;
+    if (!token) return;
+    try {
+      const api = await firebaseInitPromise;
+      if (api && api.getBallotSessionFs) {
+        ballotSessionApi = {
+          get: () => api.getBallotSessionFs(token),
+          set: (d) => api.setBallotSessionFs(token, d),
+          subscribe: (cb) => api.onBallotSessionSnapshotFs(token, cb),
+        };
+      }
+    } catch (_) {}
+  }
+
+  function getCurrentDisplayedVoter() {
+    const vid = monitorViewResult?.querySelector("[data-voter-id]")?.getAttribute("data-voter-id");
+    if (!vid) return null;
+    return assignedVoters.find((x) => String(x.id) === String(vid)) || null;
+  }
+
+  function renderGateBallotSessionStatus() {
+    const el = document.getElementById("monitorGateBallotSession");
+    if (!el) return;
+    const sess =
+      ballotSessionStatus === "paused"
+        ? "paused"
+        : ballotSessionStatus === "closed"
+          ? "closed"
+          : "open";
+    el.className =
+      "monitor-view-gate__session-status monitor-view-gate__session-status--" + sess;
+    el.hidden = false;
+    if (sess === "open") {
+      el.innerHTML =
+        "<strong>Live session:</strong> Open — vote marking is allowed for everyone using this link.";
+    } else if (sess === "paused") {
+      const r = ballotSessionPauseReason.trim() || "—";
+      el.innerHTML =
+        "<strong>Live session: Paused</strong> — search and marking stay on hold until the session is opened. Reason: " +
+        escapeHtml(r);
+    } else {
+      el.innerHTML =
+        "<strong>Live session: Closed</strong> — marking is disabled for this link until someone opens the session.";
+    }
+  }
+
+  /** Gate shows live Firestore session; workspace shows bar, header, overlay, search. */
+  function syncBallotSessionUi() {
+    renderGateBallotSessionStatus();
+    if (monitorViewEl.getAttribute("data-state") !== "list") return;
+    renderBallotSessionBar();
+    renderMonitorViewHeader();
+    renderPauseOverlay();
+    updateMonitorSearchUi();
+    const v = getCurrentDisplayedVoter();
+    if (v) renderMonitorViewResult(v);
+  }
+
+  function applyBallotSessionState(state, opts = {}) {
+    if (!state) return;
+    const skipLocal = opts.skipLocalPersistence === true;
+    ballotSessionStatus =
+      state.status === "paused" || state.status === "closed" ? state.status : "open";
+    ballotSessionPauseReason = String(state.pauseReason || "");
+    ballotSessionPausedAt = String(state.pausedAt || "");
+    if (token && !skipLocal) saveLocalBallotSession();
+    syncBallotSessionUi();
+  }
+
+  /** One shared init + listener per monitor view; concurrent awaiters join the same promise. */
+  let ballotSessionInitPromise = null;
+
+  async function initBallotSessionSubscription() {
+    if (ballotSessionInitPromise) {
+      await ballotSessionInitPromise;
+      syncBallotSessionUi();
+      return;
+    }
+    ballotSessionInitPromise = (async () => {
+      await ensureBallotSessionApi();
+      if (ballotSessionUnsub) {
+        ballotSessionUnsub();
+        ballotSessionUnsub = null;
+      }
+      if (ballotSessionApi) {
+        try {
+          const initial = await ballotSessionApi.get();
+          applyBallotSessionState(initial);
+        } catch (err) {
+          console.warn("[Monitor] ballot session initial load failed", err?.message || err);
+          // Do not load localStorage here — it often still says "open" from an old visit while
+          // Firestore already has paused/closed. Wait for the snapshot listener to deliver truth.
+          applyBallotSessionState(
+            { status: "open", pauseReason: "", pausedAt: "" },
+            { skipLocalPersistence: true }
+          );
+        }
+        ballotSessionUnsub = ballotSessionApi.subscribe((state) => {
+          applyBallotSessionState(state);
+        });
+      } else {
+        loadLocalBallotSession();
+        applyBallotSessionState({
+          status: ballotSessionStatus,
+          pauseReason: ballotSessionPauseReason,
+          pausedAt: ballotSessionPausedAt,
+        });
+      }
+    })();
+    await ballotSessionInitPromise;
+    syncBallotSessionUi();
+  }
+
+  async function persistBallotSession(status, pauseReason) {
+    const nowIso = new Date().toISOString();
+    const st = status === "paused" || status === "closed" ? status : "open";
+    const resolvedPauseReason = st === "paused" ? String(pauseReason || "") : "";
+    const resolvedPausedAt = st === "paused" ? nowIso : "";
+    const applyResolved = () => {
+      applyBallotSessionState({
+        status: st,
+        pauseReason: resolvedPauseReason,
+        pausedAt: resolvedPausedAt,
+      });
+      saveLocalBallotSession();
+    };
+    if (ballotSessionApi) {
+      try {
+        await ballotSessionApi.set({
+          status,
+          pauseReason: status === "paused" ? pauseReason : "",
+          pausedAt: status === "paused" ? nowIso : "",
+        });
+        // Apply immediately so UI updates even if the snapshot listener is slow or misconfigured.
+        applyResolved();
+      } catch (e) {
+        console.warn("[Monitor] ballot session save failed", e);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Could not sync session to the server",
+            meta: String(
+              e?.message ||
+                e ||
+                "Session updated on this device only. Check network and Firestore rules for monitors/.../ballotSession."
+            ),
+          });
+        }
+        // Still apply locally so Open / Pause / Close keep working offline or when rules fail.
+        applyResolved();
+      }
+      return;
+    }
+    ballotSessionStatus = status === "paused" || status === "closed" ? status : "open";
+    ballotSessionPauseReason = ballotSessionStatus === "paused" ? String(pauseReason || "") : "";
+    ballotSessionPausedAt = ballotSessionStatus === "paused" ? nowIso : "";
+    saveLocalBallotSession();
+    applyBallotSessionState({
+      status: ballotSessionStatus,
+      pauseReason: ballotSessionPauseReason,
+      pausedAt: ballotSessionPausedAt,
+    });
+  }
+
+  async function openBallotSession() {
+    await persistBallotSession("open", "");
+  }
+
+  async function closeBallotSession() {
+    await persistBallotSession("closed", "");
+  }
+
+  function ensureMonitorWorkArea() {
+    if (!contentEl) return null;
+    let wrap = document.getElementById("monitor-view-work-area");
+    if (wrap) return wrap;
+    const bar = document.getElementById("monitor-view-session-bar");
+    const header = contentEl.querySelector(".monitor-view__header");
+    const toolbar = contentEl.querySelector(".monitor-view__toolbar");
+    const result = document.getElementById("monitorViewResult");
+    if (!header || !toolbar || !result) return null;
+    wrap = document.createElement("div");
+    wrap.id = "monitor-view-work-area";
+    wrap.className = "monitor-view-work-area";
+    if (bar) bar.after(wrap);
+    else contentEl.insertBefore(wrap, header);
+    wrap.appendChild(header);
+    wrap.appendChild(toolbar);
+    wrap.appendChild(result);
+    return wrap;
+  }
+
+  function attachSlideToOpen(overlayEl) {
+    const track = overlayEl.querySelector("[data-slide-track]");
+    const thumb = overlayEl.querySelector("[data-slide-thumb]");
+    if (!track || !thumb) return;
+
+    const pad = 6;
+
+    function maxOffset() {
+      return Math.max(0, track.clientWidth - 2 * pad - thumb.clientWidth);
+    }
+
+    function clamp(v) {
+      const m = maxOffset();
+      return Math.max(0, Math.min(m, v));
+    }
+
+    function offsetFromClientX(clientX) {
+      const rect = track.getBoundingClientRect();
+      const x = clientX - rect.left - pad - thumb.clientWidth / 2;
+      return clamp(x);
+    }
+
+    function setThumbOffset(o) {
+      thumb.style.transform = `translate(${pad + o}px, -50%)`;
+    }
+
+    thumb.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      thumb.setPointerCapture(e.pointerId);
+
+      function onMove(ev) {
+        ev.preventDefault();
+        const o = offsetFromClientX(ev.clientX);
+        setThumbOffset(o);
+      }
+
+      function onUp(ev) {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+        try {
+          thumb.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+        const o = offsetFromClientX(ev.clientX);
+        const m = maxOffset();
+        if (m > 0 && o / m >= 0.88) {
+          void openBallotSession();
+        } else {
+          setThumbOffset(0);
+        }
+      }
+
+      document.addEventListener("pointermove", onMove, { passive: false });
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
+    });
+  }
+
+  function renderPauseOverlay() {
+    if (!contentEl || monitoringDisabled) {
+      document.getElementById("monitor-pause-overlay")?.remove();
+      return;
+    }
+    if (ballotSessionStatus !== "paused") {
+      document.getElementById("monitor-pause-overlay")?.remove();
+      return;
+    }
+    const wrap = ensureMonitorWorkArea();
+    if (!wrap) return;
+    let overlay = document.getElementById("monitor-pause-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "monitor-pause-overlay";
+      wrap.appendChild(overlay);
+    }
+    const pausedAtDisplay = ballotSessionPausedAt
+      ? formatDateTime(ballotSessionPausedAt)
+      : "—";
+    const reasonDisplay =
+      ballotSessionPauseReason.trim() || "—";
+    overlay.className = "monitor-pause-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "monitorPauseOverlayTitle");
+    overlay.innerHTML = `
+      <div class="monitor-pause-overlay__backdrop"></div>
+      <div class="monitor-pause-overlay__card">
+        <h2 id="monitorPauseOverlayTitle" class="monitor-pause-overlay__title">Ballot box paused</h2>
+        <p class="monitor-pause-overlay__line"><span class="monitor-pause-overlay__label">Paused at</span> ${escapeHtml(pausedAtDisplay)}</p>
+        <p class="monitor-pause-overlay__line monitor-pause-overlay__reason"><span class="monitor-pause-overlay__label">Reason</span> ${escapeHtml(reasonDisplay)}</p>
+        <div class="monitor-slide-open" aria-label="Slide to open ballot box">
+          <div class="monitor-slide-open__track" data-slide-track>
+            <span class="monitor-slide-open__hint">Slide to open →</span>
+            <div class="monitor-slide-open__thumb" data-slide-thumb role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Slide to resume marking"></div>
+          </div>
+        </div>
+        <button type="button" class="monitor-pause-overlay__open-btn" data-pause-open-btn>Open ballot box</button>
+      </div>
+    `;
+    overlay.querySelector("[data-pause-open-btn]")?.addEventListener("click", () => void openBallotSession());
+    attachSlideToOpen(overlay);
+  }
+
+  function pauseBallotSessionModal() {
+    const wrap = document.createElement("div");
+    wrap.className = "monitor-pause-modal__body";
+    const label = document.createElement("label");
+    label.textContent = "Reason for pause";
+    label.setAttribute("for", "monitorPauseReasonInput");
+    const ta = document.createElement("textarea");
+    ta.id = "monitorPauseReasonInput";
+    ta.className = "monitor-pause-modal__textarea";
+    ta.rows = 3;
+    ta.placeholder = "Enter why voting is paused (shown to monitors).";
+    wrap.appendChild(label);
+    wrap.appendChild(ta);
+    const footerDiv = document.createElement("div");
+    footerDiv.className = "modal-footer-row";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ghost-button";
+    cancelBtn.textContent = "Cancel";
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "monitor-session-bar__btn monitor-session-bar__btn--pause";
+    saveBtn.textContent = "Pause & save";
+    cancelBtn.addEventListener("click", () => closeModal());
+    saveBtn.addEventListener("click", async () => {
+      const reason = (ta.value || "").trim();
+      closeModal();
+      await persistBallotSession("paused", reason || "Paused");
+    });
+    footerDiv.appendChild(cancelBtn);
+    footerDiv.appendChild(saveBtn);
+    openModal({ title: "Pause ballot box", body: wrap, footer: footerDiv, hideMaximize: true });
+  }
+
+  function renderBallotSessionBar() {
+    if (!contentEl || monitoringDisabled) return;
+    let bar = document.getElementById("monitor-view-session-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "monitor-view-session-bar";
+      bar.className = "monitor-session-bar";
+      const header = contentEl.querySelector(".monitor-view__header");
+      if (header && header.parentNode) header.parentNode.insertBefore(bar, header);
+      else contentEl.insertBefore(bar, contentEl.firstChild);
+    }
+    const statusLabel =
+      ballotSessionStatus === "open"
+        ? "Open"
+        : ballotSessionStatus === "paused"
+          ? "Paused"
+          : "Closed";
+    const pauseBanner =
+      ballotSessionStatus === "closed"
+        ? `<div class="monitor-session-bar__pause-banner monitor-session-bar__pause-banner--closed" role="status">Ballot box is closed. Marking is disabled.</div>`
+        : "";
+    const openDisabled = ballotSessionStatus === "open";
+    const pauseDisabled = ballotSessionStatus !== "open";
+    const closeDisabled = ballotSessionStatus === "closed";
+    bar.innerHTML = `
+      <div class="monitor-session-bar__controls">
+        <span class="monitor-session-bar__status">Session: <strong>${escapeHtml(statusLabel)}</strong></span>
+        <div class="monitor-session-bar__buttons">
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--open" data-session-action="open"${
+            openDisabled
+              ? " disabled title=\"Session is already open\""
+              : ' title="Resume marking (after pause or close)"'
+          }>Open</button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--pause" data-session-action="pause"${
+            pauseDisabled
+              ? ` disabled title="${ballotSessionStatus === "paused" ? "Already paused" : ballotSessionStatus === "closed" ? "Open the session first" : ""}"`
+              : ' title="Pause with a reason"'
+          }>Pause</button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--close" data-session-action="close"${
+            closeDisabled ? ' disabled title="Already closed"' : ' title="Close marking for this session"'
+          }>Close</button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--history" data-session-action="history" title="Voters marked voted from this link">History</button>
+        </div>
+      </div>
+      ${pauseBanner}
+    `;
+    bar.querySelectorAll("[data-session-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.getAttribute("data-session-action");
+        if (action === "open") void openBallotSession();
+        if (action === "pause") void pauseBallotSessionModal();
+        if (action === "close") void closeBallotSession();
+        if (action === "history") openVotedHistoryModal();
+      });
+    });
+  }
+
+  function openVotedHistoryModal() {
+    const sorted = [...votedEntries].sort((a, b) => {
+      const ta = new Date(a.timeMarked || 0).getTime();
+      const tb = new Date(b.timeMarked || 0).getTime();
+      return tb - ta;
+    });
+    const rowsHtml = sorted
+      .map((e) => {
+        const vv = assignedVoters.find((x) => sameVoterId(x.id, e.voterId));
+        const seq = vv ? sequenceAsImportedFromCsv(vv) : "";
+        const name = vv ? vv.fullName || "" : "(unknown)";
+        const idPart = vv ? vv.nationalId || vv.id || "" : String(e.voterId);
+        const addr = vv ? vv.permanentAddress || "" : "";
+        const t = e.timeMarked ? formatDateTime(e.timeMarked) : "";
+        return `<tr><td>${escapeHtml(t)}</td><td>${escapeHtml(String(seq))}</td><td>${escapeHtml(name)}</td><td>${escapeHtml(String(idPart))}</td><td>${escapeHtml(addr)}</td></tr>`;
+      })
+      .join("");
+    const body = document.createElement("div");
+    body.className = "monitor-voted-history";
+    body.innerHTML =
+      sorted.length > 0
+        ? `<div class="monitor-voted-history__scroll"><table class="monitor-voted-history__table"><thead><tr><th>Time</th><th>Seq</th><th>Name</th><th>ID</th><th>Permanent address</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`
+        : `<p class="monitor-voted-history__empty">No voters marked voted yet.</p>`;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "primary-button";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", () => closeModal());
+    const footerDiv = document.createElement("div");
+    footerDiv.className = "modal-footer-row";
+    footerDiv.appendChild(closeBtn);
+    openModal({
+      title: "Voters marked voted",
+      body,
+      footer: footerDiv,
+      dialogClass: "modal--wide",
+    });
+  }
+
+  function canMarkVoted() {
+    return !monitoringDisabled && ballotSessionStatus === "open";
+  }
+
+  /** Search / toolbar follow the same rules as marking: only when session is open and monitoring is on. */
+  function updateMonitorSearchUi() {
+    const allow = canMarkVoted();
+    if (monitorViewSearch) {
+      monitorViewSearch.disabled = !allow;
+      monitorViewSearch.classList.toggle("monitor-view__search--session-blocked", !allow);
+    }
+    if (monitorViewSearchBtn) {
+      monitorViewSearchBtn.disabled = !allow;
+      monitorViewSearchBtn.classList.toggle("monitor-toolbar__btn--session-blocked", !allow);
+    }
+    const toolbar = contentEl?.querySelector(".monitor-view__toolbar");
+    if (toolbar) toolbar.classList.toggle("monitor-view__toolbar--session-blocked", !allow);
+  }
+
+  function hideMarkVotedToast() {
+    if (markVotedToastTimer) clearInterval(markVotedToastTimer);
+    markVotedToastTimer = null;
+    if (markVotedToastHideTimer) clearTimeout(markVotedToastHideTimer);
+    markVotedToastHideTimer = null;
+    if (markVotedToastEl) {
+      markVotedToastEl.remove();
+      markVotedToastEl = null;
+    }
+  }
+
+  function showMarkVotedToast(voter) {
+    hideMarkVotedToast();
+    const el = document.createElement("div");
+    el.className = "monitor-mark-voted-toast";
+    el.setAttribute("role", "status");
+    const seq = sequenceAsImportedFromCsv(voter);
+    const id = voter.nationalId || voter.id || "";
+    const addr = voter.permanentAddress || "";
+    el.innerHTML = `
+      <div class="monitor-mark-voted-toast__inner">
+        <div class="monitor-mark-voted-toast__title">Marked as voted</div>
+        <div class="monitor-mark-voted-toast__row"><span>Seq</span><strong>${escapeHtml(String(seq))}</strong></div>
+        <div class="monitor-mark-voted-toast__row"><span>Name</span><strong>${escapeHtml(voter.fullName || "")}</strong></div>
+        <div class="monitor-mark-voted-toast__row"><span>ID</span><strong>${escapeHtml(String(id))}</strong></div>
+        <div class="monitor-mark-voted-toast__row"><span>Address</span><strong>${escapeHtml(addr)}</strong></div>
+        <div class="monitor-mark-voted-toast__actions">
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--undo" data-toast-undo>Undo mark voted</button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--dismiss" data-toast-dismiss>Dismiss</button>
+        </div>
+        <div class="monitor-mark-voted-toast__timer" aria-live="polite"><span data-toast-countdown>10</span>s</div>
+      </div>
+    `;
+    const mount = monitorViewEl || document.body;
+    mount.appendChild(el);
+    markVotedToastEl = el;
+    let sec = 10;
+    const countdownEl = el.querySelector("[data-toast-countdown]");
+    markVotedToastTimer = setInterval(() => {
+      sec -= 1;
+      if (countdownEl) countdownEl.textContent = String(sec);
+      if (sec <= 0) hideMarkVotedToast();
+    }, 1000);
+    markVotedToastHideTimer = setTimeout(() => hideMarkVotedToast(), 10000);
+    el.querySelector("[data-toast-undo]")?.addEventListener("click", async () => {
+      hideMarkVotedToast();
+      await undoMarkVoted(voter.id);
+    });
+    el.querySelector("[data-toast-dismiss]")?.addEventListener("click", () => hideMarkVotedToast());
+  }
+
+  async function undoMarkVoted(voterId) {
+    const idx = votedEntries.findIndex((e) => sameVoterId(e.voterId, voterId));
+    if (idx >= 0) votedEntries.splice(idx, 1);
+    if (options.onDeleteVoted) {
+      await options.onDeleteVoted(token, voterId).catch(() => {});
+    } else {
+      try {
+        const api = await firebaseInitPromise;
+        if (api.deleteVotedForMonitor) await api.deleteVotedForMonitor(token, voterId);
+      } catch (_) {}
+    }
+    if (!isRemote) saveVotedEntries();
+    if (isRemote && options.onRefreshVoted) await options.onRefreshVoted().catch(() => {});
+    renderMonitorViewHeader();
+    const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
+    if (v && monitorViewResult) renderMonitorViewResult(v);
+  }
+
   if (isBallotBoxOnly) {
     monitorViewEl.setAttribute("data-state", "list");
-    showMonitorContent();
-    const header = monitorViewEl.querySelector(".monitor-view__header");
-    if (header && typeof options.onClose === "function") {
-      const existingBack = header.querySelector("[data-monitor-back]");
-      if (existingBack) existingBack.remove();
-      const backBtn = document.createElement("button");
-      backBtn.type = "button";
-      backBtn.className = "ghost-button ghost-button--small";
-      backBtn.setAttribute("data-monitor-back", "true");
-      backBtn.textContent = "Back to Vote Marking";
-      backBtn.addEventListener("click", () => options.onClose());
-      header.insertBefore(backBtn, header.firstChild);
-    }
+    void (async () => {
+      await initBallotSessionSubscription();
+      await showMonitorContent();
+      const header = monitorViewEl.querySelector(".monitor-view__header");
+      if (header && typeof options.onClose === "function") {
+        const existingBack = header.querySelector("[data-monitor-back]");
+        if (existingBack) existingBack.remove();
+        const backBtn = document.createElement("button");
+        backBtn.type = "button";
+        backBtn.className = "ghost-button ghost-button--small";
+        backBtn.setAttribute("data-monitor-back", "true");
+        backBtn.textContent = "Back to Vote Marking";
+        backBtn.addEventListener("click", () => options.onClose());
+        header.insertBefore(backBtn, header.firstChild);
+      }
+    })();
     return;
   }
 
@@ -3596,26 +4307,126 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const fragment = document.createDocumentFragment();
     if (backBtn) fragment.appendChild(backBtn);
     const main = document.createElement("div");
-    main.className = "monitor-view__header-main";
-    main.innerHTML =
-      "<h1 id=\"monitorViewTitle\" class=\"monitor-view__title\">" +
-      escapeHtml(monitor.ballotBox || "Ballot box") +
-      "</h1>" +
-      "<div class=\"monitor-view__header-stats\">" +
-      "<span class=\"monitor-view__stat\"><strong>Started:</strong> " +
-      escapeHtml(formatDateTime(monitorViewStartedAt)) +
-      "</span>" +
-      "<span class=\"monitor-view__stat\"><strong>Voters:</strong> " +
-      String(assignedVoters.length) +
-      "</span>" +
-      "<span class=\"monitor-view__stat\"><strong>Voted:</strong> " +
-      String(votedEntries.length) +
-      "</span>" +
-      "</div>" +
-      "<p class=\"monitor-view__subtitle\" id=\"monitorViewSubtitle\">Search by name, ID, or ballot-box sequence (as shown).</p>";
+    main.className =
+      "monitor-view__header-main" +
+      (standaloneBallotPage ? " monitor-view__header-main--standalone" : "");
+    const subtitleText = standaloneBallotPage
+      ? "Search by national ID, full name, or ballot sequence. Confirm identity before marking as voted."
+      : "Search by name, ID, or ballot-box sequence (as shown).";
+    const titleEscaped = escapeHtml(monitor.ballotBox || "Ballot box");
+    const subtitleEscaped = escapeHtml(subtitleText);
+
+    if (standaloneBallotPage) {
+      const total = assignedVoters.length;
+      const voted = votedEntries.length;
+      const pct = total > 0 ? Math.min(100, Math.round((voted / total) * 100)) : 0;
+      const sessLabel =
+        ballotSessionStatus === "open"
+          ? "Open"
+          : ballotSessionStatus === "paused"
+            ? "Paused"
+            : "Closed";
+      const sessClass =
+        ballotSessionStatus === "open"
+          ? "ballot-dash-sess ballot-dash-sess--open"
+          : ballotSessionStatus === "paused"
+            ? "ballot-dash-sess ballot-dash-sess--paused"
+            : "ballot-dash-sess ballot-dash-sess--closed";
+      main.innerHTML =
+        '<div class="ballot-dash-head">' +
+        '<div class="ballot-dash-head__titles">' +
+        '<h1 id="monitorViewTitle" class="monitor-view__title ballot-dash-title">' +
+        titleEscaped +
+        "</h1>" +
+        '<p class="monitor-view__subtitle ballot-dash-subtitle" id="monitorViewSubtitle">' +
+        subtitleEscaped +
+        "</p>" +
+        "</div>" +
+        "</div>" +
+        '<div class="ballot-dash-grid">' +
+        '<div class="ballot-dash-card">' +
+        '<span class="ballot-dash-card__k">Shift started</span>' +
+        '<span class="ballot-dash-card__v">' +
+        escapeHtml(formatDateTime(monitorViewStartedAt)) +
+        "</span>" +
+        "</div>" +
+        '<div class="ballot-dash-card">' +
+        '<span class="ballot-dash-card__k">On this list</span>' +
+        '<span class="ballot-dash-card__v">' +
+        String(total) +
+        "</span>" +
+        "</div>" +
+        '<div class="ballot-dash-card">' +
+        '<span class="ballot-dash-card__k">Session</span>' +
+        '<span class="ballot-dash-card__v ' +
+        sessClass +
+        '">' +
+        sessLabel +
+        "</span>" +
+        "</div>" +
+        '<div class="ballot-dash-card">' +
+        '<span class="ballot-dash-card__k">Marked voted</span>' +
+        '<span class="ballot-dash-card__v">' +
+        String(voted) +
+        "</span>" +
+        "</div>" +
+        "</div>" +
+        '<div class="ballot-dash-progress-row">' +
+        '<div class="ballot-dash-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+        pct +
+        '" aria-label="Share of assigned voters marked voted">' +
+        '<div class="ballot-dash-progress__track"><div class="ballot-dash-progress__fill" style="width:' +
+        pct +
+        '%"></div></div>' +
+        '<span class="ballot-dash-progress__text">' +
+        String(voted) +
+        " / " +
+        String(total) +
+        " (" +
+        pct +
+        "%)</span>" +
+        "</div>" +
+        '<button type="button" class="ballot-box-btn ballot-box-btn--secondary" id="ballotBoxPrintBtn">Print summary</button>' +
+        "</div>";
+    } else {
+      main.innerHTML =
+        "<h1 id=\"monitorViewTitle\" class=\"monitor-view__title\">" +
+        titleEscaped +
+        "</h1>" +
+        "<div class=\"monitor-view__header-stats\">" +
+        "<span class=\"monitor-view__stat\"><strong>Started:</strong> " +
+        escapeHtml(formatDateTime(monitorViewStartedAt)) +
+        "</span>" +
+        "<span class=\"monitor-view__stat\"><strong>Voters:</strong> " +
+        String(assignedVoters.length) +
+        "</span>" +
+        "<span class=\"monitor-view__stat\"><strong>Session:</strong> " +
+        (ballotSessionStatus === "open"
+          ? "Open"
+          : ballotSessionStatus === "paused"
+            ? "Paused"
+            : "Closed") +
+        "</span>" +
+        "<span class=\"monitor-view__stat\"><strong>Voted:</strong> " +
+        String(votedEntries.length) +
+        "</span>" +
+        "</div>" +
+        "<p class=\"monitor-view__subtitle\" id=\"monitorViewSubtitle\">" +
+        subtitleEscaped +
+        "</p>";
+    }
     fragment.appendChild(main);
     header.innerHTML = "";
     header.appendChild(fragment);
+    if (standaloneBallotPage) {
+      main.querySelector("#ballotBoxPrintBtn")?.addEventListener("click", () => window.print());
+    }
+    if (standaloneBallotPage && typeof document !== "undefined") {
+      const box = String(monitor.ballotBox || "").trim();
+      const namePart = String(monitor.name || "").trim();
+      const label = box || namePart || "Vote marking";
+      document.title = `${label} · Vote marking`;
+    }
   }
 
   function markVoterVoted(voterId) {
@@ -3628,6 +4439,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     renderMonitorViewHeader();
     const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
     if (v && monitorViewResult) renderMonitorViewResult(v);
+    if (v) showMarkVotedToast(v);
   }
 
   function renderMonitorViewResult(voterOrNull) {
@@ -3681,11 +4493,11 @@ export function initMonitorView(token, votersContextParam, options = {}) {
           <span class="monitor-voter-card__label">Vote status</span>
           <span class="monitor-voter-card__value">${timeMarked ? '<span class="pledge-pill pledge-pill--pledged">Voted</span> ' + formatDateTime(timeMarked) : '<span class="pledge-pill pledge-pill--undecided">Not voted</span>'}</span>
         </div>
-        ${!monitoringDisabled && !timeMarked ? `<div class="monitor-voter-card__action"><button type="button" class="primary-button" data-monitor-mark-voted="${escapeHtml(voter.id)}">Mark voted</button></div>` : ""}
+        ${canMarkVoted() && !timeMarked ? `<div class="monitor-voter-card__action"><button type="button" class="primary-button" data-monitor-mark-voted="${escapeHtml(voter.id)}">Mark voted</button></div>` : ""}
       </div>
     `;
 
-    if (!monitoringDisabled) {
+    if (canMarkVoted()) {
       monitorViewResult.querySelector("[data-monitor-mark-voted]")?.addEventListener("click", (e) => {
         const vid = e.target.getAttribute("data-monitor-mark-voted");
         if (vid) markVoterVoted(vid);
@@ -3694,6 +4506,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   }
 
   function doSearch() {
+    if (!canMarkVoted()) return;
     const query = (monitorViewSearch?.value || "").trim();
     if (!query) {
       if (monitorViewResult) monitorViewResult.innerHTML = "";
@@ -3746,27 +4559,41 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       });
   }
 
-  function showMonitorContent() {
+  async function showMonitorContent() {
+    if (monitorWorkspaceOpened) return;
+    await initBallotSessionSubscription();
+
+    monitorWorkspaceOpened = true;
+
     monitorViewEl.setAttribute("data-state", "list");
-    renderMonitorViewHeader();
-    if (contentEl) contentEl.setAttribute("aria-hidden", "false");
+    if (contentEl) {
+      contentEl.hidden = false;
+      contentEl.setAttribute("aria-hidden", "false");
+      contentEl.style.display = "";
+    }
     if (monitorViewEl) monitorViewEl.hidden = false;
     if (monitorViewResult) monitorViewResult.innerHTML = "";
 
+    // Session state already streams from Firestore (subscription started at init); paint workspace UI.
+    syncBallotSessionUi();
+
     if (monitoringDisabled) {
-      if (monitorViewSearch) monitorViewSearch.disabled = true;
-      if (monitorViewSearchBtn) monitorViewSearchBtn.disabled = true;
+      updateMonitorSearchUi();
       const msgEl = document.createElement("p");
       msgEl.className = "monitor-view-result__empty";
       msgEl.setAttribute("role", "status");
       msgEl.textContent = "Monitoring is disabled by Campaign Office.";
       if (monitorViewResult) monitorViewResult.appendChild(msgEl);
     } else {
-      if (monitorViewSearch) monitorViewSearch.disabled = false;
-      if (monitorViewSearchBtn) monitorViewSearchBtn.disabled = false;
+      updateMonitorSearchUi();
       if (monitorViewSearchBtn) monitorViewSearchBtn.addEventListener("click", doSearch);
       if (monitorViewSearch) {
-        monitorViewSearch.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
+        monitorViewSearch.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            doSearch();
+          }
+        });
       }
     }
   }
@@ -3804,4 +4631,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       showMonitorContent();
     });
   }
+
+  // Same ballot session doc as ballot-box.html — admins and monitors see one shared Open / Paused / Closed state.
+  void initBallotSessionSubscription();
 }

@@ -54,6 +54,9 @@ export const firebaseInitPromise = (async () => {
     let setVotedForMonitor = () => Promise.resolve();
     let deleteVotedForMonitor = () => Promise.resolve();
     let onVotedSnapshotForMonitor = () => noopUnsubscribe;
+    let getBallotSessionFs = async () => ({ status: "open", pauseReason: "", pausedAt: "" });
+    let setBallotSessionFs = async () => {};
+    let onBallotSessionSnapshotFs = () => noopUnsubscribe;
     let deleteMonitorDoc = () => Promise.resolve();
 
     // Firestore-backed collections for core data (default to no-op so callers can always call these safely)
@@ -212,6 +215,91 @@ export const firebaseInitPromise = (async () => {
           `monitors/${String(token)}/voted`
         );
       };
+
+      const BALLOT_SESSION_DOC = "settings";
+      const ballotSessionDocRef = (token) =>
+        firestoreMod.doc(
+          db,
+          MONITORS_COLLECTION,
+          String(token),
+          "ballotSession",
+          BALLOT_SESSION_DOC
+        );
+      getBallotSessionFs = async (token) => {
+        if (!token) return { status: "open", pauseReason: "", pausedAt: "" };
+        const ref = ballotSessionDocRef(token);
+        let snap;
+        try {
+          // Prefer server so a new browser/session never shows "open" from empty local cache
+          // while another device has already set paused/closed.
+          if (typeof firestoreMod.getDocFromServer === "function") {
+            snap = await firestoreMod.getDocFromServer(ref);
+          } else {
+            snap = await firestoreMod.getDoc(ref);
+          }
+        } catch (_) {
+          snap = await firestoreMod.getDoc(ref);
+        }
+        if (!snap.exists()) return { status: "open", pauseReason: "", pausedAt: "" };
+        const d = snap.data() || {};
+        const status =
+          d.status === "paused" || d.status === "closed" ? d.status : "open";
+        return {
+          status,
+          pauseReason: String(d.pauseReason || ""),
+          pausedAt: String(d.pausedAt || ""),
+        };
+      };
+      setBallotSessionFs = async (token, data) => {
+        if (!token || !data || typeof data !== "object") return;
+        const status =
+          data.status === "paused" || data.status === "closed" ? data.status : "open";
+        const pauseReason = status === "paused" ? String(data.pauseReason || "") : "";
+        const pausedAt =
+          status === "paused"
+            ? String(data.pausedAt || new Date().toISOString())
+            : "";
+        await firestoreMod.setDoc(ballotSessionDocRef(token), {
+          status,
+          pauseReason,
+          pausedAt,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      };
+      onBallotSessionSnapshotFs = (token, handler) => {
+        if (!token || typeof handler !== "function") return noopUnsubscribe;
+        const ref = ballotSessionDocRef(token);
+        const label = `monitors/${String(token)}/ballotSession`;
+        const onNext = (snap) => {
+          if (!snap.exists()) {
+            handler({ status: "open", pauseReason: "", pausedAt: "" });
+            return;
+          }
+          const d = snap.data() || {};
+          const status =
+            d.status === "paused" || d.status === "closed" ? d.status : "open";
+          handler({
+            status,
+            pauseReason: String(d.pauseReason || ""),
+            pausedAt: String(d.pausedAt || ""),
+          });
+        };
+        const onErr = (err) => {
+          console.warn(`[Firestore] listener ${label}:`, err?.code || "", err?.message || err);
+        };
+        // includeMetadataChanges: emit when cache ↔ server reconciles so UI updates without refresh.
+        try {
+          return firestoreMod.onSnapshot(
+            ref,
+            { includeMetadataChanges: true },
+            onNext,
+            onErr
+          );
+        } catch (_) {
+          return firestoreMod.onSnapshot(ref, onNext, onErr);
+        }
+      };
+
       deleteMonitorDoc = async (token) => {
         if (!token) return;
         const ref = firestoreMod.doc(db, MONITORS_COLLECTION, String(token));
@@ -728,6 +816,9 @@ export const firebaseInitPromise = (async () => {
       setVotedForMonitor,
       deleteVotedForMonitor,
       onVotedSnapshotForMonitor,
+      getBallotSessionFs,
+      setBallotSessionFs,
+      onBallotSessionSnapshotFs,
       deleteMonitorDoc,
       // Firestore-backed core collections
       getAllVotersFs,

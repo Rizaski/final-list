@@ -29,6 +29,20 @@ import {
 import { initDoorToDoorModule } from "./doorToDoor.js";
 import { initTableViewMenus } from "./table-view-menu.js";
 
+/** Firestore ballot session — same doc as ballot-box.html (`monitors/{token}/ballotSession/settings`). */
+function getMonitorBallotSessionOpts(api, monitorToken) {
+  if (!api || !monitorToken) return undefined;
+  if (!api.getBallotSessionFs || !api.setBallotSessionFs || !api.onBallotSessionSnapshotFs) {
+    return undefined;
+  }
+  const t = String(monitorToken);
+  return {
+    get: () => api.getBallotSessionFs(t),
+    set: (d) => api.setBallotSessionFs(t, d),
+    subscribe: (cb) => api.onBallotSessionSnapshotFs(t, cb),
+  };
+}
+
 const modulesMap = {
   dashboard: document.getElementById("module-dashboard"),
   voters: document.getElementById("module-voters"),
@@ -843,7 +857,9 @@ async function startAppModules(firebaseApi) {
     const monitorView = document.getElementById("monitor-view");
     if (appShell) appShell.hidden = true;
     if (monitorView) monitorView.hidden = false;
-    initMonitorView(monitorToken, votersContext);
+    initMonitorView(monitorToken, votersContext, {
+      ballotSession: getMonitorBallotSessionOpts(firebaseApi, monitorToken),
+    });
     return;
   }
 
@@ -863,7 +879,10 @@ async function startAppModules(firebaseApi) {
   const refreshBtn = document.getElementById("refreshButton");
   const refreshStatusEl = document.getElementById("refreshStatus");
   if (refreshBtn && refreshStatusEl) {
-    refreshBtn.addEventListener("click", async () => {
+    let refreshInProgress = false;
+    const runTopbarRefresh = async (isAuto = false) => {
+      if (refreshInProgress) return;
+      refreshInProgress = true;
       refreshStatusEl.textContent = "Syncing…";
       refreshStatusEl.classList.add("topbar__refresh-status--active");
       refreshBtn.disabled = true;
@@ -888,8 +907,9 @@ async function startAppModules(firebaseApi) {
         };
         refreshDashboard(scope);
         document.dispatchEvent(new CustomEvent("zero-day-refresh"));
-        refreshStatusEl.textContent = "Syncing completed";
+        refreshStatusEl.textContent = isAuto ? "Auto-sync completed" : "Syncing completed";
       } finally {
+        refreshInProgress = false;
         refreshBtn.disabled = false;
         refreshBtn.classList.remove("topbar__refresh-btn--spinning");
         setTimeout(() => {
@@ -897,7 +917,14 @@ async function startAppModules(firebaseApi) {
           refreshStatusEl.classList.remove("topbar__refresh-status--active");
         }, 2000);
       }
+    };
+    refreshBtn.addEventListener("click", () => {
+      void runTopbarRefresh(false);
     });
+    // Auto-run the same top-header refresh flow every 15 seconds.
+    setInterval(() => {
+      void runTopbarRefresh(true);
+    }, 15000);
   }
 }
 
@@ -981,7 +1008,9 @@ async function boot() {
     if (appShell) appShell.hidden = true;
     if (loginView) loginView.hidden = true;
     if (monitorView) monitorView.hidden = false;
-    initMonitorView(monitorToken, votersContext);
+    initMonitorView(monitorToken, votersContext, {
+      ballotSession: getMonitorBallotSessionOpts(firebaseApi, monitorToken),
+    });
     return;
   }
 
