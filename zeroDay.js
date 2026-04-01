@@ -4394,6 +4394,14 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     if (toolbar) toolbar.classList.toggle("monitor-view__toolbar--session-blocked", !allow);
   }
 
+  function clearStandaloneStrip() {
+    const strip = document.getElementById("monitorStandaloneStrip");
+    if (!strip) return;
+    strip.innerHTML = "";
+    strip.hidden = true;
+    strip.className = "monitor-standalone-strip";
+  }
+
   function hideMarkVotedToast() {
     if (markVotedToastTimer) clearInterval(markVotedToastTimer);
     markVotedToastTimer = null;
@@ -4403,36 +4411,60 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       markVotedToastEl.remove();
       markVotedToastEl = null;
     }
+    clearStandaloneStrip();
   }
+
+  function attachMarkVotedToastTimers(rootEl) {
+    let sec = 10;
+    const countdownEl = rootEl.querySelector("[data-toast-countdown]");
+    markVotedToastTimer = setInterval(() => {
+      sec -= 1;
+      if (countdownEl) countdownEl.textContent = String(sec);
+      if (sec <= 0) hideMarkVotedToast();
+    }, 1000);
+    markVotedToastHideTimer = setTimeout(() => hideMarkVotedToast(), 10000);
+  }
+
+  const undoIconSvg = `<svg class="monitor-standalone-strip__undo-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>`;
 
   function showMarkVotedToast(voter) {
     hideMarkVotedToast();
-    const el = document.createElement("div");
-    el.className = "monitor-mark-voted-toast";
-    el.setAttribute("role", "status");
     const seq = sequenceAsImportedFromCsv(voter);
     const id = voter.nationalId || voter.id || "";
     const addr = voter.permanentAddress || "";
     if (standaloneBallotPage) {
-      el.classList.add("monitor-mark-voted-toast--compact");
+      const strip = document.getElementById("monitorStandaloneStrip");
+      if (!strip) return;
+      strip.hidden = false;
+      strip.className = "monitor-standalone-strip monitor-standalone-strip--success";
       const line =
         escapeHtml(voter.fullName || "") +
         " · " +
         escapeHtml(String(id)) +
         " · " +
         escapeHtml(addr);
-      el.innerHTML = `
-      <div class="monitor-mark-voted-toast__inner">
-        <div class="monitor-mark-voted-toast__line">${line}</div>
-        <div class="monitor-mark-voted-toast__actions monitor-mark-voted-toast__actions--compact">
-          <button type="button" class="monitor-mark-voted-toast__btn monitor-mark-voted-toast__btn--undo" data-toast-undo>Undo</button>
-          <button type="button" class="monitor-mark-voted-toast__btn monitor-mark-voted-toast__btn--dismiss" data-toast-dismiss>Dismiss</button>
+      strip.innerHTML = `
+      <div class="monitor-standalone-strip__inner">
+        <p class="monitor-standalone-strip__line">${line}</p>
+        <div class="monitor-standalone-strip__actions">
+          <button type="button" class="monitor-standalone-strip__undo" data-toast-undo aria-label="Undo mark voted" title="Undo mark voted">${undoIconSvg}</button>
         </div>
-        <div class="monitor-mark-voted-toast__timer" aria-live="polite"><span data-toast-countdown>10</span>s</div>
+        <span class="monitor-standalone-strip__timer" aria-live="polite"><span data-toast-countdown>10</span>s</span>
       </div>
     `;
-    } else {
-      el.innerHTML = `
+      markVotedToastEl = null;
+      attachMarkVotedToastTimers(strip);
+      strip.querySelector("[data-toast-undo]")?.addEventListener("click", async () => {
+        hideMarkVotedToast();
+        await undoMarkVoted(voter.id);
+      });
+      return;
+    }
+
+    const el = document.createElement("div");
+    el.className = "monitor-mark-voted-toast";
+    el.setAttribute("role", "status");
+    el.innerHTML = `
       <div class="monitor-mark-voted-toast__inner">
         <div class="monitor-mark-voted-toast__title">Marked as voted</div>
         <div class="monitor-mark-voted-toast__row"><span>Seq</span><strong>${escapeHtml(String(seq))}</strong></div>
@@ -4450,18 +4482,10 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         <div class="monitor-mark-voted-toast__timer" aria-live="polite"><span data-toast-countdown>10</span>s</div>
       </div>
     `;
-    }
     const mount = monitorViewEl || document.body;
     mount.appendChild(el);
     markVotedToastEl = el;
-    let sec = 10;
-    const countdownEl = el.querySelector("[data-toast-countdown]");
-    markVotedToastTimer = setInterval(() => {
-      sec -= 1;
-      if (countdownEl) countdownEl.textContent = String(sec);
-      if (sec <= 0) hideMarkVotedToast();
-    }, 1000);
-    markVotedToastHideTimer = setTimeout(() => hideMarkVotedToast(), 10000);
+    attachMarkVotedToastTimers(el);
     el.querySelector("[data-toast-undo]")?.addEventListener("click", async () => {
       hideMarkVotedToast();
       await undoMarkVoted(voter.id);
@@ -4610,6 +4634,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         "%)</span>" +
         "</div>" +
         "</div>" +
+        '<div id="monitorStandaloneStrip" class="monitor-standalone-strip" hidden aria-live="polite"></div>' +
         "</div>";
     } else {
       main.innerHTML =
@@ -4763,8 +4788,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         if (!v) return;
         const timeMarked = votedEntries.find((e) => sameVoterId(e.voterId, v.id))?.timeMarked;
         if (timeMarked) {
-          monitorViewResult.innerHTML =
-            '<p class="monitor-view-result__empty" role="status">That voter is already marked as voted.</p>';
+          renderStandaloneFeedback("That voter is already marked as voted.");
           return;
         }
         markVoterVoted(v.id);
@@ -4775,10 +4799,18 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   }
 
   function renderStandaloneFeedback(message) {
-    if (!monitorViewResult) return;
-    monitorViewResult.innerHTML = `<p class="monitor-view-result__empty" role="status">${escapeHtml(
-      message
-    )}</p>`;
+    hideMarkVotedToast();
+    const strip = document.getElementById("monitorStandaloneStrip");
+    if (!strip) return;
+    strip.hidden = false;
+    strip.className = "monitor-standalone-strip monitor-standalone-strip--error";
+    strip.innerHTML = `
+      <div class="monitor-standalone-strip__inner monitor-standalone-strip__inner--error">
+        <p class="monitor-standalone-strip__text" role="status">${escapeHtml(message)}</p>
+        <span class="monitor-standalone-strip__timer" aria-live="polite"><span data-toast-countdown>10</span>s</span>
+      </div>
+    `;
+    attachMarkVotedToastTimers(strip);
   }
 
   function doStandaloneMarkVoted() {

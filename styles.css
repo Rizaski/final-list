@@ -2186,6 +2186,7 @@ body.list-workspace-page {
   display: flex;
   flex-direction: column;
   margin: 0;
+  touch-action: manipulation;
   font-family: "DM Sans", system-ui, -apple-system, sans-serif;
   background:
     radial-gradient(1200px 600px at 10% -10%, rgba(13, 148, 136, 0.14), transparent 55%),
@@ -2626,6 +2627,7 @@ body.list-workspace-page {
   caret-color: transparent;
   cursor: default;
   -webkit-tap-highlight-color: transparent;
+  font-size: max(16px, 0.95rem);
 }
 
 /* Standalone dashboard header (KPIs, progress, print) */
@@ -2645,6 +2647,98 @@ body.list-workspace-page {
 }
 .ballot-dash-head .ballot-dash-progress-row {
   margin-top: 8px;
+}
+
+.monitor-standalone-strip {
+  margin-top: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--bb-border);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.monitor-standalone-strip[hidden] {
+  display: none !important;
+}
+.monitor-standalone-strip--success {
+  border-color: rgba(5, 150, 105, 0.35);
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.08) 0%, rgba(255, 255, 255, 0.98) 100%);
+}
+.monitor-standalone-strip--error {
+  border-color: rgba(185, 28, 28, 0.4);
+  background: linear-gradient(135deg, rgba(254, 226, 226, 0.65) 0%, rgba(255, 255, 255, 0.98) 100%);
+}
+.monitor-standalone-strip__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 10px 12px;
+}
+.monitor-standalone-strip__line {
+  flex: 1 1 200px;
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--bb-ink);
+  word-break: break-word;
+}
+.monitor-standalone-strip__text {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #b91c1c;
+  word-break: break-word;
+}
+.monitor-standalone-strip__inner--error {
+  flex-direction: row;
+  align-items: center;
+}
+.monitor-standalone-strip__inner--error .monitor-standalone-strip__text {
+  flex: 1 1 auto;
+}
+.monitor-standalone-strip__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+.monitor-standalone-strip__undo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: rgba(5, 150, 105, 0.18);
+  color: #047857;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.monitor-standalone-strip__undo:hover {
+  background: rgba(5, 150, 105, 0.28);
+}
+.monitor-standalone-strip__undo:focus-visible {
+  outline: 2px solid var(--bb-accent);
+  outline-offset: 2px;
+}
+.monitor-standalone-strip__undo-icon {
+  display: block;
+  pointer-events: none;
+}
+.monitor-standalone-strip__timer {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--bb-ink-muted);
+}
+.monitor-standalone-strip--error .monitor-standalone-strip__timer {
+  color: #991b1b;
 }
 .ballot-dash-head__titles {
   max-width: 52rem;
