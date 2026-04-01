@@ -463,6 +463,61 @@ function exportCsv() {
   URL.revokeObjectURL(a.href);
 }
 
+/** Same rows/columns as CSV; opens print dialog so the user can Save as PDF. */
+function exportPdf() {
+  const displayList = getFilteredSortedGrouped();
+  const rows = displayList.filter((x) => x.type === "row").map((x) => x.voter);
+  const headerLabels = visibleColumns.map((k) => {
+    const opt = COLUMN_OPTIONS.find((c) => c.key === k);
+    return opt ? opt.label : k;
+  });
+  const listName = list?.name || "List";
+  const headCells = headerLabels.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
+  const bodyRows = rows.map((v) => {
+    const tds = visibleColumns.map((key) => {
+      let cell = "";
+      if (key === "image") {
+        cell =
+          (v.fullName || "").split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase() || "").join("") || "—";
+      } else if (key === "pledgeStatus") {
+        cell = v.pledgeStatus || "—";
+      } else if (key === "sequence") {
+        cell = sequenceAsImportedFromCsv(v);
+      } else {
+        cell = v[key] ?? "";
+      }
+      return `<td>${escapeHtml(String(cell))}</td>`;
+    }).join("");
+    return `<tr>${tds}</tr>`;
+  }).join("");
+
+  const w = window.open("", "_blank", "noopener,noreferrer");
+  if (!w) {
+    window.alert("Pop-up blocked. Allow pop-ups for this site to export PDF, or use Export CSV.");
+    return;
+  }
+  const title = escapeHtml(listName);
+  w.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 16px; color: #111; }
+  h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
+  .meta { margin: 0 0 14px; font-size: 12px; color: #444; }
+  table { border-collapse: collapse; width: 100%; font-size: 10px; }
+  th, td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; vertical-align: top; word-break: break-word; }
+  th { background: #eee; font-weight: 600; }
+  @media print {
+    body { margin: 8px; }
+    th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style></head><body>
+<h1>${title}</h1>
+<p class="meta">${rows.length.toLocaleString()} voter(s) · use your browser print dialog and choose <strong>Save as PDF</strong> if available.</p>
+<table><thead><tr>${headCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},250);});<\/script>
+</body></html>`);
+  w.document.close();
+}
+
 function openShareLinkModal() {
   const body = document.createElement("div");
   const snapshots = listVoters.map((v) => ({
@@ -519,6 +574,8 @@ function bindToolbar() {
   if (columnsBtn) columnsBtn.addEventListener("click", openColumnsModal);
   const exportBtn = document.getElementById("listWorkspaceExportBtn");
   if (exportBtn) exportBtn.addEventListener("click", exportCsv);
+  const exportPdfBtn = document.getElementById("listWorkspaceExportPdfBtn");
+  if (exportPdfBtn) exportPdfBtn.addEventListener("click", exportPdf);
   const shareBtn = document.getElementById("listWorkspaceShareLinkBtn");
   if (shareBtn) shareBtn.addEventListener("click", openShareLinkModal);
 

@@ -26,7 +26,7 @@
       <div class="list-workspace__add-upload-row">
         <div class="list-workspace__add-block">
           <h2 id="addVotersHeading" class="list-workspace__add-heading">Add voters to this list</h2>
-          <p class="helper-text list-workspace__add-hint">Search the voter roll below. Click <strong>Add to list</strong> on a voter to add them — only then will they appear in the table.</p>
+          <p class="helper-text list-workspace__add-hint">Search the voter roll below. Click <strong>Add to list</strong> on a voter to add them — only then will they appear in the table. Use <strong>Export CSV</strong> below for a spreadsheet copy; changes you make outside the app are not written back to voter records.</p>
           <div class="list-workspace__add-search-row">
             <label for="listWorkspaceAddSearch" class="sr-only">Search voters to add</label>
             <input type="search" id="listWorkspaceAddSearch" class="list-workspace__add-search-input" placeholder="Search by name, ID, address, island…" aria-label="Search voters to add to list">
@@ -36,7 +36,7 @@
         </div>
         <div class="list-workspace__upload-block">
           <h2 id="uploadIdsHeading" class="list-workspace__upload-heading">Or upload list of ID numbers</h2>
-          <p class="helper-text list-workspace__upload-hint">Upload a CSV or text file (one ID per line). The list will be replaced with only those voters — only they will show in the table.</p>
+          <p class="helper-text list-workspace__upload-hint">Upload a CSV or text file (one ID per line). The list membership is replaced with voters whose IDs match — only they will show in the table. This updates this list only; it does not change voter profiles or other campaign records.</p>
           <div class="list-workspace__upload-row">
             <label for="listWorkspaceUploadIds" class="list-workspace__upload-btn ghost-button">Choose file…</label>
             <input type="file" id="listWorkspaceUploadIds" accept=".csv,.txt,text/csv,text/plain" class="list-workspace__upload-input" aria-label="Upload file with ID numbers">
@@ -101,6 +101,7 @@
         </div>
         <button type="button" class="ghost-button" id="listWorkspaceColumnsBtn">Columns</button>
         <button type="button" class="ghost-button" id="listWorkspaceExportBtn">Export CSV</button>
+        <button type="button" class="ghost-button" id="listWorkspaceExportPdfBtn" title="Opens print — choose Save as PDF">Export PDF</button>
         <div class="field-group field-group--inline">
           <label for="listWorkspaceAssignCandidate">Candidate</label>
           <select id="listWorkspaceAssignCandidate">

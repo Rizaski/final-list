@@ -442,14 +442,42 @@ function getAgentScopeId(agent) {
   return s && s !== "undefined" && s !== "null" ? s : "";
 }
 
+/**
+ * Union localStorage agents with the Settings module runtime cache (`window.agentsCached`).
+ * Candidates often create agents from the voter detail modal; merging avoids a stale list if
+ * storage and cache briefly diverge or a refresh has not run yet.
+ */
+function mergeAgentsStorageAndRuntimeCache() {
+  const byId = new Map();
+  const add = (a) => {
+    if (!a || a.id == null || String(a.id).trim() === "") return;
+    const id = String(a.id).trim();
+    const prev = byId.get(id);
+    if (!prev) {
+      byId.set(id, a);
+      return;
+    }
+    const prevScope = getAgentScopeId(prev);
+    const nextScope = getAgentScopeId(a);
+    if (!prevScope && nextScope) byId.set(id, a);
+    else if (prev.__localPendingSync && !a.__localPendingSync) byId.set(id, a);
+  };
+  const stored = getAgentsFromStorage();
+  (Array.isArray(stored) ? stored : []).forEach(add);
+  try {
+    if (Array.isArray(window.agentsCached)) window.agentsCached.forEach(add);
+  } catch (_) {}
+  return Array.from(byId.values());
+}
+
 /** Candidate login can assign only candidate-scoped agents for that candidate. */
 function getCandidateAssignableAgents(candidateId) {
   const cid = String(candidateId || "").trim();
   if (!cid) return [];
-  const allAgents = getAgentsFromStorage();
+  const allAgents = mergeAgentsStorageAndRuntimeCache();
   const scopedAgents = allAgents.filter((a) => {
     const scopeId = getAgentScopeId(a);
-    return scopeId === cid;
+    return scopeId !== "" && scopeId === cid;
   });
 
   // Candidate CSV import may write agent names onto voter assignment fields before/without
@@ -464,8 +492,17 @@ function getCandidateAssignableAgents(candidateId) {
 
   scopedAgents.forEach((a) => {
     const k = keyOf(a?.name);
-    if (!k) return;
-    byNameKey.set(k, a);
+    if (k) {
+      byNameKey.set(k, a);
+      return;
+    }
+    const id = String(a?.id ?? "").trim();
+    if (!id) return;
+    const fallbackKey = `__id__${id}`;
+    if (!byNameKey.has(fallbackKey)) {
+      const displayName = String(a.name || "").trim() || `Agent ${id}`;
+      byNameKey.set(fallbackKey, { ...a, name: displayName });
+    }
   });
 
   const resolveAgentDetails = (name, idHint = "") => {
@@ -2779,6 +2816,19 @@ function deleteVoter(voterId) {
   })();
 }
 
+/** All voter IDs on the current in-app roll (for pre-populating a new list). */
+function getAllVoterIdsForNewList() {
+  const seen = new Set();
+  const out = [];
+  for (const v of Array.isArray(currentVoters) ? currentVoters : []) {
+    const id = v && v.id != null ? String(v.id).trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export async function initVotersModule(getCurrentUser, options = {}) {
   getCurrentUserFn = typeof getCurrentUser === "function" ? getCurrentUser : () => null;
   openAddAgentModalRef =
@@ -2827,7 +2877,12 @@ export async function initVotersModule(getCurrentUser, options = {}) {
     const p = document.createElement("p");
     p.className = "helper-text";
     p.style.marginTop = "8px";
-    p.textContent = "The list will start empty. Add voters by searching and clicking Add to list, or by uploading a file of ID numbers.";
+    const voterIdsForList = getAllVoterIdsForNewList();
+    const n = voterIdsForList.length;
+    p.textContent =
+      n === 0
+        ? "No voters are loaded yet — the new list will start empty. After the roll finishes loading, create a list again, or add voters from the list workspace."
+        : `The new list will include all ${n.toLocaleString()} voter(s) on the current roll (the same set as the Voters table). Use Export CSV in the list window to work in Excel or Sheets; edits in that file are not imported into campaign voter records. If you upload a file of ID numbers later, it only replaces who is on this list (matched by ID) — it does not change voter profiles in the app.`;
     body.appendChild(label);
     body.appendChild(input);
     body.appendChild(p);
@@ -2847,7 +2902,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
     createBtn.addEventListener("click", async () => {
       const name = (input.value || "").trim() || "Untitled list";
       try {
-        const list = await createList(name, []);
+        const list = await createList(name, getAllVoterIdsForNewList());
         closeModal();
         openListWorkspace(list.id);
         if (window.appNotifications) {
