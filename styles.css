@@ -2173,6 +2173,11 @@ body.list-workspace-page {
   margin-top: 12px;
 }
 
+html.ballot-box-html {
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+}
+
 /* ─── Ballot box standalone (ballot-box.html) — monitor workspace shell ─── */
 .ballot-box-page {
   --bb-ink: #0f172a;
@@ -3703,6 +3708,12 @@ body.list-workspace-page {
   gap: 8px;
   align-items: center;
 }
+.vote-box-card__session-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
 
 .field-group--inline {
   flex-direction: row;
@@ -4140,7 +4151,49 @@ textarea.voter-detail-referendum-notes:focus {
 
 /* Zero Day monitors: standard data table rows + action column */
 .data-table--monitors {
-  min-width: 760px;
+  min-width: 820px;
+}
+
+.monitor-admin-session-col {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.monitor-admin-session-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.monitor-admin-session-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--color-border-subtle, rgba(15, 23, 42, 0.12));
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #0f172a);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.monitor-admin-session-btn:hover:not(:disabled) {
+  background: var(--color-bg-subtle, #f1f5f9);
+  border-color: rgba(13, 148, 136, 0.35);
+}
+.monitor-admin-session-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.monitor-admin-session-btn--open {
+  color: #047857;
+}
+.monitor-admin-session-btn--close {
+  color: #b91c1c;
+}
+.monitor-admin-session-icon {
+  display: block;
+  pointer-events: none;
 }
 
 /* Allow ⋮ row menus to paint outside the scroll box (dropdown is position: absolute) */

@@ -33,6 +33,9 @@ const TRIPS_STORAGE_KEY = "zero-day-trips";
 /** localStorage key prefix for ballot session when Firestore is unavailable */
 const MONITOR_BALLOT_SESSION_PREFIX = "monitor_ballot_session_";
 
+const ADMIN_BALLOT_SESSION_OPEN_SVG = `<svg class="monitor-admin-session-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none"/></svg>`;
+const ADMIN_BALLOT_SESSION_CLOSE_SVG = `<svg class="monitor-admin-session-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+
 let zeroDayTrips = [];
 let transportTripsUnsubscribe = null;
 let zeroDayVotedEntries = []; // { voterId, timeMarked }
@@ -1869,6 +1872,22 @@ function applyMonitorSessionCell(monitorId, state) {
   else cell.removeAttribute("title");
 }
 
+async function adminSetVoteMarkingSessionForMonitor(monitor, wantOpen) {
+  if (!monitor?.shareToken) return false;
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.setBallotSessionFs) return false;
+    await api.setBallotSessionFs(monitor.shareToken, {
+      status: wantOpen ? "open" : "closed",
+      pauseReason: "",
+      pausedAt: "",
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function wireMonitorBallotSessionCells() {
   tearDownMonitorBallotSessionListeners();
   const table = document.getElementById("zeroDayMonitorsTable");
@@ -1929,7 +1948,7 @@ function openMonitorRowMenu(panel, wrap, menu, trigger) {
 
 function renderMonitorsTable() {
   if (!zeroDayMonitorsTableBody) return;
-  const emptyColspan = 7;
+  const emptyColspan = 8;
   tearDownMonitorBallotSessionListeners();
   zeroDayMonitorsTableBody.innerHTML = "";
   if (!zeroDayMonitors.length) {
@@ -1961,6 +1980,16 @@ function renderMonitorsTable() {
         </div>
       </td>
       <td class="monitor-session-col"><span class="monitor-session-cell monitor-session-cell--loading" data-monitor-session-cell="${mid}">…</span></td>
+      <td class="monitor-admin-session-col">
+        <div class="monitor-admin-session-btns" role="group" aria-label="Vote marking session for this ballot box">
+          <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--open" data-admin-ballot-open="${mid}" title="Open vote marking" aria-label="Open vote marking"${
+            m.shareToken ? "" : " disabled"
+          }>${ADMIN_BALLOT_SESSION_OPEN_SVG}</button>
+          <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--close" data-admin-ballot-close="${mid}" title="Close vote marking" aria-label="Close vote marking"${
+            m.shareToken ? "" : " disabled"
+          }>${ADMIN_BALLOT_SESSION_CLOSE_SVG}</button>
+        </div>
+      </td>
       <td class="zero-day-monitors-actions-col">
         <div class="dropdown-wrap zero-day-monitor-row-menu">
           <button type="button" class="icon-button zero-day-monitor-menu-trigger" data-monitor-menu-trigger aria-label="Monitor actions" aria-haspopup="true" aria-expanded="false" title="Actions">⋮</button>
@@ -3277,6 +3306,14 @@ function renderZeroDayVoteTable() {
           <span><strong>Undecided:</strong> ${pledgeUndecided}</span>
         </div>
         <div class="vote-box-card__actions">
+          <div class="vote-box-card__session-btns" role="group" aria-label="Open or close vote marking for this ballot box">
+            <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--open vote-box-card__sess-btn" data-vote-card-ballot-open="${escapeHtml(
+              boxKey
+            )}" title="Open vote marking" aria-label="Open vote marking">${ADMIN_BALLOT_SESSION_OPEN_SVG}</button>
+            <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--close vote-box-card__sess-btn" data-vote-card-ballot-close="${escapeHtml(
+              boxKey
+            )}" title="Close vote marking" aria-label="Close vote marking">${ADMIN_BALLOT_SESSION_CLOSE_SVG}</button>
+          </div>
           <button type="button" class="ghost-button ghost-button--small" data-view-voted="${escapeHtml(
             box.box
           )}">View voted</button>
@@ -3521,6 +3558,31 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       const copyLinkBtn = e.target.closest("[data-copy-monitor-link]");
       const editBtn = e.target.closest("[data-edit-monitor]");
       const deleteBtn = e.target.closest("[data-delete-monitor]");
+      const adminBallotOpen = e.target.closest("[data-admin-ballot-open]");
+      const adminBallotClose = e.target.closest("[data-admin-ballot-close]");
+      if (adminBallotOpen || adminBallotClose) {
+        e.preventDefault();
+        const id = Number(
+          adminBallotOpen?.getAttribute("data-admin-ballot-open") ||
+            adminBallotClose?.getAttribute("data-admin-ballot-close")
+        );
+        const monitor = zeroDayMonitors.find((m) => m.id === id);
+        if (!monitor?.shareToken) return;
+        const wantOpen = !!adminBallotOpen;
+        void (async () => {
+          const ok = await adminSetVoteMarkingSessionForMonitor(monitor, wantOpen);
+          if (typeof window.showToast === "function") {
+            window.showToast(
+              ok
+                ? wantOpen
+                  ? "Vote marking opened for this ballot box."
+                  : "Vote marking closed for this ballot box."
+                : "Could not update vote marking session."
+            );
+          }
+        })();
+        return;
+      }
       if (viewBtn) {
         closeAllMonitorRowMenus(monitorsPanel);
         const id = Number(viewBtn.getAttribute("data-view-monitor"));
@@ -3724,6 +3786,32 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       const copyLinkBtn = e.target.closest("[data-copy-monitor-link], [data-copy-monitor-link-for-box]");
       const viewVotedBtn = e.target.closest("[data-view-voted]");
       const viewNotYetBtn = e.target.closest("[data-view-not-yet]");
+      const voteCardOpen = e.target.closest("[data-vote-card-ballot-open]");
+      const voteCardClose = e.target.closest("[data-vote-card-ballot-close]");
+
+      if (voteCardOpen || voteCardClose) {
+        const boxKeyRaw =
+          voteCardOpen?.getAttribute("data-vote-card-ballot-open") ||
+          voteCardClose?.getAttribute("data-vote-card-ballot-close");
+        const boxKeyCtl = (boxKeyRaw || "").trim();
+        if (!boxKeyCtl) return;
+        const wantOpen = !!voteCardOpen;
+        let monitor = zeroDayMonitors.find((m) => (m.ballotBox || "").trim() === boxKeyCtl);
+        if (!monitor) monitor = getOrEnsureMonitorForBallotBox(boxKeyCtl);
+        void (async () => {
+          const ok = await adminSetVoteMarkingSessionForMonitor(monitor, wantOpen);
+          if (typeof window.showToast === "function") {
+            window.showToast(
+              ok
+                ? wantOpen
+                  ? "Vote marking opened for this ballot box."
+                  : "Vote marking closed for this ballot box."
+                : "Could not update vote marking session."
+            );
+          }
+        })();
+        return;
+      }
 
       if (copyCodeBtn) {
         const idAttr = copyCodeBtn.getAttribute("data-copy-monitor-code");
@@ -4303,6 +4391,11 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const iconPause = `<svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`;
     const iconClose = `<svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
     const iconHistory = `<svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></svg>`;
+    const closeBtnHtml = standaloneBallotPage
+      ? ""
+      : `<button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--close monitor-session-bar__btn--icon" data-session-action="close" aria-label="Close session"${
+          closeDisabled ? ' disabled title="Already closed"' : ' title="Close marking for this session"'
+        }>${iconClose}</button>`;
     bar.innerHTML = `
       <div class="monitor-session-bar__controls">
         <span class="monitor-session-bar__status">Session: <strong>${escapeHtml(statusLabel)}</strong></span>
@@ -4317,9 +4410,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
               ? ` disabled title="${ballotSessionStatus === "paused" ? "Already paused" : ballotSessionStatus === "closed" ? "Open the session first" : ""}"`
               : ' title="Pause with a reason"'
           }>${iconPause}</button>
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--close monitor-session-bar__btn--icon" data-session-action="close" aria-label="Close session"${
-            closeDisabled ? ' disabled title="Already closed"' : ' title="Close marking for this session"'
-          }>${iconClose}</button>
+          ${closeBtnHtml}
           <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--history monitor-session-bar__btn--icon" data-session-action="history" aria-label="Voters marked voted" title="Voters marked voted from this link">${iconHistory}</button>
         </div>
       </div>
@@ -4414,15 +4505,21 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     clearStandaloneStrip();
   }
 
-  function attachMarkVotedToastTimers(rootEl) {
-    let sec = 10;
+  function attachMarkVotedToastTimers(rootEl, opts = {}) {
+    const durationMs =
+      typeof opts.durationMs === "number" && opts.durationMs > 0 ? opts.durationMs : 10000;
+    const showCountdown = opts.showCountdown !== false;
     const countdownEl = rootEl.querySelector("[data-toast-countdown]");
-    markVotedToastTimer = setInterval(() => {
-      sec -= 1;
-      if (countdownEl) countdownEl.textContent = String(sec);
-      if (sec <= 0) hideMarkVotedToast();
-    }, 1000);
-    markVotedToastHideTimer = setTimeout(() => hideMarkVotedToast(), 10000);
+    if (showCountdown && countdownEl) {
+      let sec = Math.max(1, Math.ceil(durationMs / 1000));
+      countdownEl.textContent = String(sec);
+      markVotedToastTimer = setInterval(() => {
+        sec -= 1;
+        if (countdownEl) countdownEl.textContent = String(Math.max(0, sec));
+        if (sec <= 0) hideMarkVotedToast();
+      }, 1000);
+    }
+    markVotedToastHideTimer = setTimeout(() => hideMarkVotedToast(), durationMs);
   }
 
   const undoIconSvg = `<svg class="monitor-standalone-strip__undo-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>`;
@@ -4807,10 +4904,9 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     strip.innerHTML = `
       <div class="monitor-standalone-strip__inner monitor-standalone-strip__inner--error">
         <p class="monitor-standalone-strip__text" role="status">${escapeHtml(message)}</p>
-        <span class="monitor-standalone-strip__timer" aria-live="polite"><span data-toast-countdown>10</span>s</span>
       </div>
     `;
-    attachMarkVotedToastTimers(strip);
+    attachMarkVotedToastTimers(strip, { durationMs: 3000, showCountdown: false });
   }
 
   function doStandaloneMarkVoted() {

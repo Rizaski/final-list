@@ -7,6 +7,8 @@
 import { firebaseInitPromise } from "./firebase.js";
 import { initMonitorView } from "./zeroDay.js";
 
+document.documentElement.classList.add("ballot-box-html");
+
 const params = new URLSearchParams(window.location.search);
 const token = params.get("monitor") || "";
 
