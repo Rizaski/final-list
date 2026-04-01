@@ -25,6 +25,7 @@ export const TRIP_TYPES = [
   { value: "speedboat", label: "Speed boat" },
 ];
 export const TRIP_STATUSES = ["Scheduled", "In progress", "Completed"];
+const ZERO_DAY_TRIPS_TABLE_COL_COUNT = 11;
 const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
 const VOTED_STORAGE_KEY = "zero-day-voted";
@@ -860,15 +861,217 @@ function initZeroDayTabs() {
   switchToTab("transport");
 }
 
-function getFilteredTransportTrips() {
+function getTransportTripsAfterTypeFilter() {
   let list = zeroDayTrips;
   if (transportViewFilter === "flight") list = list.filter((t) => t.tripType === "flight");
   else if (transportViewFilter === "speedboat") list = list.filter((t) => t.tripType === "speedboat");
-  return [...list].sort((a, b) => {
-    const ta = a.pickupTime ? new Date(a.pickupTime).getTime() : 0;
-    const tb = b.pickupTime ? new Date(b.pickupTime).getTime() : 0;
-    return ta - tb;
+  return list;
+}
+
+function tripMatchesToolbarQuery(t, query) {
+  if (!query) return true;
+  const blob = [
+    getTripTypeLabel(t),
+    t.route,
+    t.vehicle,
+    t.driver,
+    t.status,
+    t.rate,
+    t.amount,
+    t.remarks,
+    formatDateTime(t.pickupTime),
+    String(getTripAssignedVoterCount(t)),
+  ]
+    .map((x) => String(x ?? "").toLowerCase())
+    .join(" ");
+  return blob.includes(query);
+}
+
+function sortTransportTripsByKey(arr, sortBy) {
+  const pickupMs = (t) => (t.pickupTime ? new Date(t.pickupTime).getTime() : 0);
+  const vCount = (t) => getTripAssignedVoterCount(t);
+  arr.sort((a, b) => {
+    switch (sortBy) {
+      case "pickup-desc":
+        return pickupMs(b) - pickupMs(a);
+      case "pickup":
+        return pickupMs(a) - pickupMs(b);
+      case "route-desc":
+        return (b.route || "").localeCompare(a.route || "", "en");
+      case "route":
+        return (a.route || "").localeCompare(b.route || "", "en");
+      case "type":
+        return getTripTypeLabel(a).localeCompare(getTripTypeLabel(b), "en");
+      case "vehicle":
+        return (a.vehicle || "").localeCompare(b.vehicle || "", "en");
+      case "driver":
+        return (a.driver || "").localeCompare(b.driver || "", "en");
+      case "voters-desc":
+        return vCount(b) - vCount(a);
+      case "voters":
+        return vCount(a) - vCount(b);
+      case "status":
+        return (a.status || "").localeCompare(b.status || "", "en");
+      case "rate-desc":
+        return (b.rate || "").localeCompare(a.rate || "", "en", { numeric: true });
+      case "rate":
+        return (a.rate || "").localeCompare(b.rate || "", "en", { numeric: true });
+      case "amount-desc":
+        return (b.amount || "").localeCompare(a.amount || "", "en", { numeric: true });
+      case "amount":
+        return (a.amount || "").localeCompare(b.amount || "", "en", { numeric: true });
+      case "remarks":
+        return (a.remarks || "").localeCompare(b.remarks || "", "en");
+      default:
+        return pickupMs(a) - pickupMs(b);
+    }
   });
+}
+
+/** Trips visible in the table: type menu + status filter + search, sorted by toolbar. */
+function getFilteredTransportTrips() {
+  const list = [...getTransportTripsAfterTypeFilter()];
+  const searchEl = document.getElementById("zeroDayTripsSearch");
+  const filterEl = document.getElementById("zeroDayTripsFilterStatus");
+  const sortEl = document.getElementById("zeroDayTripsSort");
+  const query = (searchEl?.value || "").trim().toLowerCase();
+  const statusFilter = (filterEl?.value || "all").trim();
+  const sortBy = sortEl?.value || "pickup";
+  const filtered = list.filter((t) => {
+    if (statusFilter !== "all" && String(t.status || "") !== statusFilter) return false;
+    return tripMatchesToolbarQuery(t, query);
+  });
+  sortTransportTripsByKey(filtered, sortBy);
+  return filtered;
+}
+
+function getFilteredSortedGroupedTransportTrips() {
+  const filtered = getFilteredTransportTrips();
+  const groupEl = document.getElementById("zeroDayTripsGroupBy");
+  const groupBy = groupEl?.value || "none";
+  if (groupBy === "none") {
+    return filtered.map((trip) => ({ type: "row", trip }));
+  }
+  const getGroupKey = (t) => {
+    if (groupBy === "type") return getTripTypeLabel(t);
+    if (groupBy === "status") return (t.status || "").trim() || "—";
+    if (groupBy === "route") return (t.route || "").trim() || "—";
+    return "";
+  };
+  const displayList = [];
+  let lastKey = null;
+  for (const trip of filtered) {
+    const key = getGroupKey(trip);
+    if (key !== lastKey) {
+      displayList.push({ type: "group", label: key });
+      lastKey = key;
+    }
+    displayList.push({ type: "row", trip });
+  }
+  return displayList;
+}
+
+function updateTransportTripsSortIndicators() {
+  const headers = document.querySelectorAll("#zeroDayTripsTable thead th.th-sortable");
+  if (!headers.length) return;
+  const sortEl = document.getElementById("zeroDayTripsSort");
+  const sortBy = sortEl?.value || "pickup";
+  headers.forEach((th) => {
+    const key = th.getAttribute("data-sort-key");
+    th.classList.remove("is-sorted-asc", "is-sorted-desc");
+    th.removeAttribute("aria-sort");
+    if (key === "route" && (sortBy === "route" || sortBy === "route-desc")) {
+      th.classList.add(sortBy === "route" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "route" ? "ascending" : "descending");
+    } else if (key === "pickup" && (sortBy === "pickup" || sortBy === "pickup-desc")) {
+      th.classList.add(sortBy === "pickup" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "pickup" ? "ascending" : "descending");
+    } else if (key === "voters" && (sortBy === "voters" || sortBy === "voters-desc")) {
+      th.classList.add(sortBy === "voters" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "voters" ? "ascending" : "descending");
+    } else if (key === "rate" && (sortBy === "rate" || sortBy === "rate-desc")) {
+      th.classList.add(sortBy === "rate" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "rate" ? "ascending" : "descending");
+    } else if (key === "amount" && (sortBy === "amount" || sortBy === "amount-desc")) {
+      th.classList.add(sortBy === "amount" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "amount" ? "ascending" : "descending");
+    } else if (key === "type" && sortBy === "type") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "vehicle" && sortBy === "vehicle") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "driver" && sortBy === "driver") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "status" && sortBy === "status") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "remarks" && sortBy === "remarks") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    }
+  });
+}
+
+function bindTransportTripsTableHeaderSort() {
+  const thead = document.querySelector("#zeroDayTripsTable thead");
+  if (!thead || thead.dataset.transportSortBound === "1") return;
+  thead.dataset.transportSortBound = "1";
+  thead.addEventListener("click", (e) => {
+    const th = e.target.closest("th.th-sortable");
+    if (!th) return;
+    const key = th.getAttribute("data-sort-key");
+    const sortEl = document.getElementById("zeroDayTripsSort");
+    if (!key || !sortEl) return;
+    const cur = sortEl.value;
+    if (key === "route") {
+      sortEl.value = cur === "route" ? "route-desc" : "route";
+    } else if (key === "pickup") {
+      sortEl.value = cur === "pickup" ? "pickup-desc" : "pickup";
+    } else if (key === "voters") {
+      sortEl.value = cur === "voters" ? "voters-desc" : "voters";
+    } else if (key === "rate") {
+      sortEl.value = cur === "rate" ? "rate-desc" : "rate";
+    } else if (key === "amount") {
+      sortEl.value = cur === "amount" ? "amount-desc" : "amount";
+    } else {
+      const map = {
+        type: "type",
+        vehicle: "vehicle",
+        driver: "driver",
+        status: "status",
+        remarks: "remarks",
+      };
+      if (map[key]) sortEl.value = map[key];
+    }
+    renderZeroDayTripsTable();
+  });
+}
+
+function initTransportTripsToolbarListeners() {
+  const searchEl = document.getElementById("zeroDayTripsSearch");
+  const filterEl = document.getElementById("zeroDayTripsFilterStatus");
+  const sortEl = document.getElementById("zeroDayTripsSort");
+  const groupEl = document.getElementById("zeroDayTripsGroupBy");
+  const re = () => renderZeroDayTripsTable();
+  if (searchEl && !searchEl.dataset.zdTripsToolbarBound) {
+    searchEl.dataset.zdTripsToolbarBound = "1";
+    searchEl.addEventListener("input", re);
+  }
+  if (filterEl && !filterEl.dataset.zdTripsToolbarBound) {
+    filterEl.dataset.zdTripsToolbarBound = "1";
+    filterEl.addEventListener("change", re);
+  }
+  if (sortEl && !sortEl.dataset.zdTripsToolbarBound) {
+    sortEl.dataset.zdTripsToolbarBound = "1";
+    sortEl.addEventListener("change", re);
+  }
+  if (groupEl && !groupEl.dataset.zdTripsToolbarBound) {
+    groupEl.dataset.zdTripsToolbarBound = "1";
+    groupEl.addEventListener("change", re);
+  }
+  bindTransportTripsTableHeaderSort();
 }
 
 function getTripTypeLabel(trip) {
@@ -921,17 +1124,51 @@ function getTripAssignedVoterCount(trip) {
 
 function renderZeroDayTripsTable() {
   if (!zeroDayTripsTableBody) return;
-  const trips = getFilteredTransportTrips();
-  zeroDayTripsTableBody.innerHTML = "";
-  if (!trips.length) {
+  initTransportTripsToolbarListeners();
+
+  if (!zeroDayTrips.length) {
     zeroDayTripsTableBody.innerHTML = `
       <tr>
-        <td colspan="11" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
+        <td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
       </tr>
     `;
+    updateTransportTripsSortIndicators();
     return;
   }
-  trips.forEach((trip) => {
+
+  const afterType = getTransportTripsAfterTypeFilter();
+  if (!afterType.length) {
+    zeroDayTripsTableBody.innerHTML = `
+      <tr>
+        <td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
+      </tr>
+    `;
+    updateTransportTripsSortIndicators();
+    return;
+  }
+
+  const displayList = getFilteredSortedGroupedTransportTrips();
+  const dataRows = displayList.filter((x) => x.type === "row");
+  if (!dataRows.length) {
+    zeroDayTripsTableBody.innerHTML = `
+      <tr>
+        <td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">No trips match your search or filters.</td>
+      </tr>
+    `;
+    updateTransportTripsSortIndicators();
+    return;
+  }
+
+  zeroDayTripsTableBody.innerHTML = "";
+  for (const item of displayList) {
+    if (item.type === "group") {
+      const tr = document.createElement("tr");
+      tr.className = "pledges-toolbar__group-header";
+      tr.innerHTML = `<td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}">${escapeHtml(item.label)}</td>`;
+      zeroDayTripsTableBody.appendChild(tr);
+      continue;
+    }
+    const trip = item.trip;
     const typeLabel = getTripTypeLabel(trip);
     const count = getTripAssignedVoterCount(trip);
     const statusClass = tripStatusBadgeClass(trip.status);
@@ -962,7 +1199,8 @@ function renderZeroDayTripsTable() {
       </td>
     `;
     zeroDayTripsTableBody.appendChild(tr);
-  });
+  }
+  updateTransportTripsSortIndicators();
 }
 
 function openTripForm(existing, defaultType) {
@@ -3354,7 +3592,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       else if (window.appNotifications) {
         window.appNotifications.push({
           title: "No trips",
-          meta: "Add a trip or switch the type filter to include routes.",
+          meta: "Add a trip, adjust the type menu, or clear search and filters.",
         });
       }
     });
@@ -3366,7 +3604,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       else if (window.appNotifications) {
         window.appNotifications.push({
           title: "No trips",
-          meta: "Add a trip or switch the type filter to include routes.",
+          meta: "Add a trip, adjust the type menu, or clear search and filters.",
         });
       }
     });
@@ -3378,7 +3616,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       else if (window.appNotifications) {
         window.appNotifications.push({
           title: "No trips",
-          meta: "Add a trip or switch the type filter to include routes.",
+          meta: "Add a trip, adjust the type menu, or clear search and filters.",
         });
       }
     });
@@ -4058,24 +4296,28 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const openDisabled = ballotSessionStatus === "open";
     const pauseDisabled = ballotSessionStatus !== "open";
     const closeDisabled = ballotSessionStatus === "closed";
+    const iconOpen = `<svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none"/></svg>`;
+    const iconPause = `<svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`;
+    const iconClose = `<svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+    const iconHistory = `<svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></svg>`;
     bar.innerHTML = `
       <div class="monitor-session-bar__controls">
         <span class="monitor-session-bar__status">Session: <strong>${escapeHtml(statusLabel)}</strong></span>
-        <div class="monitor-session-bar__buttons">
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--open" data-session-action="open"${
+        <div class="monitor-session-bar__buttons monitor-session-bar__buttons--icons">
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--open monitor-session-bar__btn--icon" data-session-action="open" aria-label="Open session"${
             openDisabled
               ? " disabled title=\"Session is already open\""
               : ' title="Resume marking (after pause or close)"'
-          }>Open</button>
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--pause" data-session-action="pause"${
+          }>${iconOpen}</button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--pause monitor-session-bar__btn--icon" data-session-action="pause" aria-label="Pause session"${
             pauseDisabled
               ? ` disabled title="${ballotSessionStatus === "paused" ? "Already paused" : ballotSessionStatus === "closed" ? "Open the session first" : ""}"`
               : ' title="Pause with a reason"'
-          }>Pause</button>
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--close" data-session-action="close"${
+          }>${iconPause}</button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--close monitor-session-bar__btn--icon" data-session-action="close" aria-label="Close session"${
             closeDisabled ? ' disabled title="Already closed"' : ' title="Close marking for this session"'
-          }>Close</button>
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--history" data-session-action="history" title="Voters marked voted from this link">History</button>
+          }>${iconClose}</button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--history monitor-session-bar__btn--icon" data-session-action="history" aria-label="Voters marked voted" title="Voters marked voted from this link">${iconHistory}</button>
         </div>
       </div>
       ${pauseBanner}
@@ -4175,9 +4417,13 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         <div class="monitor-mark-voted-toast__row"><span>Name</span><strong>${escapeHtml(voter.fullName || "")}</strong></div>
         <div class="monitor-mark-voted-toast__row"><span>ID</span><strong>${escapeHtml(String(id))}</strong></div>
         <div class="monitor-mark-voted-toast__row"><span>Address</span><strong>${escapeHtml(addr)}</strong></div>
-        <div class="monitor-mark-voted-toast__actions">
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--undo" data-toast-undo>Undo mark voted</button>
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--dismiss" data-toast-dismiss>Dismiss</button>
+        <div class="monitor-mark-voted-toast__actions monitor-mark-voted-toast__actions--icons">
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--undo monitor-session-bar__btn--icon" data-toast-undo aria-label="Undo mark voted" title="Undo mark voted">
+            <svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>
+          </button>
+          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--dismiss monitor-session-bar__btn--icon" data-toast-dismiss aria-label="Dismiss" title="Dismiss">
+            <svg class="monitor-session-bar__icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
         </div>
         <div class="monitor-mark-voted-toast__timer" aria-live="polite"><span data-toast-countdown>10</span>s</div>
       </div>
@@ -4386,7 +4632,9 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         pct +
         "%)</span>" +
         "</div>" +
-        '<button type="button" class="ballot-box-btn ballot-box-btn--secondary" id="ballotBoxPrintBtn">Print summary</button>' +
+        '<button type="button" class="ballot-box-icon-tool ballot-box-icon-tool--print ballot-box-icon-tool--bordered" id="ballotBoxPrintBtn" aria-label="Print summary" title="Print summary">' +
+        '<svg class="ballot-box-icon-tool__svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>' +
+        "</button>" +
         "</div>";
     } else {
       main.innerHTML =
@@ -4493,13 +4741,14 @@ export function initMonitorView(token, votersContextParam, options = {}) {
           <span class="monitor-voter-card__label">Vote status</span>
           <span class="monitor-voter-card__value">${timeMarked ? '<span class="pledge-pill pledge-pill--pledged">Voted</span> ' + formatDateTime(timeMarked) : '<span class="pledge-pill pledge-pill--undecided">Not voted</span>'}</span>
         </div>
-        ${canMarkVoted() && !timeMarked ? `<div class="monitor-voter-card__action"><button type="button" class="primary-button" data-monitor-mark-voted="${escapeHtml(voter.id)}">Mark voted</button></div>` : ""}
+        ${canMarkVoted() && !timeMarked ? `<div class="monitor-voter-card__action"><button type="button" class="monitor-mark-voted-icon-btn" data-monitor-mark-voted="${escapeHtml(voter.id)}" aria-label="Mark as voted" title="Mark as voted"><svg class="monitor-mark-voted-icon-btn__svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg></button></div>` : ""}
       </div>
     `;
 
     if (canMarkVoted()) {
       monitorViewResult.querySelector("[data-monitor-mark-voted]")?.addEventListener("click", (e) => {
-        const vid = e.target.getAttribute("data-monitor-mark-voted");
+        const btn = e.target.closest("[data-monitor-mark-voted]");
+        const vid = btn?.getAttribute("data-monitor-mark-voted");
         if (vid) markVoterVoted(vid);
       });
     }

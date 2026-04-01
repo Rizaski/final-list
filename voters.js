@@ -442,6 +442,26 @@ function getAgentScopeId(agent) {
   return s && s !== "undefined" && s !== "null" ? s : "";
 }
 
+function normalizeAgentNameKey(name) {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Disambiguate duplicate display names in assign-agent dropdowns (same list as peers). */
+function formatCandidateAgentOptionLabel(agent, peers) {
+  const name = String(agent?.name || "").trim() || `Agent ${agent?.id ?? ""}`;
+  const key = normalizeAgentNameKey(name);
+  const dup = (peers || []).filter((a) => normalizeAgentNameKey(a?.name) === key && key).length > 1;
+  if (!dup) return name;
+  const nid = String(agent?.nationalId || "").trim();
+  const phone = String(agent?.phone || "").trim();
+  if (nid) return `${name} (${nid})`;
+  if (phone) return `${name} (${phone})`;
+  return `${name} (#${agent?.id ?? "?"})`;
+}
+
+/** Hidden select value when voter has assigned name but no agent id (legacy / CSV). */
+const CANDIDATE_AGENT_LEGACY_NAME_PREFIX = "legacy-n:";
+
 /**
  * Union localStorage agents with the Settings module runtime cache (`window.agentsCached`).
  * Candidates often create agents from the voter detail modal; merging avoids a stale list if
@@ -480,10 +500,8 @@ function getCandidateAssignableAgents(candidateId) {
     return scopeId !== "" && scopeId === cid;
   });
 
-  // Candidate CSV import may write agent names onto voter assignment fields before/without
-  // corresponding rows in settings agents-data. Include those names so detail dropdown is usable.
-  const byNameKey = new Map();
-  const keyOf = (name) => String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  // One row per agent id (duplicate display names no longer collapse). Merge CSV/legacy names by id.
+  const byRow = new Map();
   const byId = new Map();
   allAgents.forEach((a) => {
     const id = String(a?.id ?? "").trim();
@@ -491,54 +509,70 @@ function getCandidateAssignableAgents(candidateId) {
   });
 
   scopedAgents.forEach((a) => {
-    const k = keyOf(a?.name);
-    if (k) {
-      byNameKey.set(k, a);
-      return;
-    }
     const id = String(a?.id ?? "").trim();
     if (!id) return;
-    const fallbackKey = `__id__${id}`;
-    if (!byNameKey.has(fallbackKey)) {
-      const displayName = String(a.name || "").trim() || `Agent ${id}`;
-      byNameKey.set(fallbackKey, { ...a, name: displayName });
-    }
+    const displayName = String(a.name || "").trim() || `Agent ${id}`;
+    byRow.set(`id:${id}`, {
+      ...a,
+      name: displayName,
+      candidateId: a.candidateId != null && String(a.candidateId).trim() !== "" ? a.candidateId : cid,
+    });
   });
 
   const resolveAgentDetails = (name, idHint = "") => {
     const hinted = byId.get(String(idHint || "").trim());
     if (hinted) return hinted;
-    const k = keyOf(name);
+    const k = normalizeAgentNameKey(name);
     if (!k) return null;
-    // Prefer same-candidate scope, then any exact-name match.
-    const scoped = scopedAgents.find((a) => keyOf(a?.name) === k);
+    const scoped = scopedAgents.find((a) => normalizeAgentNameKey(a?.name) === k);
     if (scoped) return scoped;
-    const any = allAgents.find((a) => keyOf(a?.name) === k);
-    return any || null;
+    return allAgents.find((a) => normalizeAgentNameKey(a?.name) === k) || null;
   };
 
   const addNameAsScopedAgent = (rawName, idHint = "") => {
     const name = String(rawName || "").trim();
     if (!name) return;
-    const k = keyOf(name);
-    if (!k) return;
     const resolved = resolveAgentDetails(name, idHint);
-    const existing = byNameKey.get(k);
-    if (!existing) {
-      byNameKey.set(k, {
-        id: String(resolved?.id ?? "").trim() || `csv-${cid}-${k}`,
-        name: String(resolved?.name || name).trim(),
+    const rid = String(resolved?.id ?? idHint ?? "").trim();
+    const nk = normalizeAgentNameKey(name);
+    const nameKey = nk ? `name:${nk}` : "";
+
+    if (rid) {
+      const ik = `id:${rid}`;
+      const prev = byRow.get(ik) || {};
+      byRow.set(ik, {
+        ...prev,
+        id: rid,
+        name: String(resolved?.name || prev.name || name).trim(),
+        nationalId: String(resolved?.nationalId || prev.nationalId || "").trim(),
+        phone: String(resolved?.phone || prev.phone || "").trim(),
+        candidateId: cid,
+      });
+      if (nameKey && byRow.has(nameKey)) {
+        const old = byRow.get(nameKey);
+        if (old && String(old.id || "").startsWith("csv-")) byRow.delete(nameKey);
+      }
+      return;
+    }
+
+    if (!nk) return;
+    const scopedIdsWithName = scopedAgents.filter((a) => normalizeAgentNameKey(a?.name) === nk).map((a) => String(a.id));
+    if (scopedIdsWithName.length > 0) return;
+
+    if (!byRow.has(nameKey)) {
+      byRow.set(nameKey, {
+        id: `csv-${cid}-${nk.replace(/\s/g, "_")}`,
+        name,
         nationalId: String(resolved?.nationalId || "").trim(),
         phone: String(resolved?.phone || "").trim(),
         candidateId: cid,
       });
-      return;
-    }
-    // Backfill ID/mobile/national ID if existing option came from plain CSV name.
-    if (resolved) {
-      if (!existing.id || String(existing.id).startsWith("csv-")) existing.id = String(resolved.id ?? existing.id);
-      if (!existing.nationalId) existing.nationalId = String(resolved.nationalId || "").trim();
-      if (!existing.phone) existing.phone = String(resolved.phone || "").trim();
+    } else if (resolved) {
+      const prev = byRow.get(nameKey);
+      if (prev && String(prev.id || "").startsWith("csv-")) {
+        if (resolved.nationalId && !prev.nationalId) prev.nationalId = String(resolved.nationalId);
+        if (resolved.phone && !prev.phone) prev.phone = String(resolved.phone);
+      }
     }
   };
 
@@ -567,7 +601,7 @@ function getCandidateAssignableAgents(candidateId) {
     }
   } catch (_) {}
 
-  return Array.from(byNameKey.values()).sort((a, b) =>
+  return Array.from(byRow.values()).sort((a, b) =>
     String(a?.name || "").localeCompare(String(b?.name || ""), "en")
   );
 }
@@ -1225,15 +1259,16 @@ function setupTransportRouteSearchDropdown({ routeSel, routeSearchInput, menuEl,
 
   routeSearchInput.addEventListener("focus", renderMenu);
   routeSearchInput.addEventListener("input", renderMenu);
-  root?.addEventListener("focusout", () => {
+  menuEl.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+  });
+  root?.addEventListener("focusout", (e) => {
+    const rt = e.relatedTarget;
+    if (rt && root.contains(rt)) return;
     window.setTimeout(() => {
       const active = document.activeElement;
-      if (!root.contains(active)) hideMenu();
+      if (!root || !root.contains(active)) hideMenu();
     }, 0);
-  });
-
-  menuEl.addEventListener("mousedown", (e) => {
-    if (e.target.closest("[data-route-name]")) e.preventDefault();
   });
 
   menuEl.addEventListener("click", (e) => {
@@ -1497,22 +1532,46 @@ function renderVoterDetails(voter) {
         candCtx.candidateId,
         agentMap
       );
+      const assignedIdRaw =
+        voter?.candidateAgentAssignmentIds && typeof voter.candidateAgentAssignmentIds === "object"
+          ? voter.candidateAgentAssignmentIds[String(candCtx.candidateId)]
+          : "";
+      const assignedId = assignedIdRaw != null ? String(assignedIdRaw).trim() : "";
       const candidateAgents = getCandidateAssignableAgents(candCtx.candidateId);
+      let nameFallbackSelected = false;
       const agentOptions =
         '<option value="">Unassigned</option>' +
         candidateAgents
-          .map(
-            (a) =>
-              `<option value="${escapeHtml(a.name)}"${
-                a.name === assignedName ? " selected" : ""
-              }>${escapeHtml(a.name)}</option>`
-          )
+          .map((a) => {
+            const aid = String(a?.id ?? "");
+            const optLabel = formatCandidateAgentOptionLabel(a, candidateAgents);
+            let selected = Boolean(assignedId && aid === assignedId);
+            if (
+              !selected &&
+              !assignedId &&
+              assignedName &&
+              String(a?.name || "").trim().toLowerCase() === assignedName.toLowerCase() &&
+              !nameFallbackSelected
+            ) {
+              selected = true;
+              nameFallbackSelected = true;
+            }
+            return `<option value="${escapeHtml(aid)}"${selected ? " selected" : ""}>${escapeHtml(
+              optLabel
+            )}</option>`;
+          })
           .join("") +
         (assignedName &&
         !candidateAgents.some(
-          (a) => String(a?.name || "").trim().toLowerCase() === assignedName.toLowerCase()
+          (a) =>
+            (assignedId && String(a?.id ?? "") === assignedId) ||
+            (!assignedId &&
+              assignedName &&
+              String(a?.name || "").trim().toLowerCase() === assignedName.toLowerCase())
         )
-          ? `<option value="${escapeHtml(assignedName)}" selected>${escapeHtml(assignedName)}</option>`
+          ? `<option value="${escapeHtml(
+              CANDIDATE_AGENT_LEGACY_NAME_PREFIX + encodeURIComponent(assignedName)
+            )}" selected>${escapeHtml(assignedName)}</option>`
           : "");
       return `
       <section class="voter-details-section voter-details-section--full voter-details-section--agent">
@@ -1843,8 +1902,9 @@ function renderVoterDetails(voter) {
     });
   }
 
-  function setupCandidateAgentDropdown({ agentSel, agentSearchInput, menuEl, getAgents }) {
+  function setupCandidateAgentDropdown({ agentSel, agentSearchInput, menuEl, getAgents, valueMode = "name" }) {
     if (!agentSel || !agentSearchInput || !menuEl) return;
+    const useIdValues = valueMode === "id";
     const toNorm = (s) => String(s || "").trim().toLowerCase();
     const initialsFromName = (name) => {
       const out = String(name || "")
@@ -1864,15 +1924,17 @@ function renderVoterDetails(voter) {
         return;
       }
       const q = toNorm(agentSearchInput.value);
-      const list = (typeof getAgents === "function" ? getAgents() : [])
-        .filter((a) => {
-          if (!q) return true;
-          const name = toNorm(a?.name);
-          const nationalId = toNorm(a?.nationalId);
-          const phone = toNorm(a?.phone);
-          return name.includes(q) || nationalId.includes(q) || phone.includes(q);
-        })
-        .slice(0, 40);
+      const fullList = typeof getAgents === "function" ? getAgents() : [];
+      const list = fullList.filter((a) => {
+        if (!q) return true;
+        const name = toNorm(a?.name);
+        const nationalId = toNorm(a?.nationalId);
+        const phone = toNorm(a?.phone);
+        const aid = toNorm(a?.id != null ? String(a.id) : "");
+        return (
+          name.includes(q) || nationalId.includes(q) || phone.includes(q) || (useIdValues && aid.includes(q))
+        );
+      });
       if (!list.length) {
         menuEl.innerHTML =
           '<div class="voter-agent-dropdown__empty">No matching agents.</div>';
@@ -1885,14 +1947,17 @@ function renderVoterDetails(voter) {
           const name = String(a?.name || "");
           const nationalId = String(a?.nationalId || "—");
           const phone = String(a?.phone || "—");
+          const aid = String(a?.id ?? "");
+          const label = useIdValues ? formatCandidateAgentOptionLabel(a, fullList) : name;
           const initials = initialsFromName(name);
           const photoHtml = photoSrc
             ? `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="${imgOnError}"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
             : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
-          return `<button type="button" class="voter-agent-dropdown__item" data-agent-name="${escapeHtml(name)}">
+          const idAttr = useIdValues ? ` data-agent-id="${escapeHtml(aid)}"` : "";
+          return `<button type="button" class="voter-agent-dropdown__item" data-agent-name="${escapeHtml(name)}"${idAttr}>
             ${photoHtml}
-            <span class="voter-agent-dropdown__main">${escapeHtml(name)}</span>
-            <span class="voter-agent-dropdown__meta">ID: ${escapeHtml(nationalId)} | ${escapeHtml(phone)}</span>
+            <span class="voter-agent-dropdown__main">${escapeHtml(label)}</span>
+            <span class="voter-agent-dropdown__meta">Agent #${escapeHtml(aid)} · Nat. ID: ${escapeHtml(nationalId)} · ${escapeHtml(phone)}</span>
           </button>`;
         })
         .join("");
@@ -1904,20 +1969,37 @@ function renderVoterDetails(voter) {
       menuEl.style.display = "none";
     };
 
+    // Keep focus on the search field when picking an item; otherwise focusout runs before the
+    // menu button receives focus and the menu closes before click (browser-dependent).
+    menuEl.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+    });
+
     agentSearchInput.addEventListener("focus", renderMenu);
     agentSearchInput.addEventListener("input", renderMenu);
-    root?.addEventListener("focusout", () => {
+    root?.addEventListener("focusout", (e) => {
+      const rt = e.relatedTarget;
+      if (rt && root.contains(rt)) return;
       window.setTimeout(() => {
         const active = document.activeElement;
-        if (!root.contains(active)) hideMenu();
+        if (!root || !root.contains(active)) hideMenu();
       }, 0);
     });
     menuEl.addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-agent-name]");
+      const btn = e.target.closest(useIdValues ? "[data-agent-id]" : "[data-agent-name]");
       if (!btn) return;
-      const selected = String(btn.getAttribute("data-agent-name") || "");
-      agentSearchInput.value = selected;
-      agentSel.value = selected;
+      if (useIdValues) {
+        const id = String(btn.getAttribute("data-agent-id") || "");
+        const name = String(btn.getAttribute("data-agent-name") || "");
+        const list = typeof getAgents === "function" ? getAgents() : [];
+        const agent = list.find((a) => String(a?.id ?? "") === id);
+        agentSearchInput.value = String(agent?.name || name || "");
+        agentSel.value = id;
+      } else {
+        const selected = String(btn.getAttribute("data-agent-name") || "");
+        agentSearchInput.value = selected;
+        agentSel.value = selected;
+      }
       agentSel.dispatchEvent(new Event("change"));
       hideMenu();
     });
@@ -1932,6 +2014,7 @@ function renderVoterDetails(voter) {
       agentSearchInput,
       menuEl: agentMenu,
       getAgents: () => getCandidateAssignableAgents(candCtx.candidateId),
+      valueMode: "id",
     });
     function applyAgentFromSearch() {
       if (!agentSel || !agentSearchInput) return;
@@ -1942,27 +2025,49 @@ function renderVoterDetails(voter) {
         return;
       }
       const list = getCandidateAssignableAgents(candCtx.candidateId);
-      const exact =
-        list.find((a) => String(a.name || "").trim().toLowerCase() === q.toLowerCase()) ||
-        list.find((a) => String(a.name || "").trim().toLowerCase().includes(q.toLowerCase()));
-      if (!exact) {
+      const qLower = q.toLowerCase();
+      const exactByName = list.filter((a) => String(a.name || "").trim().toLowerCase() === qLower);
+      if (exactByName.length === 1) {
+        agentSearchInput.value = exactByName[0].name || "";
+        agentSel.value = String(exactByName[0].id ?? "");
+        agentSel.dispatchEvent(new Event("change"));
+        return;
+      }
+      if (exactByName.length > 1) {
         if (window.appNotifications) {
-          window.appNotifications.push({ title: "Agent not found", meta: "Pick an agent from the list." });
+          window.appNotifications.push({
+            title: "Several agents match",
+            meta: "Pick one from the list, or search by national ID, phone, or agent number.",
+          });
         }
         return;
       }
-      agentSearchInput.value = exact.name || "";
-      agentSel.value = exact.name || "";
-      agentSel.dispatchEvent(new Event("change"));
+      const byId = list.find((a) => String(a.id ?? "").toLowerCase() === qLower);
+      if (byId) {
+        agentSearchInput.value = byId.name || "";
+        agentSel.value = String(byId.id ?? "");
+        agentSel.dispatchEvent(new Event("change"));
+        return;
+      }
+      const partial = list.find((a) => String(a.name || "").trim().toLowerCase().includes(qLower));
+      if (partial) {
+        agentSearchInput.value = partial.name || "";
+        agentSel.value = String(partial.id ?? "");
+        agentSel.dispatchEvent(new Event("change"));
+        return;
+      }
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Agent not found", meta: "Pick an agent from the list." });
+      }
     }
     agentSearchInput?.addEventListener("input", () => {
       if (!agentSearchInput || !agentSel) return;
       const q = String(agentSearchInput.value || "").trim().toLowerCase();
       if (!q) return;
       const list = getCandidateAssignableAgents(candCtx.candidateId);
-      const exact = list.find((a) => String(a.name || "").trim().toLowerCase() === q);
-      if (exact) {
-        agentSel.value = exact.name || "";
+      const exactByName = list.filter((a) => String(a.name || "").trim().toLowerCase() === q);
+      if (exactByName.length === 1) {
+        agentSel.value = String(exactByName[0].id ?? "");
         agentSel.dispatchEvent(new Event("change"));
       }
     });
@@ -1992,6 +2097,8 @@ function renderVoterDetails(voter) {
         };
         const prevName = String(prevAssignments[cid] ?? "");
         const prevAgentId = String(prevIds[cid] ?? "");
+        const revertSelect = agentSel.value;
+        const revertSearch = String(agentSearchInput?.value ?? "");
 
         if (!v.candidateAgentAssignments || typeof v.candidateAgentAssignments !== "object") {
           v.candidateAgentAssignments = {};
@@ -1999,22 +2106,31 @@ function renderVoterDetails(voter) {
         if (!v.candidateAgentAssignmentIds || typeof v.candidateAgentAssignmentIds !== "object") {
           v.candidateAgentAssignmentIds = {};
         }
-        const selectedName = agentSel.value || "";
-        const selectedAgent =
-          getCandidateAssignableAgents(candCtx.candidateId).find(
-            (a) => String(a?.name || "").trim() === String(selectedName).trim()
-          ) || null;
+        const rawVal = String(agentSel.value || "");
+        const list = getCandidateAssignableAgents(candCtx.candidateId);
+        let selectedName = "";
+        let selectedAgentId = "";
+        if (rawVal.startsWith(CANDIDATE_AGENT_LEGACY_NAME_PREFIX)) {
+          try {
+            selectedName = decodeURIComponent(rawVal.slice(CANDIDATE_AGENT_LEGACY_NAME_PREFIX.length));
+          } catch (_) {
+            selectedName = "";
+          }
+        } else if (rawVal) {
+          const selectedAgent = list.find((a) => String(a?.id ?? "") === rawVal) || null;
+          selectedName = selectedAgent ? String(selectedAgent.name || "").trim() : "";
+          selectedAgentId =
+            selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+        }
         v.candidateAgentAssignments[cid] = selectedName;
-        v.candidateAgentAssignmentIds[cid] =
-          selectedAgent && selectedAgent.id != null ? String(selectedAgent.id) : "";
+        v.candidateAgentAssignmentIds[cid] = selectedAgentId;
 
         const ok = await saveVoterToFirestoreWithNotification(v, "Agent assignment not saved to cloud");
         if (!ok) {
           v.candidateAgentAssignments = { ...prevAssignments };
           v.candidateAgentAssignmentIds = { ...prevIds };
-          const revertLabel = prevName;
-          agentSel.value = revertLabel;
-          if (agentSearchInput) agentSearchInput.value = revertLabel;
+          agentSel.value = revertSelect;
+          if (agentSearchInput) agentSearchInput.value = revertSearch;
           return;
         }
 
@@ -3709,6 +3825,61 @@ export function updateVoterDoorToDoorFields(voterId, fields) {
 }
 
 /**
+ * Persist voter rows to Firestore after bulk edits (CSV import). Uses batch writes, then
+ * falls back to per-document merge if the batch fails.
+ */
+async function persistVotersToFirestoreBulk(voters) {
+  let api;
+  try {
+    api = await firebaseInitPromise;
+  } catch (e) {
+    return {
+      synced: false,
+      error: "Firebase did not initialize. Check connection and reload.",
+    };
+  }
+  if (!api || !api.ready || typeof api.setVoterFs !== "function") {
+    return {
+      synced: false,
+      error: "Firebase is not ready. Sign in and try again.",
+    };
+  }
+  const payload = voters.map((v) => normalizeVoterCandidateFields(v));
+  if (payload.length === 0) return { synced: true, error: null };
+
+  if (typeof api.setVotersBatchFs === "function") {
+    try {
+      await api.setVotersBatchFs(payload);
+      return { synced: true, error: null };
+    } catch (batchErr) {
+      console.warn("[Voters] persistVotersToFirestoreBulk batch failed; retrying per voter", batchErr);
+    }
+  }
+
+  let ok = 0;
+  for (const v of payload) {
+    try {
+      await api.setVoterFs(v);
+      ok++;
+    } catch (oneErr) {
+      console.warn("[Voters] persistVotersToFirestoreBulk setVoterFs", v?.id, oneErr);
+    }
+  }
+  if (ok === payload.length) return { synced: true, error: null };
+  if (ok === 0) {
+    return {
+      synced: false,
+      error:
+        "Could not save to Firebase. Check your connection, sign-in, and Firestore permissions.",
+    };
+  }
+  return {
+    synced: false,
+    error: `Only ${ok} of ${payload.length} voter(s) were saved to the cloud. The rest are stored on this device only until sync succeeds.`,
+  };
+}
+
+/**
  * Bulk apply this candidate’s pledge and assigned agent from CSV (candidate login only).
  * Expected columns include ID Number; Pledge (yes / no / undecided); Assigned Agent (name).
  */
@@ -3784,18 +3955,13 @@ export async function importCandidatePledgeAgentFromCsvRows(rows, candidateId) {
       notFoundCount: notFound.length,
       notFound: notFound.slice(0, 80),
       invalid,
+      cloudSynced: true,
+      cloudError: null,
     };
   }
 
   saveVotersToStorage();
-  try {
-    const api = await firebaseInitPromise;
-    if (api.ready && typeof api.setVotersBatchFs === "function") {
-      await api.setVotersBatchFs(toSave.map(normalizeVoterCandidateFields));
-    }
-  } catch (err) {
-    console.warn("[Voters] importCandidatePledgeAgentFromCsvRows", err);
-  }
+  const { synced: cloudSynced, error: cloudError } = await persistVotersToFirestoreBulk(toSave);
 
   for (const v of toSave) {
     const an = v.candidateAgentAssignments && v.candidateAgentAssignments[cid];
@@ -3810,6 +3976,8 @@ export async function importCandidatePledgeAgentFromCsvRows(rows, candidateId) {
     notFoundCount: notFound.length,
     notFound: notFound.slice(0, 80),
     invalid,
+    cloudSynced,
+    cloudError: cloudError || null,
   };
 }
 

@@ -105,7 +105,12 @@
         <div class="monitor-view__toolbar ballot-box-toolbar">
           <label for="monitorViewSearch" class="ballot-box-label ballot-box-label--inline">Find voter</label>
           <input type="text" id="monitorViewSearch" placeholder="National ID, sequence, or name" class="monitor-view__search ballot-box-search-field" autocomplete="off" inputmode="text">
-          <button type="button" id="monitorViewSearchBtn" class="primary-button ballot-box-search-btn">Search</button>
+          <button type="button" id="monitorViewSearchBtn" class="ballot-box-icon-tool ballot-box-icon-tool--search" aria-label="Search" title="Search">
+            <svg class="ballot-box-icon-tool__svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"/>
+              <path d="M20 20l-4.3-4.3"/>
+            </svg>
+          </button>
         </div>
         <div id="monitorViewResult" class="monitor-view-result" aria-live="polite"></div>
       </div>

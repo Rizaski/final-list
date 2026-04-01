@@ -98,6 +98,31 @@ function dedupeAgentsById(list) {
   return Array.from(byId.values());
 }
 
+/**
+ * Next Firestore document id for a new agent. Uses max numeric id + 1 among all agents, and skips
+ * ids that are already taken (handles mixed numeric and non-numeric ids without reusing "1").
+ */
+function getNextAgentDocumentId(agentList) {
+  const list = Array.isArray(agentList) ? agentList : [];
+  const used = new Set();
+  let maxNum = 0;
+  for (const a of list) {
+    if (!a || a.id == null) continue;
+    const sid = String(a.id).trim();
+    if (!sid) continue;
+    used.add(sid);
+    const n = Number(sid);
+    if (Number.isFinite(n) && n > maxNum) maxNum = n;
+  }
+  let candidate = maxNum + 1;
+  let idStr = String(candidate);
+  while (used.has(idStr)) {
+    candidate += 1;
+    idStr = String(candidate);
+  }
+  return idStr;
+}
+
 const PAGE_SIZE = 15;
 const MAX_VOTER_ROWS = 20000;
 const MAX_VOTERS_FILE_BYTES = 15 * 1024 * 1024; // ~15MB safety cap
@@ -311,7 +336,7 @@ async function refreshAgentModalCandidateScopeOptions(modalBodyRoot, existing) {
 }
 
 let agents = [];
-/** Primary agent id (string) → duplicate agent records (same display name, other candidate scopes). */
+/** Primary agent id (string) → extra rows when grouped (legacy; table lists one row per agent). */
 let settingsAgentDuplicateAgentsByPrimaryId = new Map();
 let campaignUsers = [];
 let unsubscribeAgentsFs = null;
@@ -450,7 +475,10 @@ function normalizeAgentCandidateScope(c) {
   return String(c).trim();
 }
 
-/** Returns existing agent row if the same national ID (ID number) exists in this candidate scope. Name is not used for duplicate detection. */
+/**
+ * Returns an existing agent row if the same national ID (agent ID number) already exists in this scope.
+ * A candidate (or unscoped “all campaigns”) cannot register the same ID number twice; name is ignored.
+ */
 function getDuplicateAgentInScope({ nationalId, candidateId, excludeAgentId }) {
   const nid = normalizeAgentNationalId(nationalId);
   if (!nid) return null;
@@ -529,39 +557,9 @@ function getAgentCandidateScopeId(agent) {
   return String(raw).trim();
 }
 
-/** Normalize full name for duplicate detection (same person, multiple agent rows / scopes). */
-function normalizeAgentNameKey(s) {
-  return String(s || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-}
-
-/**
- * Keep first agent row per name (current sort order). Others become `duplicateAgents` for the ⋮ menu.
- */
-function dedupeAgentsByNameInOrder(sortedAgents) {
-  const byKey = new Map();
-  sortedAgents.forEach((a) => {
-    const k = normalizeAgentNameKey(a.name);
-    if (!k) return;
-    if (!byKey.has(k)) byKey.set(k, []);
-    byKey.get(k).push(a);
-  });
-  const out = [];
-  const seen = new Set();
-  sortedAgents.forEach((a) => {
-    const k = normalizeAgentNameKey(a.name);
-    if (!k) {
-      out.push({ agent: a, duplicateAgents: [] });
-      return;
-    }
-    if (seen.has(k)) return;
-    seen.add(k);
-    const list = byKey.get(k) || [a];
-    out.push({ agent: list[0], duplicateAgents: list.slice(1) });
-  });
-  return out;
+/** One row per agent in the table; saving prevents duplicate national IDs per scope (see getDuplicateAgentInScope). */
+function mapAgentsToTableRows(sortedAgents) {
+  return sortedAgents.map((a) => ({ agent: a, duplicateAgents: [] }));
 }
 
 function getFilteredSortedGroupedAgents() {
@@ -624,7 +622,7 @@ function getFilteredSortedGroupedAgents() {
   };
   filtered.sort(cmp);
 
-  const dedupedRows = dedupeAgentsByNameInOrder(filtered);
+  const dedupedRows = mapAgentsToTableRows(filtered);
 
   if (groupBy === "none") {
     return dedupedRows.map(({ agent, duplicateAgents }) => ({
@@ -1181,21 +1179,18 @@ function openAgentModalCore(existing = null, options = {}) {
             ? candidateLabelById(scopeForDup)
             : "All campaigns (unscoped)";
           const existingLabel = (existingDup.name || "").trim() || "this agent";
-          if (window.appNotifications) {
-            window.appNotifications.push({
-              title: "National ID already registered",
-              meta: `National ID ${nationalId} is already used for an agent in ${scopeLabel}. Existing: ${existingLabel} (agent ID ${existingDup.id}). Remove or edit that record instead of adding again.`,
-            });
-          }
+          // Use a blocking dialog here — openModal() would replace the Create agent form while it is open.
+          window.alert(
+            `This national ID is already registered for an agent in ${scopeLabel}.\n\n` +
+              `Existing: ${existingLabel}\n` +
+              `Agent ID: ${existingDup.id}\n\n` +
+              `Edit or remove that agent instead of adding another with the same ID number.`
+          );
           return;
         }
 
         let savedToFirestore = false;
-        const nextId =
-          agents.length && agents.every((a) => a.id != null)
-            ? agents.reduce((max, a) => Math.max(max, Number(a.id) || 0), 0) + 1
-            : 1;
-        const idStr = isEdit ? String(existing.id) : String(nextId);
+        const idStr = isEdit ? String(existing.id) : getNextAgentDocumentId(agents);
         const agent = {
           id: idStr,
           name,
@@ -3228,15 +3223,22 @@ export function initSettingsModule() {
           if (result.ok && window.appNotifications) {
             const nf = result.notFoundCount || 0;
             const nfSample = (result.notFound || []).slice(0, 5).filter(Boolean).join(", ");
+            const cloudOk = result.cloudSynced !== false;
+            const cloudNote =
+              result.updated > 0 && !cloudOk && result.cloudError
+                ? ` ${result.cloudError}`
+                : result.updated > 0 && !cloudOk
+                  ? " Cloud sync failed; data is on this device only until you reconnect and import again or use Refresh."
+                  : "";
             window.appNotifications.push({
-              title: "Import finished",
+              title: cloudOk || result.updated === 0 ? "Import finished" : "Import saved locally only",
               meta: `Updated ${result.updated.toLocaleString("en-MV")} voter(s).${
                 nf
                   ? ` ${nf.toLocaleString("en-MV")} ID number(s) not on the list.${
                       nfSample ? ` Examples: ${nfSample}.` : ""
                     }`
                   : ""
-              }`,
+              }${cloudNote}`,
             });
           } else if (result.error === "forbidden") {
             window.appNotifications.push({

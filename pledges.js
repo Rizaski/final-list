@@ -235,8 +235,14 @@ function setupPledgeCandidateAgentDropdown({ agentSel, agentSearchInput, menuEl,
 
   agentSearchInput.addEventListener("change", applyAgentFromSearch);
 
+  menuEl.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+  });
+
   const focusOutRoot = rootEl || agentSearchInput.parentElement;
-  focusOutRoot?.addEventListener("focusout", () => {
+  focusOutRoot?.addEventListener("focusout", (e) => {
+    const rt = e.relatedTarget;
+    if (rt && focusOutRoot.contains(rt)) return;
     window.setTimeout(() => {
       const active = document.activeElement;
       if (focusOutRoot && !focusOutRoot.contains(active)) hideMenu();

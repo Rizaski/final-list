@@ -1010,21 +1010,67 @@
                   </div>
                 </header>
                 <div class="card-body">
+                  <div class="pledges-toolbar zero-day-transport-toolbar">
+                    <div class="pledges-toolbar__search">
+                      <label for="zeroDayTripsSearch" class="sr-only">Search trips</label>
+                      <input type="search" id="zeroDayTripsSearch" placeholder="Search route, vessel, driver, status, notes…" autocomplete="off" aria-label="Search trips">
+                    </div>
+                    <div class="pledges-toolbar__controls">
+                      <div class="field-group field-group--inline">
+                        <label for="zeroDayTripsSort">Sort</label>
+                        <select id="zeroDayTripsSort" aria-label="Sort trips">
+                          <option value="pickup">Pickup time (soonest first)</option>
+                          <option value="pickup-desc">Pickup time (latest first)</option>
+                          <option value="route">Route A–Z</option>
+                          <option value="route-desc">Route Z–A</option>
+                          <option value="type">Type</option>
+                          <option value="status">Status</option>
+                          <option value="vehicle">Vessel / flight no.</option>
+                          <option value="driver">Driver</option>
+                          <option value="voters">Voters assigned (low–high)</option>
+                          <option value="voters-desc">Voters assigned (high–low)</option>
+                          <option value="rate">Rate</option>
+                          <option value="rate-desc">Rate (high–low)</option>
+                          <option value="amount">Amount</option>
+                          <option value="amount-desc">Amount (high–low)</option>
+                          <option value="remarks">Remarks</option>
+                        </select>
+                      </div>
+                      <div class="field-group field-group--inline">
+                        <label for="zeroDayTripsFilterStatus">Filter</label>
+                        <select id="zeroDayTripsFilterStatus" aria-label="Filter by status">
+                          <option value="all">All statuses</option>
+                          <option value="Scheduled">Scheduled</option>
+                          <option value="In progress">In progress</option>
+                          <option value="Completed">Completed</option>
+                        </select>
+                      </div>
+                      <div class="field-group field-group--inline">
+                        <label for="zeroDayTripsGroupBy">Group by</label>
+                        <select id="zeroDayTripsGroupBy" aria-label="Group trips">
+                          <option value="none">None</option>
+                          <option value="type">Type</option>
+                          <option value="status">Status</option>
+                          <option value="route">Route</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
                   <div class="table-wrapper table-wrapper--sticky-header">
-                    <table class="data-table" id="zeroDayTripsTable">
+                    <table class="data-table" id="zeroDayTripsTable" role="table" aria-label="Transportation trips">
                       <thead>
                         <tr>
-                          <th>Type</th>
-                          <th>Trip / Route</th>
-                          <th>Vessel / Flight no.</th>
-                          <th>Driver / Pilot / Captain</th>
-                          <th>Pickup time</th>
-                          <th>Voters assigned</th>
-                          <th>Status</th>
-                          <th>Rate</th>
-                          <th>Amount</th>
-                          <th>Remarks</th>
-                          <th></th>
+                          <th scope="col" class="th-sortable" data-sort-key="type">Type<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="route">Trip / Route<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="vehicle">Vessel / Flight no.<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="driver">Driver / Pilot / Captain<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="pickup">Pickup time<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="voters">Voters assigned<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="status">Status<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="rate">Rate<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="amount">Amount<span class="sort-indicator"></span></th>
+                          <th scope="col" class="th-sortable" data-sort-key="remarks">Remarks<span class="sort-indicator"></span></th>
+                          <th scope="col"><span class="sr-only">Actions</span></th>
                         </tr>
                       </thead>
                       <tbody>
