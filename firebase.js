@@ -71,6 +71,8 @@ export const firebaseInitPromise = (async () => {
     /** Merge one key inside `candidatePledges` without replacing the whole map (avoids losing other candidates). */
     let setVoterCandidatePledgeFs = async () => {};
     let setVoterVotedAtFs = async () => {};
+    /** Remove `votedAt` from the voter doc (undo from vote marking). Requires signed-in user per rules. */
+    let clearVoterVotedAtFs = async () => {};
     let deleteVoterFs = async () => {};
     /** Delete every document in the voters collection using Firestore batches (max 500 writes/batch). */
     let deleteAllVotersFs = async () => {};
@@ -385,6 +387,17 @@ export const firebaseInitPromise = (async () => {
         if (!voterId) return;
         const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
         await firestoreMod.setDoc(ref, { votedAt: timeMarked || new Date().toISOString() }, { merge: true });
+      };
+
+      clearVoterVotedAtFs = async (voterId) => {
+        if (!voterId) return;
+        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const del = firestoreMod.deleteField && firestoreMod.deleteField();
+        if (del !== undefined) {
+          await firestoreMod.updateDoc(ref, { votedAt: del });
+        } else {
+          await firestoreMod.setDoc(ref, { votedAt: "" }, { merge: true });
+        }
       };
 
       deleteVoterFs = async (id) => {
@@ -839,6 +852,7 @@ export const firebaseInitPromise = (async () => {
       setVoterReferendumNotesFs,
       setVoterCandidatePledgeFs,
       setVoterVotedAtFs,
+      clearVoterVotedAtFs,
       deleteVoterFs,
       deleteAllVotersFs,
       onVotersSnapshotFs,

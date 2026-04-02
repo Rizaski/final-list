@@ -739,21 +739,25 @@ export async function syncVotedFromFirestore() {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.getVotedForMonitor) return;
     loadMonitors();
-    const existingById = new Map(zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked]));
+    const fromMonitors = new Map();
     for (const m of zeroDayMonitors) {
       const token = m.shareToken;
       if (!token) continue;
       const entries = await api.getVotedForMonitor(token);
       for (const { voterId, timeMarked } of entries) {
         const key = String(voterId);
-        const existing = existingById.get(key);
+        const existing = fromMonitors.get(key);
         if (!existing || (timeMarked && timeMarked > (existing || ""))) {
-          existingById.set(key, timeMarked || existing || "");
+          fromMonitors.set(key, timeMarked || existing || "");
         }
       }
     }
-    zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({ voterId, timeMarked: timeMarked || "" }));
+    zeroDayVotedEntries = Array.from(fromMonitors.entries()).map(([voterId, timeMarked]) => ({
+      voterId,
+      timeMarked: timeMarked || "",
+    }));
     saveVotedEntries();
+    mergeVotedAtFromVoters(votersContext && votersContext.getAllVoters ? votersContext.getAllVoters() : []);
     notifyVotedEntriesUpdated();
   } catch (_) {}
 }
@@ -773,23 +777,29 @@ export async function refreshTransportTripsFromFirestore() {
   }
 }
 
-/** Merges votedByMonitor (from real-time Firestore) with local zeroDayVotedEntries and refreshes UI. */
+/**
+ * Rebuilds zeroDayVotedEntries from the union of all Firestore monitor `voted` snapshots, then merges voter `votedAt` fields.
+ * Replacing (not only adding) is required so undo/delete on a monitor removes voters from local state.
+ */
 function mergeRealtimeVotedIntoLocal() {
-  loadVotedEntries();
-  const existingById = new Map(zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked]));
+  const fromMonitors = new Map();
   for (const token of Object.keys(votedByMonitor)) {
     const entries = votedByMonitor[token];
     if (!Array.isArray(entries)) continue;
     for (const { voterId, timeMarked } of entries) {
       const key = String(voterId);
-      const existing = existingById.get(key);
+      const existing = fromMonitors.get(key);
       if (!existing || (timeMarked && timeMarked > (existing || ""))) {
-        existingById.set(key, timeMarked || existing || "");
+        fromMonitors.set(key, timeMarked || existing || "");
       }
     }
   }
-  zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({ voterId, timeMarked: timeMarked || "" }));
+  zeroDayVotedEntries = Array.from(fromMonitors.entries()).map(([voterId, timeMarked]) => ({
+    voterId,
+    timeMarked: timeMarked || "",
+  }));
   saveVotedEntries();
+  mergeVotedAtFromVoters(votersContext && votersContext.getAllVoters ? votersContext.getAllVoters() : []);
   zeroDayVoteCurrentPage = 1;
   renderZeroDayVoteTable();
   notifyVotedEntriesUpdated();
@@ -2697,7 +2707,8 @@ function getVotersByBoxSplitByVoted(boxKey) {
   boxVoters.forEach((v) => {
     const fromEntries = votedSet.get(String(v.id)) || "";
     const fromVoter = v.votedAt || "";
-    const timeMarked = fromVoter || fromEntries;
+    // Prefer synced Zero Day / monitor list over voter.votedAt so undo from the ballot link drops off the list immediately.
+    const timeMarked = fromEntries || fromVoter;
     if (timeMarked != null && String(timeMarked).trim() !== "") {
       voted.push({ ...v, _timeMarked: timeMarked });
     } else {
@@ -4492,7 +4503,8 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   const standaloneBallotPage = options.standaloneBallotPage === true;
   let monitor = options.remoteMonitor;
   let assignedVoters = [];
-  let votedEntries = options.remoteVotedEntries != null ? options.remoteVotedEntries : [];
+  /** Mutable array from ballot-box.html, or null when using shared `zeroDayVotedEntries` (admin / embedded). */
+  let remoteVotedEntriesRef = options.remoteVotedEntries != null ? options.remoteVotedEntries : null;
 
   if (isBallotBoxOnly) {
     loadVotedEntries();
@@ -4502,12 +4514,10 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       (v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey
     );
     monitor = { ballotBox: options.ballotBoxOnly, voterIds: assignedVoters.map((v) => v.id) };
-    votedEntries = zeroDayVotedEntries;
   } else if (!isRemote) {
     if (preventLocalMonitorFallback) {
       monitor = null;
       assignedVoters = [];
-      votedEntries = [];
     } else {
     loadMonitors();
     loadVotedEntries();
@@ -4525,7 +4535,6 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     } else {
       assignedVoters = [];
     }
-    votedEntries = zeroDayVotedEntries;
     }
   } else {
     const voters = options.remoteMonitor.voters || [];
@@ -4539,6 +4548,15 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       volunteer: v.volunteer || "",
       sequence: v.sequence != null ? v.sequence : "",
     }));
+  }
+
+  if (isRemote && remoteVotedEntriesRef == null) {
+    remoteVotedEntriesRef = [];
+  }
+
+  /** Always read current voted list — zeroDayVotedEntries is reassigned when admin syncs/clears votes. */
+  function getVotedEntries() {
+    return remoteVotedEntriesRef != null ? remoteVotedEntriesRef : zeroDayVotedEntries;
   }
 
   assignedVoters.sort(compareVotersByBallotSequenceThenName);
@@ -4619,10 +4637,32 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   let ballotSessionPausedAt = "";
   let ballotSessionUnsub = null;
   let ballotSessionApi = options.ballotSession || null;
+  let pauseOverlayTimerId = null;
   let markVotedToastTimer = null;
   let markVotedToastHideTimer = null;
   let markVotedToastEl = null;
   let monitorWorkspaceOpened = false;
+  let remoteVotedSnapshotUnsub = null;
+
+  /** Local/admin monitor: zeroDayVotedEntries is reassigned when votes are cleared in Zero Day — refresh this UI. */
+  function onVotedEntriesChangedFromAdmin() {
+    renderMonitorViewHeader();
+    updateMonitorSearchUi();
+  }
+  if (remoteVotedEntriesRef == null) {
+    document.addEventListener("voted-entries-updated", onVotedEntriesChangedFromAdmin);
+  }
+  firebaseInitPromise
+    .then((api) => {
+      if (!token || remoteVotedEntriesRef == null || !api?.onVotedSnapshotForMonitor) return;
+      remoteVotedSnapshotUnsub = api.onVotedSnapshotForMonitor(token, (entries) => {
+        remoteVotedEntriesRef.length = 0;
+        remoteVotedEntriesRef.push(...entries);
+        renderMonitorViewHeader();
+        updateMonitorSearchUi();
+      });
+    })
+    .catch(() => {});
 
   function loadLocalBallotSession() {
     try {
@@ -4905,54 +4945,97 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     });
   }
 
+  function clearPauseOverlayTimer() {
+    if (pauseOverlayTimerId != null) {
+      clearInterval(pauseOverlayTimerId);
+      pauseOverlayTimerId = null;
+    }
+  }
+
+  function formatPauseElapsed(ms) {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, "0");
+    return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  }
+
+  function startPauseOverlayTimer(overlay) {
+    clearPauseOverlayTimer();
+    const el = overlay.querySelector("[data-pause-timer]");
+    if (!el) return;
+    const tick = () => {
+      const t0 = ballotSessionPausedAt ? new Date(ballotSessionPausedAt).getTime() : Date.now();
+      if (Number.isNaN(t0)) {
+        el.textContent = "—";
+        return;
+      }
+      el.textContent = formatPauseElapsed(Date.now() - t0);
+    };
+    tick();
+    pauseOverlayTimerId = setInterval(tick, 1000);
+  }
+
   function renderPauseOverlay() {
+    const existing = document.getElementById("monitor-pause-overlay");
     if (!contentEl || monitoringDisabled) {
-      document.getElementById("monitor-pause-overlay")?.remove();
+      existing?.remove();
+      clearPauseOverlayTimer();
       return;
     }
     if (ballotSessionStatus !== "paused") {
-      document.getElementById("monitor-pause-overlay")?.remove();
+      existing?.remove();
+      clearPauseOverlayTimer();
       return;
     }
-    const wrap = ensureMonitorWorkArea();
-    if (!wrap) return;
+    const wrap = standaloneBallotPage ? null : ensureMonitorWorkArea();
+    if (!standaloneBallotPage && !wrap) return;
+
     let overlay = document.getElementById("monitor-pause-overlay");
     if (!overlay) {
       overlay = document.createElement("div");
       overlay.id = "monitor-pause-overlay";
-      wrap.appendChild(overlay);
     }
+    const parentEl = standaloneBallotPage ? document.body : wrap;
+    parentEl.appendChild(overlay);
+
     const pausedAtDisplay = ballotSessionPausedAt
       ? formatDateTime(ballotSessionPausedAt)
       : "—";
     const reasonDisplay =
       ballotSessionPauseReason.trim() || "—";
-    overlay.className = "monitor-pause-overlay";
+    overlay.className =
+      "monitor-pause-overlay" +
+      (standaloneBallotPage ? " monitor-pause-overlay--fullscreen" : "");
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-labelledby", "monitorPauseOverlayTitle");
-    const openControlsHtml = standaloneBallotPage
-      ? ""
-      : `
-        <div class="monitor-slide-open" aria-label="Slide to open ballot box">
+    const openControlsHtml = `
+        <div class="monitor-slide-open" aria-label="Slide to resume vote marking">
           <div class="monitor-slide-open__track" data-slide-track>
-            <span class="monitor-slide-open__hint">Slide to open →</span>
+            <span class="monitor-slide-open__hint">Slide to resume →</span>
             <div class="monitor-slide-open__thumb" data-slide-thumb role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Slide to resume marking"></div>
           </div>
         </div>
-        <button type="button" class="monitor-pause-overlay__open-btn" data-pause-open-btn>Open ballot box</button>
+        <button type="button" class="monitor-pause-overlay__open-btn" data-pause-open-btn>Resume vote marking</button>
       `;
     overlay.innerHTML = `
       <div class="monitor-pause-overlay__backdrop"></div>
       <div class="monitor-pause-overlay__card">
         <h2 id="monitorPauseOverlayTitle" class="monitor-pause-overlay__title">Ballot box paused</h2>
+        <div class="monitor-pause-overlay__timer-wrap">
+          <span class="monitor-pause-overlay__timer-label">Time paused</span>
+          <div class="monitor-pause-overlay__timer" data-pause-timer aria-live="polite">00:00</div>
+        </div>
         <p class="monitor-pause-overlay__line"><span class="monitor-pause-overlay__label">Paused at</span> ${escapeHtml(pausedAtDisplay)}</p>
         <p class="monitor-pause-overlay__line monitor-pause-overlay__reason"><span class="monitor-pause-overlay__label">Reason</span> ${escapeHtml(reasonDisplay)}</p>
         ${openControlsHtml}
       </div>
     `;
     overlay.querySelector("[data-pause-open-btn]")?.addEventListener("click", () => void openBallotSession());
-    if (!standaloneBallotPage) attachSlideToOpen(overlay);
+    attachSlideToOpen(overlay);
+    startPauseOverlayTimer(overlay);
   }
 
   function pauseBallotSessionModal() {
@@ -5060,7 +5143,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   }
 
   function openVotedHistoryModal() {
-    const sorted = [...votedEntries].sort((a, b) => {
+    const sorted = [...getVotedEntries()].sort((a, b) => {
       const ta = new Date(a.timeMarked || 0).getTime();
       const tb = new Date(b.timeMarked || 0).getTime();
       return tb - ta;
@@ -5223,8 +5306,9 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   }
 
   async function undoMarkVoted(voterId) {
-    const idx = votedEntries.findIndex((e) => sameVoterId(e.voterId, voterId));
-    if (idx >= 0) votedEntries.splice(idx, 1);
+    const ve = getVotedEntries();
+    const idx = ve.findIndex((e) => sameVoterId(e.voterId, voterId));
+    if (idx >= 0) ve.splice(idx, 1);
     if (options.onDeleteVoted) {
       await options.onDeleteVoted(token, voterId).catch(() => {});
     } else {
@@ -5239,13 +5323,12 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
     if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
 
-    // For staff users, clear votedAt on the voter doc so reports/cards stay consistent.
     try {
       const api = await firebaseInitPromise;
-      const staff = api?.auth && api.auth.currentUser;
-      if (staff && api?.setVoterFs) await api.setVoterFs({ id: voterId, votedAt: "" }).catch(() => {});
+      if (api?.clearVoterVotedAtFs) await api.clearVoterVotedAtFs(voterId).catch(() => {});
     } catch (_) {}
 
+    notifyVotedEntriesUpdated();
     renderZeroDayVoteTable();
   }
 
@@ -5347,7 +5430,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
 
     if (standaloneBallotPage) {
       const total = assignedVoters.length;
-      const voted = votedEntries.length;
+      const voted = getVotedEntries().length;
       const pct = total > 0 ? Math.min(100, Math.round((voted / total) * 100)) : 0;
       main.innerHTML =
         '<div class="ballot-dash-head">' +
@@ -5394,7 +5477,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
             : "Closed") +
         "</span>" +
         "<span class=\"monitor-view__stat\"><strong>Voted:</strong> " +
-        String(votedEntries.length) +
+        String(getVotedEntries().length) +
         "</span>" +
         "</div>" +
         "<p class=\"monitor-view__subtitle\" id=\"monitorViewSubtitle\">" +
@@ -5414,9 +5497,10 @@ export function initMonitorView(token, votersContextParam, options = {}) {
 
   function markVoterVoted(voterId) {
     const timeMarked = new Date().toISOString();
-    const idx = votedEntries.findIndex((e) => sameVoterId(e.voterId, voterId));
-    if (idx >= 0) votedEntries[idx].timeMarked = timeMarked;
-    else votedEntries.push({ voterId, timeMarked });
+    const ve = getVotedEntries();
+    const idx = ve.findIndex((e) => sameVoterId(e.voterId, voterId));
+    if (idx >= 0) ve[idx].timeMarked = timeMarked;
+    else ve.push({ voterId, timeMarked });
 
     const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
 
@@ -5446,12 +5530,27 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     renderZeroDayVoteTable();
   }
 
+  function renderMonitorNotFound(query) {
+    if (!monitorViewResult) return;
+    const q = (query || "").trim();
+    const rowHtml = q
+      ? `<div class="monitor-view-result-notice__row"><span>Seq / ID</span><strong>${escapeHtml(q)}</strong></div>`
+      : "";
+    monitorViewResult.innerHTML = `
+      <div class="monitor-view-result-notice monitor-view-result-notice--error" role="status">
+        <div class="monitor-view-result-notice__title">No voter found</div>
+        ${rowHtml}
+        <p class="monitor-view-result-notice__hint">No match for that ID or ballot-box sequence. Please check and try again.</p>
+      </div>
+    `;
+    if (monitorViewSearch) monitorViewSearch.value = "";
+  }
+
   function renderMonitorViewResult(voterOrNull) {
     if (!monitorViewResult) return;
     if (standaloneBallotPage) {
       if (!voterOrNull) {
-        monitorViewResult.innerHTML =
-          '<p class="monitor-view-result__empty" role="status">No voter found with that ID or sequence. Try again.</p>';
+        monitorViewResult.innerHTML = "";
         return;
       }
       monitorViewResult.innerHTML = "";
@@ -5462,14 +5561,12 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       s === "yes" ? "pledge-pill pledge-pill--pledged" : s === "no" ? "pledge-pill pledge-pill--not-pledged" : "pledge-pill pledge-pill--undecided";
 
     if (!voterOrNull) {
-      monitorViewResult.innerHTML = `
-        <p class="monitor-view-result__empty" role="status">No voter found with that ID or Sequence. Please check and try again.</p>
-      `;
+      renderMonitorNotFound("");
       return;
     }
 
     const voter = voterOrNull;
-    const timeMarked = votedEntries.find((e) => sameVoterId(e.voterId, voter.id))?.timeMarked;
+    const timeMarked = getVotedEntries().find((e) => sameVoterId(e.voterId, voter.id))?.timeMarked;
     const agent = getAgent(voter);
 
     monitorViewResult.innerHTML = `
@@ -5545,7 +5642,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         const id = btn.getAttribute("data-standalone-mark-id");
         const v = assignedVoters.find((x) => String(x.id) === String(id));
         if (!v) return;
-        const timeMarked = votedEntries.find((e) => sameVoterId(e.voterId, v.id))?.timeMarked;
+        const timeMarked = getVotedEntries().find((e) => sameVoterId(e.voterId, v.id))?.timeMarked;
         if (timeMarked) {
           renderStandaloneFeedback("That voter is already marked as voted.");
           return;
@@ -5569,6 +5666,30 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       </div>
     `;
     attachMarkVotedToastTimers(strip, { durationMs: 3000, showCountdown: false });
+    if (monitorViewSearch) monitorViewSearch.value = "";
+    if (monitorViewResult) monitorViewResult.innerHTML = "";
+  }
+
+  function renderStandaloneNotFound(query) {
+    hideMarkVotedToast();
+    const strip = document.getElementById("monitorStandaloneStrip");
+    if (!strip) return;
+    const q = (query || "").trim();
+    const rowHtml = q
+      ? `<div class="monitor-standalone-strip__toast-row"><span>Seq / ID</span><strong>${escapeHtml(q)}</strong></div>`
+      : "";
+    strip.hidden = false;
+    strip.className = "monitor-standalone-strip monitor-standalone-strip--error";
+    strip.innerHTML = `
+      <div class="monitor-standalone-strip__inner monitor-standalone-strip__inner--notfound">
+        <div class="monitor-standalone-strip__toast-title">No voter found</div>
+        ${rowHtml}
+        <p class="monitor-standalone-strip__toast-note">No match for that ID or ballot-box sequence. Try again.</p>
+      </div>
+    `;
+    attachMarkVotedToastTimers(strip, { durationMs: 3000, showCountdown: false });
+    if (monitorViewSearch) monitorViewSearch.value = "";
+    if (monitorViewResult) monitorViewResult.innerHTML = "";
   }
 
   function doStandaloneMarkVoted() {
@@ -5580,12 +5701,12 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     }
     const matches = searchVoters(query);
     if (!matches.length) {
-      renderMonitorViewResult(null);
+      renderStandaloneNotFound(query);
       return;
     }
     if (matches.length === 1) {
       const v = matches[0];
-      const timeMarked = votedEntries.find((e) => sameVoterId(e.voterId, v.id))?.timeMarked;
+      const timeMarked = getVotedEntries().find((e) => sameVoterId(e.voterId, v.id))?.timeMarked;
       if (timeMarked) {
         renderStandaloneFeedback("This voter is already marked as voted.");
         return;
@@ -5607,7 +5728,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     }
     const matches = searchVoters(query);
     if (!matches.length) {
-      renderMonitorViewResult(null);
+      renderMonitorNotFound(query);
       return;
     }
     if (matches.length === 1) {
