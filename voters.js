@@ -446,6 +446,94 @@ function normalizeAgentNameKey(name) {
   return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+/**
+ * Single canonical map key for agent ids so "5", "05", and 5 do not appear as duplicate agents.
+ * Non-numeric ids (UUIDs, csv-… placeholders) are trimmed only.
+ */
+function normalizeAgentIdKey(id) {
+  const s = String(id ?? "").trim();
+  if (!s) return "";
+  if (/^\d+$/.test(s)) return String(Number(s));
+  if (/^\d+\.\d+$/.test(s)) {
+    const n = Number(s);
+    if (Number.isFinite(n) && Math.floor(n) === n) return String(n);
+  }
+  return s;
+}
+
+/** Match candidate scope ids when comparing agent.candidateId to login candidateId (12 vs "12"). */
+function normalizeCandidateScopeKey(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (/^\d+$/.test(s)) return String(Number(s));
+  return s;
+}
+
+/** Same rules as settings.js normalizeAgentNationalId — used for duplicate detection in assign lists. */
+function normalizeAssignableNationalId(s) {
+  return String(s || "").trim().replace(/\s+/g, "");
+}
+
+/**
+ * Collapse duplicate agent rows (same person stored twice with different ids, csv placeholder + real row, etc.).
+ */
+function dedupeAssignableAgentRows(rows) {
+  const sorted = [...rows].sort((a, b) => {
+    const aCsv = String(a?.id ?? "").startsWith("csv-");
+    const bCsv = String(b?.id ?? "").startsWith("csv-");
+    if (aCsv !== bCsv) return aCsv ? 1 : -1;
+    const aN = normalizeAssignableNationalId(a?.nationalId);
+    const bN = normalizeAssignableNationalId(b?.nationalId);
+    if (aN && !bN) return -1;
+    if (!aN && bN) return 1;
+    return 0;
+  });
+  const seen = new Set();
+  const out = [];
+  for (const r of sorted) {
+    const idRaw = String(r?.id ?? "").trim();
+    const nk = normalizeAgentNameKey(r?.name);
+    const nid = normalizeAssignableNationalId(r?.nationalId);
+    const phone = normalizeAssignableNationalId(r?.phone);
+
+    const keys = [];
+    if (idRaw && !idRaw.startsWith("csv-")) {
+      const ik = normalizeAgentIdKey(idRaw);
+      if (ik) keys.push(`id:${ik}`);
+    }
+    if (nid) keys.push(`nid:${nid}`);
+    if (nk && phone) keys.push(`ph:${nk}|${phone}`);
+    if (!keys.length && nk) keys.push(`nameonly:${nk}`);
+
+    let duplicate = false;
+    for (const k of keys) {
+      if (seen.has(k)) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (duplicate) continue;
+    for (const k of keys) seen.add(k);
+    out.push(r);
+  }
+  const nonCsvNames = new Set();
+  for (const r of out) {
+    const id = String(r?.id ?? "");
+    if (id && !id.startsWith("csv-")) {
+      const nn = normalizeAgentNameKey(r?.name);
+      if (nn) nonCsvNames.add(nn);
+    }
+  }
+  const pruned = out.filter((r) => {
+    const id = String(r?.id ?? "");
+    if (!id.startsWith("csv-")) return true;
+    const nn = normalizeAgentNameKey(r?.name);
+    if (nn && nonCsvNames.has(nn)) return false;
+    return true;
+  });
+  return pruned.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), "en"));
+}
+
 /** Disambiguate duplicate display names in assign-agent dropdowns (same list as peers). */
 function formatCandidateAgentOptionLabel(agent, peers) {
   const name = String(agent?.name || "").trim() || `Agent ${agent?.id ?? ""}`;
@@ -471,7 +559,8 @@ function mergeAgentsStorageAndRuntimeCache() {
   const byId = new Map();
   const add = (a) => {
     if (!a || a.id == null || String(a.id).trim() === "") return;
-    const id = String(a.id).trim();
+    const id = normalizeAgentIdKey(a.id);
+    if (!id) return;
     const prev = byId.get(id);
     if (!prev) {
       byId.set(id, a);
@@ -494,33 +583,36 @@ function mergeAgentsStorageAndRuntimeCache() {
 function getCandidateAssignableAgents(candidateId) {
   const cid = String(candidateId || "").trim();
   if (!cid) return [];
+  const cidNorm = normalizeCandidateScopeKey(cid);
   const allAgents = mergeAgentsStorageAndRuntimeCache();
   const scopedAgents = allAgents.filter((a) => {
     const scopeId = getAgentScopeId(a);
-    return scopeId !== "" && scopeId === cid;
+    if (scopeId === "") return false;
+    return normalizeCandidateScopeKey(scopeId) === cidNorm;
   });
 
   // One row per agent id (duplicate display names no longer collapse). Merge CSV/legacy names by id.
   const byRow = new Map();
   const byId = new Map();
   allAgents.forEach((a) => {
-    const id = String(a?.id ?? "").trim();
+    const id = normalizeAgentIdKey(String(a?.id ?? "").trim());
     if (id) byId.set(id, a);
   });
 
   scopedAgents.forEach((a) => {
-    const id = String(a?.id ?? "").trim();
+    const id = normalizeAgentIdKey(String(a?.id ?? "").trim());
     if (!id) return;
     const displayName = String(a.name || "").trim() || `Agent ${id}`;
     byRow.set(`id:${id}`, {
       ...a,
+      id,
       name: displayName,
       candidateId: a.candidateId != null && String(a.candidateId).trim() !== "" ? a.candidateId : cid,
     });
   });
 
   const resolveAgentDetails = (name, idHint = "") => {
-    const hinted = byId.get(String(idHint || "").trim());
+    const hinted = byId.get(normalizeAgentIdKey(String(idHint || "").trim()));
     if (hinted) return hinted;
     const k = normalizeAgentNameKey(name);
     if (!k) return null;
@@ -533,7 +625,8 @@ function getCandidateAssignableAgents(candidateId) {
     const name = String(rawName || "").trim();
     if (!name) return;
     const resolved = resolveAgentDetails(name, idHint);
-    const rid = String(resolved?.id ?? idHint ?? "").trim();
+    const ridRaw = String(resolved?.id ?? idHint ?? "").trim();
+    const rid = ridRaw.startsWith("csv-") ? ridRaw : normalizeAgentIdKey(ridRaw) || ridRaw;
     const nk = normalizeAgentNameKey(name);
     const nameKey = nk ? `name:${nk}` : "";
 
@@ -601,9 +694,8 @@ function getCandidateAssignableAgents(candidateId) {
     }
   } catch (_) {}
 
-  return Array.from(byRow.values()).sort((a, b) =>
-    String(a?.name || "").localeCompare(String(b?.name || ""), "en")
-  );
+  const list = dedupeAssignableAgentRows(Array.from(byRow.values()));
+  return list;
 }
 
 const VOTERS_MODULE_DESC_DEFAULT =
@@ -1229,6 +1321,8 @@ function setupTransportRouteSearchDropdown({ routeSel, routeSearchInput, menuEl,
   }
   const toNorm = (s) => String(s || "").trim().toLowerCase();
   const root = document.getElementById("voterTransportRouteDropdown");
+  let blurNormalizeTimer = null;
+  let renderMenuTimer = null;
 
   const renderMenu = () => {
     if (routeSearchInput.disabled) {
@@ -1253,27 +1347,42 @@ function setupTransportRouteSearchDropdown({ routeSel, routeSearchInput, menuEl,
     menuEl.style.display = "block";
   };
 
+  const scheduleRenderMenu = () => {
+    if (renderMenuTimer != null) window.clearTimeout(renderMenuTimer);
+    renderMenuTimer = window.setTimeout(() => {
+      renderMenuTimer = null;
+      renderMenu();
+    }, 32);
+  };
+
   const hideMenu = () => {
     menuEl.style.display = "none";
   };
 
+  const preventItemPointerDefault = (e) => {
+    if (e.target.closest(".voter-agent-dropdown__item")) e.preventDefault();
+  };
+
   routeSearchInput.addEventListener("focus", renderMenu);
-  routeSearchInput.addEventListener("input", renderMenu);
-  menuEl.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-  });
+  routeSearchInput.addEventListener("input", scheduleRenderMenu);
+  menuEl.addEventListener("mousedown", preventItemPointerDefault);
+  menuEl.addEventListener("pointerdown", preventItemPointerDefault);
   root?.addEventListener("focusout", (e) => {
     const rt = e.relatedTarget;
     if (rt && root.contains(rt)) return;
     window.setTimeout(() => {
       const active = document.activeElement;
       if (!root || !root.contains(active)) hideMenu();
-    }, 0);
+    }, 120);
   });
 
   menuEl.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-route-name]");
     if (!btn) return;
+    if (blurNormalizeTimer != null) {
+      window.clearTimeout(blurNormalizeTimer);
+      blurNormalizeTimer = null;
+    }
     const name = btn.getAttribute("data-route-name") || "";
     routeSearchInput.value = name;
     routeSel.value = name;
@@ -1311,7 +1420,11 @@ function setupTransportRouteSearchDropdown({ routeSel, routeSearchInput, menuEl,
   }
 
   routeSearchInput.addEventListener("blur", () => {
-    window.setTimeout(normalizeFromSearch, 180);
+    if (blurNormalizeTimer != null) window.clearTimeout(blurNormalizeTimer);
+    blurNormalizeTimer = window.setTimeout(() => {
+      blurNormalizeTimer = null;
+      normalizeFromSearch();
+    }, 220);
   });
 }
 
@@ -1918,13 +2031,16 @@ function renderVoterDetails(voter) {
     const imgOnError =
       "var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
 
+    let renderMenuTimer = null;
+
     const renderMenu = () => {
       if (agentSearchInput.disabled) {
         menuEl.style.display = "none";
         return;
       }
       const q = toNorm(agentSearchInput.value);
-      const fullList = typeof getAgents === "function" ? getAgents() : [];
+      const rawAgents = typeof getAgents === "function" ? getAgents() : [];
+      const fullList = dedupeAssignableAgentRows(rawAgents);
       const list = fullList.filter((a) => {
         if (!q) return true;
         const name = toNorm(a?.name);
@@ -1964,6 +2080,14 @@ function renderVoterDetails(voter) {
       menuEl.style.display = "block";
     };
 
+    const scheduleRenderMenu = () => {
+      if (renderMenuTimer != null) window.clearTimeout(renderMenuTimer);
+      renderMenuTimer = window.setTimeout(() => {
+        renderMenuTimer = null;
+        renderMenu();
+      }, 32);
+    };
+
     const root = document.getElementById("candidateVoterAgentDropdown");
     const hideMenu = () => {
       menuEl.style.display = "none";
@@ -1971,19 +2095,21 @@ function renderVoterDetails(voter) {
 
     // Keep focus on the search field when picking an item; otherwise focusout runs before the
     // menu button receives focus and the menu closes before click (browser-dependent).
-    menuEl.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-    });
+    const preventItemPointerDefault = (e) => {
+      if (e.target.closest(".voter-agent-dropdown__item")) e.preventDefault();
+    };
+    menuEl.addEventListener("mousedown", preventItemPointerDefault);
+    menuEl.addEventListener("pointerdown", preventItemPointerDefault);
 
     agentSearchInput.addEventListener("focus", renderMenu);
-    agentSearchInput.addEventListener("input", renderMenu);
+    agentSearchInput.addEventListener("input", scheduleRenderMenu);
     root?.addEventListener("focusout", (e) => {
       const rt = e.relatedTarget;
       if (rt && root.contains(rt)) return;
       window.setTimeout(() => {
         const active = document.activeElement;
         if (!root || !root.contains(active)) hideMenu();
-      }, 0);
+      }, 120);
     });
     menuEl.addEventListener("click", (e) => {
       const btn = e.target.closest(useIdValues ? "[data-agent-id]" : "[data-agent-name]");
@@ -2060,17 +2186,6 @@ function renderVoterDetails(voter) {
         window.appNotifications.push({ title: "Agent not found", meta: "Pick an agent from the list." });
       }
     }
-    agentSearchInput?.addEventListener("input", () => {
-      if (!agentSearchInput || !agentSel) return;
-      const q = String(agentSearchInput.value || "").trim().toLowerCase();
-      if (!q) return;
-      const list = getCandidateAssignableAgents(candCtx.candidateId);
-      const exactByName = list.filter((a) => String(a.name || "").trim().toLowerCase() === q);
-      if (exactByName.length === 1) {
-        agentSel.value = String(exactByName[0].id ?? "");
-        agentSel.dispatchEvent(new Event("change"));
-      }
-    });
     agentSearchInput?.addEventListener("change", applyAgentFromSearch);
     if (agentSel) {
       agentSel.addEventListener("change", async () => {
@@ -2200,17 +2315,6 @@ function renderVoterDetails(voter) {
       agentSel.value = exact.name || "";
       agentSel.dispatchEvent(new Event("change"));
     }
-    agentSearchInput?.addEventListener("input", () => {
-      if (!agentSearchInput || !agentSel || agentSel.disabled) return;
-      const q = String(agentSearchInput.value || "").trim().toLowerCase();
-      if (!q) return;
-      const list = adminAgentsForScope();
-      const exact = list.find((a) => String(a.name || "").trim().toLowerCase() === q);
-      if (exact) {
-        agentSel.value = exact.name || "";
-        agentSel.dispatchEvent(new Event("change"));
-      }
-    });
     agentSearchInput?.addEventListener("change", applyAgentFromSearch);
     if (agentSel) {
       agentSel.addEventListener("change", async () => {

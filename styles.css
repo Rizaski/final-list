@@ -5177,6 +5177,11 @@ textarea.voter-detail-referendum-notes:focus {
   flex: 0 0 auto;
 }
 
+/* Detail panel scroll/stacking: keep combobox menus above section cards and scroll areas */
+.voter-details-root .voter-agent-dropdown__menu {
+  z-index: 80;
+}
+
 .event-participant-picker {
   position: relative;
   min-width: min(560px, 92vw);
