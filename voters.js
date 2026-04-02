@@ -1216,7 +1216,7 @@ function openVoterDetailAddTransportRouteModal(voter) {
         </select>
       </div>
     </div>
-    <p class="helper-text">Creates the trip in Zero Day → Transport and adds this route to the voter dropdown.</p>
+    <p class="helper-text">Creates the trip on the Transportation page and adds this route to the voter dropdown.</p>
   `;
   const footer = document.createElement("div");
   footer.className = "form-actions";
@@ -1825,8 +1825,8 @@ function renderVoterDetails(voter) {
   })();
 
   const transportNoRoutesMsg = showAdminTransportAddRoute
-    ? "No transport routes yet. Use “Add trip…” below or add trips in Zero Day → Transport."
-    : "No transport routes yet. Add trips in Zero Day → Transport.";
+    ? "No transport routes yet. Use “Add trip…” below or add trips on the Transportation page."
+    : "No transport routes yet. Add trips on the Transportation page.";
 
   const transportSectionHtml = `
       <section class="voter-details-section voter-details-section--full">
@@ -3702,6 +3702,23 @@ export function updateVoterTransportNeeded(voterId, transportNeeded) {
   const v = findVoterById(voterId);
   if (!v) return;
   v.transportNeeded = !!transportNeeded;
+  (async () => {
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setVoterFs) await api.setVoterFs(v);
+      saveVotersToStorage();
+      renderVotersTable();
+      if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+    } catch (_) {}
+  })();
+}
+
+/** Update mobile number from Transportation route modal; syncs voters list and Firestore. */
+export function updateVoterPhone(voterId, phone) {
+  const v = findVoterById(voterId);
+  if (!v) return;
+  v.phone = String(phone ?? "").trim();
   (async () => {
     try {
       const api = await firebaseInitPromise;

@@ -1,5 +1,5 @@
 /**
- * Zero Day module: Transportation Management & Vote Marking
+ * Zero Day module (vote marking & monitors) + Transportation page (trips).
  * Election day transport trips and voter vote-marking.
  */
 
@@ -42,6 +42,8 @@ let zeroDayVotedEntries = []; // { voterId, timeMarked }
 let zeroDayMonitors = []; // { id, name, mobile, ballotBox, voterIds: [], shareToken, sequenceOffset? } — offset unused (legacy field)
 
 let votersContext = null;
+/** Injected from main.js to avoid circular import (voters.js imports zeroDay). */
+let updateVoterPhoneFromHost = null;
 let pledgeContextRef = null; // optional: { getPledges() } for agent lookup and sync
 let zeroDayVoteCurrentPage = 1;
 let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
@@ -146,6 +148,17 @@ function saveTrips() {
   } catch (_) {}
 }
 
+function sanitizeTripStringMap(m) {
+  if (!m || typeof m !== "object") return {};
+  const o = {};
+  Object.entries(m).forEach(([k, v]) => {
+    const ks = String(k).trim();
+    if (!ks) return;
+    o[ks] = v != null ? String(v) : "";
+  });
+  return o;
+}
+
 function normalizeTrip(t) {
   return {
     id: t.id,
@@ -166,6 +179,8 @@ function normalizeTrip(t) {
     rate: t.rate != null ? String(t.rate) : "",
     amount: t.amount != null ? String(t.amount) : "",
     remarks: t.remarks != null ? String(t.remarks) : "",
+    passengerPreferredPickupByVoterId: sanitizeTripStringMap(t.passengerPreferredPickupByVoterId),
+    passengerRemarksByVoterId: sanitizeTripStringMap(t.passengerRemarksByVoterId),
   };
 }
 
@@ -180,6 +195,55 @@ function findZeroDayTripById(id) {
   if (id == null) return undefined;
   const sid = String(id);
   return zeroDayTrips.find((x) => String(x.id) === sid);
+}
+
+function toDatetimeLocalValue(isoOrEmpty) {
+  const s = String(isoOrEmpty || "").trim();
+  if (!s) return "";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDatetimeLocalToIso(localVal) {
+  const s = String(localVal || "").trim();
+  if (!s) return "";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString();
+}
+
+async function persistTripPassengerPreferredPickup(tripId, voterId, value) {
+  const t = findZeroDayTripById(tripId);
+  if (!t) return;
+  if (!t.passengerPreferredPickupByVoterId) t.passengerPreferredPickupByVoterId = {};
+  const vid = String(voterId);
+  const iso = fromDatetimeLocalToIso(value);
+  if (!iso) delete t.passengerPreferredPickupByVoterId[vid];
+  else t.passengerPreferredPickupByVoterId[vid] = iso;
+  saveTrips();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
+  } catch (_) {}
+  renderZeroDayTripsTable();
+}
+
+async function persistTripPassengerRemarks(tripId, voterId, value) {
+  const t = findZeroDayTripById(tripId);
+  if (!t) return;
+  if (!t.passengerRemarksByVoterId) t.passengerRemarksByVoterId = {};
+  const vid = String(voterId);
+  const s = String(value || "").trim();
+  if (!s) delete t.passengerRemarksByVoterId[vid];
+  else t.passengerRemarksByVoterId[vid] = s;
+  saveTrips();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
+  } catch (_) {}
+  renderZeroDayTripsTable();
 }
 
 /** True when voter needs transport (Firestore may use non-boolean truthy values). */
@@ -602,6 +666,16 @@ async function removeAssignedVoterFromTrip(tripId, voterIdStr) {
   const excluded = new Set((Array.isArray(t.excludedVoterIds) ? t.excludedVoterIds : []).map((x) => String(x).trim()));
   removeKeys.forEach((k) => excluded.add(k));
   t.excludedVoterIds = Array.from(excluded);
+  const pv = t.passengerPreferredPickupByVoterId;
+  if (pv && typeof pv === "object") {
+    delete pv[voterId];
+    if (nationalId) delete pv[nationalId];
+  }
+  const pr = t.passengerRemarksByVoterId;
+  if (pr && typeof pr === "object") {
+    delete pr[voterId];
+    if (nationalId) delete pr[nationalId];
+  }
   saveTrips();
   try {
     const api = await firebaseInitPromise;
@@ -830,8 +904,10 @@ function sameVoterId(a, b) {
 }
 
 function initZeroDayTabs() {
-  const tabButtons = document.querySelectorAll("[data-zero-day-tab]");
-  const panels = document.querySelectorAll(".zero-day-tabs__panel");
+  const zdRoot = document.getElementById("module-zero-day");
+  if (!zdRoot) return;
+  const tabButtons = zdRoot.querySelectorAll("[data-zero-day-tab]");
+  const panels = zdRoot.querySelectorAll(".zero-day-tabs__panel");
 
   function switchToTab(tabKey) {
     tabButtons.forEach((btn) => {
@@ -861,7 +937,7 @@ function initZeroDayTabs() {
     });
   });
 
-  switchToTab("transport");
+  switchToTab("vote");
 }
 
 function getTransportTripsAfterTypeFilter() {
@@ -1477,20 +1553,41 @@ function openTripVotersModal(trip) {
     let list = applySearchFilter(assigned, searchQuery);
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
     lastRenderedRows = displayList.filter((x) => x.type === "row").map((x) => x.voter);
-    const newTable = buildTableFromDisplayList(displayList, {
+    const newTable = buildTripPassengersTable(displayList, {
       includeVotedStatus: true,
-      includeTimeVoted: false,
-      showUnmarkAction: false,
       usePledgePills: true,
       isOnboarded: isVoterOnboardedForTrip,
       includeTripRemoveAction: true,
+      tripPassengerMode: {
+        tripId: trip.id,
+        getTrip: () => findZeroDayTripById(trip.id) || trip,
+      },
     });
     tableWrap.innerHTML = "";
     tableWrap.appendChild(newTable.firstElementChild);
   }
 
-  function getTripVoterRemarks(v) {
-    return String(v?.notes || v?.callComments || "").trim();
+  function getTripPassengerRemarkForExport(v) {
+    const tLive = findZeroDayTripById(trip.id) || trip;
+    const vid = String(v.id);
+    const m = tLive?.passengerRemarksByVoterId && typeof tLive.passengerRemarksByVoterId === "object"
+      ? tLive.passengerRemarksByVoterId
+      : {};
+    return String(m[vid] || "").trim();
+  }
+
+  function getTripPreferredPickupForExport(v) {
+    const tLive = findZeroDayTripById(trip.id) || trip;
+    const vid = String(v.id);
+    const m =
+      tLive?.passengerPreferredPickupByVoterId &&
+      typeof tLive.passengerPreferredPickupByVoterId === "object"
+        ? tLive.passengerPreferredPickupByVoterId
+        : {};
+    const iso = m[vid] || "";
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-MV", { dateStyle: "short", timeStyle: "short" });
   }
 
   function shareTripVotersReport() {
@@ -1514,13 +1611,14 @@ function openTripVotersModal(trip) {
       "Pledge",
       "Agent",
       "Voted status",
-      "On-board",
-      "Remarks",
+      "Preferred pickup",
+      "Confirm reached",
+      "Route remarks",
     ];
     const lines = [header.join("\t")];
     lastRenderedRows.forEach((v) => {
       const voted = getVotedTimeMarked(v.id) ? "Voted" : "Not voted";
-      const onboard = isVoterOnboardedForTrip(v) ? "On-board" : "Pending";
+      const reached = isVoterOnboardedForTrip(v) ? "Yes" : "No";
       lines.push(
         [
           sequenceAsImportedFromCsv(v),
@@ -1532,8 +1630,9 @@ function openTripVotersModal(trip) {
           getPledgeLabel(v.pledgeStatus),
           getAgentForVoter(v.id),
           voted,
-          onboard,
-          getTripVoterRemarks(v),
+          getTripPreferredPickupForExport(v),
+          reached,
+          getTripPassengerRemarkForExport(v),
         ].join("\t")
       );
     });
@@ -1596,7 +1695,7 @@ function openTripVotersModal(trip) {
     const rowsHtml = rows
       .map((v) => {
         const voted = getVotedTimeMarked(v.id) ? "Voted" : "Not voted";
-        const onboard = isVoterOnboardedForTrip(v) ? "On-board" : "Pending";
+        const reached = isVoterOnboardedForTrip(v) ? "Yes" : "No";
         return `
           <tr>
             <td>${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
@@ -1608,8 +1707,9 @@ function openTripVotersModal(trip) {
             <td>${escapeHtml(getPledgeLabel(v.pledgeStatus))}</td>
             <td>${escapeHtml(getAgentForVoter(v.id))}</td>
             <td>${escapeHtml(voted)}</td>
-            <td>${escapeHtml(onboard)}</td>
-            <td>${escapeHtml(getTripVoterRemarks(v))}</td>
+            <td>${escapeHtml(getTripPreferredPickupForExport(v))}</td>
+            <td>${escapeHtml(reached)}</td>
+            <td>${escapeHtml(getTripPassengerRemarkForExport(v))}</td>
           </tr>
         `;
       })
@@ -1647,7 +1747,7 @@ function openTripVotersModal(trip) {
           .btn { border: 1px solid #d1d5db; background: #fff; color: #111; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
           .btn--primary { border-color: #2563eb; background: #2563eb; color: #fff; }
           .table-wrap { padding: 10px; overflow: auto; }
-          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: 1040px; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: 1180px; }
           th, td {
             border: 1px solid #e5e7eb;
             padding: 4px 5px;
@@ -1700,8 +1800,9 @@ function openTripVotersModal(trip) {
                   <th>Pledge</th>
                   <th>Agent</th>
                   <th>Voted status</th>
-                  <th>On-board</th>
-                  <th>Remarks</th>
+                  <th>Preferred pickup</th>
+                  <th>Confirm reached</th>
+                  <th>Route remarks</th>
                 </tr>
               </thead>
               <tbody>${rowsHtml}</tbody>
@@ -1720,15 +1821,41 @@ function openTripVotersModal(trip) {
   body.appendChild(listToolbar);
   body.appendChild(tableWrap);
 
-  tableWrap.addEventListener("click", (e) => {
-    const onboardBtn = e.target.closest("[data-trip-onboard-toggle]");
-    if (onboardBtn) {
-      const voterId = onboardBtn.getAttribute("data-trip-onboard-toggle");
+  tableWrap.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.matches("input[type=checkbox][data-trip-reached-toggle]")) {
+      const voterId = t.getAttribute("data-trip-reached-toggle");
       if (voterId == null || voterId === "") return;
-      e.preventDefault();
       toggleTripVoterOnboarded(trip.id, voterId).then(() => render());
       return;
     }
+    if (t.matches("[data-trip-preferred-pickup]")) {
+      const voterId = t.getAttribute("data-trip-preferred-pickup");
+      if (voterId == null || voterId === "") return;
+      persistTripPassengerPreferredPickup(trip.id, voterId, t.value);
+    }
+  });
+
+  tableWrap.addEventListener(
+    "blur",
+    (e) => {
+      const t = e.target;
+      if (t.matches("[data-trip-voter-phone]")) {
+        const vid = t.getAttribute("data-trip-voter-phone");
+        if (vid != null && vid !== "" && updateVoterPhoneFromHost) {
+          updateVoterPhoneFromHost(vid, t.value);
+        }
+        return;
+      }
+      if (t.matches("[data-trip-passenger-remarks]")) {
+        const vid = t.getAttribute("data-trip-passenger-remarks");
+        if (vid != null && vid !== "") persistTripPassengerRemarks(trip.id, vid, t.value);
+      }
+    },
+    true
+  );
+
+  tableWrap.addEventListener("click", (e) => {
     const removeBtn = e.target.closest("[data-trip-remove-voter]");
     if (removeBtn) {
       const voterId = removeBtn.getAttribute("data-trip-remove-voter");
@@ -2405,6 +2532,182 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
     displayList.push({ type: "row", voter: v });
   });
   return displayList;
+}
+
+/** Trip route modal: editable mobile, preferred pickup, confirm reached, route-specific remarks. */
+function buildTripPassengersTable(displayList, options = {}) {
+  const tripPm = options.tripPassengerMode;
+  const tripId = tripPm?.tripId;
+  const getTrip = typeof tripPm?.getTrip === "function" ? tripPm.getTrip : () => null;
+  const includeVotedStatus = !!options.includeVotedStatus;
+  const usePledgePills = !!options.usePledgePills;
+  const includeTripRemoveAction = !!options.includeTripRemoveAction;
+  const isOnboarded = typeof options.isOnboarded === "function" ? options.isOnboarded : () => false;
+
+  const columns = [
+    "Seq",
+    "Image",
+    "Name",
+    "ID Number",
+    "Permanent Address",
+    "Mobile",
+    "Ballot box",
+    "Pledge",
+    "Agent",
+  ];
+  if (includeVotedStatus) columns.push("Voted status");
+  columns.push("Preferred pickup", "Confirm reached");
+  if (includeTripRemoveAction) columns.push("Actions");
+  columns.push("Remarks");
+  const colCount = columns.length;
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrapper";
+  const table = document.createElement("table");
+  table.className = "data-table data-table--trip-passengers";
+  const thead = document.createElement("thead");
+  thead.innerHTML =
+    "<tr>" +
+    columns
+      .map((c) =>
+        c === "Seq"
+          ? `<th class="data-table-col--seq">${escapeHtml(c)}</th>`
+          : c === "Name"
+            ? `<th class="data-table-col--name">${escapeHtml(c)}</th>`
+            : `<th>${escapeHtml(c)}</th>`
+      )
+      .join("") +
+    "</tr>";
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+
+  const dataRows = displayList.filter((x) => x.type === "row");
+  if (dataRows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-muted" style="text-align:center;padding:16px;">No voters.</td></tr>`;
+  } else {
+    displayList.forEach((item) => {
+      if (item.type === "group") {
+        const tr = document.createElement("tr");
+        tr.className = "list-toolbar__group-header";
+        tr.innerHTML = `<td colspan="${colCount}">${escapeHtml(item.label)}</td>`;
+        tbody.appendChild(tr);
+        return;
+      }
+      const v = item.voter;
+      const tLive = getTrip();
+      const vid = String(v.id);
+      const prefRaw =
+        tLive?.passengerPreferredPickupByVoterId &&
+        typeof tLive.passengerPreferredPickupByVoterId === "object"
+          ? tLive.passengerPreferredPickupByVoterId[vid] || ""
+          : "";
+      const prefLocal = toDatetimeLocalValue(prefRaw);
+      const routeRemarks =
+        tLive?.passengerRemarksByVoterId && typeof tLive.passengerRemarksByVoterId === "object"
+          ? tLive.passengerRemarksByVoterId[vid] || ""
+          : "";
+      const reached = isOnboarded(v);
+      const phoneVal = v.phone != null ? String(v.phone) : "";
+
+      const pledgeLabel = getPledgeLabel(v.pledgeStatus);
+      const pledgeClass =
+        v.pledgeStatus === "yes"
+          ? "pledge-pill pledge-pill--pledged"
+          : v.pledgeStatus === "no"
+            ? "pledge-pill pledge-pill--not-pledged"
+            : "pledge-pill pledge-pill--undecided";
+      const agent = getAgentForVoter(v.id);
+      const votedTime = getVotedTimeMarked(v.id);
+      const votedCell = votedTime
+        ? '<span class="pledge-pill pledge-pill--pledged">Voted</span>'
+        : '<span class="pledge-pill pledge-pill--undecided">Not voted</span>';
+      const rawId = (v.nationalId || v.id || "").toString().trim().replace(/\s+/g, "");
+      const photoSrc = rawId ? "photos/" + rawId + ".jpg" : "";
+      const imageCell = photoSrc
+        ? `<div class="avatar-cell"><img class="avatar-img" src="${escapeHtml(
+            photoSrc
+          )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(
+            (v.fullName || v.id || "?")
+              .toString()
+              .split(/\s+/)
+              .map((part) => part[0]?.toUpperCase() || "")
+              .join("") || "?"
+          )}</div></div>`
+        : `<div class="avatar-cell"><div class="avatar-circle">${escapeHtml(
+            (v.fullName || v.id || "?")
+              .toString()
+              .split(/\s+/)
+              .map((part) => part[0]?.toUpperCase() || "")
+              .join("") || "?"
+          )}</div></div>`;
+
+      const row = [
+        sequenceAsImportedFromCsv(v),
+        imageCell,
+        v.fullName != null ? v.fullName : "",
+        v.nationalId != null ? v.nationalId : (v.id != null ? v.id : ""),
+        v.permanentAddress != null ? v.permanentAddress : "",
+        {
+          html: `<input type="tel" class="input input--trip-cell" data-trip-voter-phone="${escapeHtml(
+            vid
+          )}" value="${escapeHtml(phoneVal)}" aria-label="Mobile number" autocomplete="off" />`,
+        },
+        v.ballotBox || (v.island != null ? v.island : ""),
+        usePledgePills
+          ? { html: `<span class="${escapeHtml(pledgeClass)}">${escapeHtml(pledgeLabel)}</span>` }
+          : pledgeLabel,
+        agent,
+      ];
+      if (includeVotedStatus) row.push({ html: votedCell });
+      row.push({
+        html: `<input type="datetime-local" class="input input--trip-cell" data-trip-preferred-pickup="${escapeHtml(
+          vid
+        )}" value="${escapeHtml(prefLocal)}" aria-label="Preferred pickup time" />`,
+      });
+      row.push({
+        html: `<label class="trip-passenger-reached-label"><input type="checkbox" data-trip-reached-toggle="${escapeHtml(
+          vid
+        )}"${reached ? " checked" : ""} aria-label="Confirm reached" /></label>`,
+      });
+      if (includeTripRemoveAction) {
+        row.push(
+          `<button type="button" class="ghost-button ghost-button--small ghost-button--danger" data-trip-remove-voter="${escapeHtml(
+            String(v.id)
+          )}">Remove from route</button>`
+        );
+      }
+      row.push({
+        html: `<input type="text" class="input input--trip-cell input--trip-remarks" data-trip-passenger-remarks="${escapeHtml(
+          vid
+        )}" value="${escapeHtml(routeRemarks)}" placeholder="Remarks" aria-label="Route remarks" />`,
+      });
+
+      const tr = document.createElement("tr");
+      const [seqVal, imageHtml, ...rest] = row;
+      const restTds = rest.map((cell, idx) => {
+        let colCls = "";
+        if (idx === 0) colCls = "data-table-col--name";
+        const clsAttr = colCls ? ` class="${colCls}"` : "";
+        if (typeof cell === "string" && cell.startsWith("<button")) {
+          return `<td${clsAttr}>${cell}</td>`;
+        }
+        if (cell && typeof cell === "object" && typeof cell.html === "string") {
+          return `<td${clsAttr}>${cell.html}</td>`;
+        }
+        return `<td${clsAttr}>${escapeHtml(String(cell))}</td>`;
+      });
+      tr.innerHTML =
+        `<td class="data-table-col--seq">${escapeHtml(String(seqVal))}</td><td>${imageHtml}</td>` +
+        restTds.join("");
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  if (tripId != null) {
+    wrap.dataset.tripPassengerTripId = String(tripId);
+  }
+  return wrap;
 }
 
 function buildTableFromDisplayList(displayList, options = {}) {
@@ -3474,6 +3777,8 @@ function bindTransportMenu() {
 export function initZeroDayModule(votersContextParam, options = {}) {
   votersContext = votersContextParam || null;
   pledgeContextRef = options.pledgesContext || null;
+  updateVoterPhoneFromHost =
+    typeof options.updateVoterPhone === "function" ? options.updateVoterPhone : null;
   loadVotedEntries();
   loadMonitors();
   loadTrips();
@@ -3611,7 +3916,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
     });
   }
 
-  const transportPanel = document.getElementById("zero-day-tab-transport");
+  const transportPanel = document.getElementById("module-transportation");
   if (transportPanel) {
     transportPanel.addEventListener(
       "blur",

@@ -198,6 +198,18 @@
           </span>
           <span class="nav-label">Zero Day</span>
         </button>
+        <button class="nav-item" data-module="transportation">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="icon-svg">
+              <path d="M4 16h2l1-4h10l1 4h2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M6 16v2a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+              <circle cx="8.5" cy="18.5" r="1.5" fill="currentColor"/>
+              <circle cx="15.5" cy="18.5" r="1.5" fill="currentColor"/>
+              <path d="M7 12h10l-1-4H8l-1 4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="nav-label">Transportation</span>
+        </button>
         <button class="nav-item" data-module="events">
           <span class="nav-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" class="icon-svg">
@@ -953,13 +965,13 @@
           </section>
         </section>
 
-        <!-- Zero Day Module: Transportation & Vote Marking -->
+        <!-- Zero Day Module: Vote Marking & Monitors -->
         <section id="module-zero-day" class="module">
           <div class="module-header">
             <div>
-              <h1>Zero Day – Transportation &amp; Vote Marking</h1>
+              <h1>Zero Day – Vote Marking &amp; Monitors</h1>
               <p class="module-description">
-                Election day: manage voter transport and track who has voted for E03 Dhuvaafaru Dhaaira.
+                Election day: track who has voted and manage ballot box monitors for E03 Dhuvaafaru Dhaaira.
               </p>
             </div>
             <div class="module-header-meta">
@@ -969,122 +981,11 @@
 
           <div class="zero-day-tabs content-tabs" role="tablist" aria-label="Zero Day sections">
             <div class="zero-day-tabs__list content-tabs__list">
-              <button type="button" class="zero-day-tabs__tab content-tabs__tab is-active" role="tab" id="zero-day-tab-btn-transport" aria-selected="true" aria-controls="zero-day-tab-transport" data-zero-day-tab="transport">Transportation</button>
-              <button type="button" class="zero-day-tabs__tab content-tabs__tab" role="tab" id="zero-day-tab-btn-vote" aria-selected="false" aria-controls="zero-day-tab-vote" data-zero-day-tab="vote">Vote Marking</button>
+              <button type="button" class="zero-day-tabs__tab content-tabs__tab is-active" role="tab" id="zero-day-tab-btn-vote" aria-selected="true" aria-controls="zero-day-tab-vote" data-zero-day-tab="vote">Vote Marking</button>
               <button type="button" class="zero-day-tabs__tab content-tabs__tab" role="tab" id="zero-day-tab-btn-monitors" aria-selected="false" aria-controls="zero-day-tab-monitors" data-zero-day-tab="monitors">Manage Monitors</button>
             </div>
 
-            <div id="zero-day-tab-transport" class="zero-day-tabs__panel content-tabs__panel" role="tabpanel" aria-labelledby="zero-day-tab-btn-transport">
-              <section class="card">
-                <header class="card-header card-header--split">
-                  <div>
-                    <h2>Transportation Management</h2>
-                    <p class="card-subtitle">Flights and speed boats for Zero Day operations. Use the menu to view by type.</p>
-                  </div>
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <div class="dropdown-wrap">
-                      <button type="button" class="icon-button" id="zeroDayTransportMenuButton" aria-label="Filter trips by type" aria-haspopup="true" aria-expanded="false">
-                        <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true"><circle cx="12" cy="6" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="18" r="1.5" fill="currentColor"/></svg>
-                      </button>
-                      <div class="dropdown-menu" id="zeroDayTransportMenu" role="menu" hidden>
-                        <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="all">View all</button>
-                        <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="flight">View flights only</button>
-                        <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="speedboat">View speed boats only</button>
-                      </div>
-                    </div>
-                    <div class="dropdown-wrap table-view-dropdown" data-table-view-for="zeroDayTripsTable">
-                      <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
-                      <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
-                        <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
-                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
-                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
-                        <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
-                      </div>
-                    </div>
-                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
-                      <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllExcel" title="Download all visible routes as one Excel file (CSV)">All routes — Excel</button>
-                      <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllPrint" title="Print report for all visible routes">All routes — Print</button>
-                      <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllShare" title="Share all visible routes (copy or system share)">All routes — Share</button>
-                      <button type="button" class="primary-button" id="zeroDayAddTripButton">Add trip</button>
-                    </div>
-                  </div>
-                </header>
-                <div class="card-body">
-                  <div class="pledges-toolbar zero-day-transport-toolbar">
-                    <div class="pledges-toolbar__search">
-                      <label for="zeroDayTripsSearch" class="sr-only">Search trips</label>
-                      <input type="search" id="zeroDayTripsSearch" placeholder="Search route, vessel, driver, status, notes…" autocomplete="off" aria-label="Search trips">
-                    </div>
-                    <div class="pledges-toolbar__controls">
-                      <div class="field-group field-group--inline">
-                        <label for="zeroDayTripsSort">Sort</label>
-                        <select id="zeroDayTripsSort" aria-label="Sort trips">
-                          <option value="pickup">Pickup time (soonest first)</option>
-                          <option value="pickup-desc">Pickup time (latest first)</option>
-                          <option value="route">Route A–Z</option>
-                          <option value="route-desc">Route Z–A</option>
-                          <option value="type">Type</option>
-                          <option value="status">Status</option>
-                          <option value="vehicle">Vessel / flight no.</option>
-                          <option value="driver">Driver</option>
-                          <option value="voters">Voters assigned (low–high)</option>
-                          <option value="voters-desc">Voters assigned (high–low)</option>
-                          <option value="rate">Rate</option>
-                          <option value="rate-desc">Rate (high–low)</option>
-                          <option value="amount">Amount</option>
-                          <option value="amount-desc">Amount (high–low)</option>
-                          <option value="remarks">Remarks</option>
-                        </select>
-                      </div>
-                      <div class="field-group field-group--inline">
-                        <label for="zeroDayTripsFilterStatus">Filter</label>
-                        <select id="zeroDayTripsFilterStatus" aria-label="Filter by status">
-                          <option value="all">All statuses</option>
-                          <option value="Scheduled">Scheduled</option>
-                          <option value="In progress">In progress</option>
-                          <option value="Completed">Completed</option>
-                        </select>
-                      </div>
-                      <div class="field-group field-group--inline">
-                        <label for="zeroDayTripsGroupBy">Group by</label>
-                        <select id="zeroDayTripsGroupBy" aria-label="Group trips">
-                          <option value="none">None</option>
-                          <option value="type">Type</option>
-                          <option value="status">Status</option>
-                          <option value="route">Route</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="table-wrapper table-wrapper--sticky-header">
-                    <table class="data-table" id="zeroDayTripsTable" role="table" aria-label="Transportation trips">
-                      <thead>
-                        <tr>
-                          <th scope="col" class="th-sortable" data-sort-key="type">Type<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="route">Trip / Route<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="vehicle">Vessel / Flight no.<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="driver">Driver / Pilot / Captain<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="pickup">Pickup time<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="voters">Voters assigned<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="status">Status<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="rate">Rate<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="amount">Amount<span class="sort-indicator"></span></th>
-                          <th scope="col" class="th-sortable" data-sort-key="remarks">Remarks<span class="sort-indicator"></span></th>
-                          <th scope="col"><span class="sr-only">Actions</span></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td colspan="11" class="text-muted" style="text-align: center; padding: 24px;">No trips yet. Add a trip and choose Flight or Speed boat.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            <div id="zero-day-tab-vote" class="zero-day-tabs__panel content-tabs__panel" role="tabpanel" aria-labelledby="zero-day-tab-btn-vote" hidden>
+            <div id="zero-day-tab-vote" class="zero-day-tabs__panel content-tabs__panel" role="tabpanel" aria-labelledby="zero-day-tab-btn-vote">
               <section class="card">
                 <header class="card-header card-header--split">
                   <div>
@@ -1175,6 +1076,128 @@
               </section>
             </div>
           </div>
+        </section>
+
+        <!-- Transportation Module (trips & routes for election day) -->
+        <section id="module-transportation" class="module">
+          <div class="module-header">
+            <div>
+              <h1>Transportation</h1>
+              <p class="module-description">
+                Election day: manage flights and speed boats for voter transport. Trips here power route options in the voter list.
+              </p>
+            </div>
+            <div class="module-header-meta">
+              <span class="pill pill--neutral">Election day</span>
+            </div>
+          </div>
+          <section class="card">
+            <header class="card-header card-header--split">
+              <div>
+                <h2>Transportation Management</h2>
+                <p class="card-subtitle">Flights and speed boats for election day operations. Use the menu to view by type.</p>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <div class="dropdown-wrap">
+                  <button type="button" class="icon-button" id="zeroDayTransportMenuButton" aria-label="Filter trips by type" aria-haspopup="true" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true"><circle cx="12" cy="6" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="18" r="1.5" fill="currentColor"/></svg>
+                  </button>
+                  <div class="dropdown-menu" id="zeroDayTransportMenu" role="menu" hidden>
+                    <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="all">View all</button>
+                    <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="flight">View flights only</button>
+                    <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-view="speedboat">View speed boats only</button>
+                  </div>
+                </div>
+                <div class="dropdown-wrap table-view-dropdown" data-table-view-for="zeroDayTripsTable">
+                  <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
+                  <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
+                    <div class="dropdown-menu__item dropdown-menu__item--static">Table view</div>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
+                    <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                  </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                  <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllExcel" title="Download all visible routes as one Excel file (CSV)">All routes — Excel</button>
+                  <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllPrint" title="Print report for all visible routes">All routes — Print</button>
+                  <button type="button" class="ghost-button ghost-button--small" id="zeroDayTransportAllShare" title="Share all visible routes (copy or system share)">All routes — Share</button>
+                  <button type="button" class="primary-button" id="zeroDayAddTripButton">Add trip</button>
+                </div>
+              </div>
+            </header>
+            <div class="card-body">
+              <div class="pledges-toolbar zero-day-transport-toolbar">
+                <div class="pledges-toolbar__search">
+                  <label for="zeroDayTripsSearch" class="sr-only">Search trips</label>
+                  <input type="search" id="zeroDayTripsSearch" placeholder="Search route, vessel, driver, status, notes…" autocomplete="off" aria-label="Search trips">
+                </div>
+                <div class="pledges-toolbar__controls">
+                  <div class="field-group field-group--inline">
+                    <label for="zeroDayTripsSort">Sort</label>
+                    <select id="zeroDayTripsSort" aria-label="Sort trips">
+                      <option value="pickup">Pickup time (soonest first)</option>
+                      <option value="pickup-desc">Pickup time (latest first)</option>
+                      <option value="route">Route A–Z</option>
+                      <option value="route-desc">Route Z–A</option>
+                      <option value="type">Type</option>
+                      <option value="status">Status</option>
+                      <option value="vehicle">Vessel / flight no.</option>
+                      <option value="driver">Driver</option>
+                      <option value="voters">Voters assigned (low–high)</option>
+                      <option value="voters-desc">Voters assigned (high–low)</option>
+                      <option value="rate">Rate</option>
+                      <option value="rate-desc">Rate (high–low)</option>
+                      <option value="amount">Amount</option>
+                      <option value="amount-desc">Amount (high–low)</option>
+                      <option value="remarks">Remarks</option>
+                    </select>
+                  </div>
+                  <div class="field-group field-group--inline">
+                    <label for="zeroDayTripsFilterStatus">Filter</label>
+                    <select id="zeroDayTripsFilterStatus" aria-label="Filter by status">
+                      <option value="all">All statuses</option>
+                      <option value="Scheduled">Scheduled</option>
+                      <option value="In progress">In progress</option>
+                      <option value="Completed">Completed</option>
+                    </select>
+                  </div>
+                  <div class="field-group field-group--inline">
+                    <label for="zeroDayTripsGroupBy">Group by</label>
+                    <select id="zeroDayTripsGroupBy" aria-label="Group trips">
+                      <option value="none">None</option>
+                      <option value="type">Type</option>
+                      <option value="status">Status</option>
+                      <option value="route">Route</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="table-wrapper table-wrapper--sticky-header">
+                <table class="data-table" id="zeroDayTripsTable" role="table" aria-label="Transportation trips">
+                  <thead>
+                    <tr>
+                      <th scope="col" class="th-sortable" data-sort-key="type">Type<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="route">Trip / Route<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="vehicle">Vessel / Flight no.<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="driver">Driver / Pilot / Captain<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="pickup">Pickup time<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="voters">Voters assigned<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="status">Status<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="rate">Rate<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="amount">Amount<span class="sort-indicator"></span></th>
+                      <th scope="col" class="th-sortable" data-sort-key="remarks">Remarks<span class="sort-indicator"></span></th>
+                      <th scope="col"><span class="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td colspan="11" class="text-muted" style="text-align: center; padding: 24px;">No trips yet. Add a trip and choose Flight or Speed boat.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
         </section>
 
         <!-- Events Module -->

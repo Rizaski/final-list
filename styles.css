@@ -6195,6 +6195,142 @@ textarea.voter-detail-referendum-notes:focus {
   overflow: auto;
 }
 
+/* Transportation → assigned voters modal (per-route passengers; matches route meta inputs) */
+.data-table--trip-passengers {
+  table-layout: auto;
+}
+
+.data-table--trip-passengers th,
+.data-table--trip-passengers td {
+  white-space: normal;
+  vertical-align: middle;
+}
+
+.data-table--trip-passengers thead th {
+  background: linear-gradient(180deg, #fafbfc 0%, #f3f5f9 100%);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--color-border-subtle);
+  box-shadow: inset 0 -1px 0 rgba(0, 156, 156, 0.08);
+}
+
+.data-table--trip-passengers tbody tr:nth-child(even) {
+  background-color: rgba(249, 250, 251, 0.85);
+}
+
+.data-table--trip-passengers tbody tr:hover {
+  background-color: rgba(0, 156, 156, 0.04);
+}
+
+/* Editable / status cells: same teal wash as #zeroDayTripsTable meta columns */
+.data-table--trip-passengers td:has(.input--trip-cell),
+.data-table--trip-passengers td:has(.trip-passenger-reached-label) {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 156, 156, 0.07) 0%,
+    rgba(0, 156, 156, 0.02) 55%,
+    transparent 100%
+  );
+  vertical-align: middle;
+}
+
+.data-table--trip-passengers .input--trip-cell {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 200px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.data-table--trip-passengers .input--trip-cell:hover {
+  border-color: var(--color-primary);
+}
+
+.data-table--trip-passengers .input--trip-cell:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.data-table--trip-passengers .input--trip-cell::placeholder {
+  color: var(--color-text-muted);
+}
+
+.data-table--trip-passengers input[type="datetime-local"].input--trip-cell {
+  max-width: 188px;
+  min-height: 38px;
+}
+
+.data-table--trip-passengers .input--trip-remarks {
+  max-width: min(280px, 36vw);
+}
+
+.data-table--trip-passengers .trip-passenger-reached-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.data-table--trip-passengers .trip-passenger-reached-label:hover {
+  background: rgba(0, 156, 156, 0.06);
+  border-color: rgba(0, 156, 156, 0.2);
+}
+
+.data-table--trip-passengers .trip-passenger-reached-label:focus-within {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+  background: rgba(0, 156, 156, 0.04);
+}
+
+.data-table--trip-passengers .trip-passenger-reached-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.data-table--trip-passengers td:has(.ghost-button--danger) {
+  vertical-align: middle;
+  text-align: center;
+}
+
+.data-table--trip-passengers .ghost-button--small {
+  border-color: var(--color-border-strong);
+}
+
+.data-table--trip-passengers .ghost-button--danger {
+  border-color: rgba(197, 48, 48, 0.35);
+  color: var(--color-danger);
+}
+
+.data-table--trip-passengers .ghost-button--danger:hover {
+  border-color: var(--color-danger);
+  background: rgba(197, 48, 48, 0.06);
+}
+
 @media (max-width: 1024px) {
   .app-shell {
     grid-template-columns: 220px minmax(0, 1fr);

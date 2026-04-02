@@ -756,8 +756,19 @@ export const firebaseInitPromise = (async () => {
           voterCount: trip.voterCount != null ? trip.voterCount : 0,
           voterIds: Array.isArray(trip.voterIds) ? trip.voterIds : [],
           onboardedVoterIds: Array.isArray(trip.onboardedVoterIds) ? trip.onboardedVoterIds : [],
+          excludedVoterIds: Array.isArray(trip.excludedVoterIds) ? trip.excludedVoterIds : [],
+          remarks: trip.remarks != null ? String(trip.remarks) : "",
           rate: trip.rate != null ? String(trip.rate) : "",
           amount: trip.amount != null ? String(trip.amount) : "",
+          passengerPreferredPickupByVoterId:
+            trip.passengerPreferredPickupByVoterId &&
+            typeof trip.passengerPreferredPickupByVoterId === "object"
+              ? trip.passengerPreferredPickupByVoterId
+              : {},
+          passengerRemarksByVoterId:
+            trip.passengerRemarksByVoterId && typeof trip.passengerRemarksByVoterId === "object"
+              ? trip.passengerRemarksByVoterId
+              : {},
         };
         await firestoreMod.setDoc(ref, data, { merge: true });
       };

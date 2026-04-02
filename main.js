@@ -6,6 +6,7 @@ import {
   getPledgeByBallotBox,
   refreshVotersFromFirestore,
   syncCandidateAssignmentsToFirebase,
+  updateVoterPhone,
 } from "./voters.js";
 import { initPledgesModule, getPledgeStatsFromPledges } from "./pledges.js";
 import { initEventsModule, getUpcomingEventsSummary, refreshEventsFromFirestore } from "./events.js";
@@ -52,6 +53,7 @@ const modulesMap = {
   reports: document.getElementById("module-reports"),
   calls: document.getElementById("module-calls"),
   "zero-day": document.getElementById("module-zero-day"),
+  transportation: document.getElementById("module-transportation"),
   settings: document.getElementById("module-settings"),
 };
 
@@ -869,7 +871,7 @@ async function startAppModules(firebaseApi) {
   const eventsContext = initEventsModule();
   const callsContext = initCallsModule(votersContext);
   initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser });
-  initZeroDayModule(votersContext, { pledgesContext });
+  initZeroDayModule(votersContext, { pledgesContext, updateVoterPhone });
   initSettingsModule();
   syncCampaignConfigFromFirestore();
   applyElectionTypeFromCampaign();
