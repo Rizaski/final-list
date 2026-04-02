@@ -4614,6 +4614,15 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     renderMonitorViewHeader();
     const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
     if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
+
+    // For staff users, clear votedAt on the voter doc so reports/cards stay consistent.
+    try {
+      const api = await firebaseInitPromise;
+      const staff = api?.auth && api.auth.currentUser;
+      if (staff && api?.setVoterFs) await api.setVoterFs({ id: voterId, votedAt: "" }).catch(() => {});
+    } catch (_) {}
+
+    renderZeroDayVoteTable();
   }
 
   if (isBallotBoxOnly) {
@@ -4784,12 +4793,33 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const idx = votedEntries.findIndex((e) => sameVoterId(e.voterId, voterId));
     if (idx >= 0) votedEntries[idx].timeMarked = timeMarked;
     else votedEntries.push({ voterId, timeMarked });
-    if (isRemote && options.onSaveVoted) options.onSaveVoted(token, voterId, timeMarked).catch(() => {});
-    else saveVotedEntries();
-    renderMonitorViewHeader();
+
     const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
+
+    // When the monitor view is opened inside the admin app, `isRemote` can be false.
+    // Still write to Firestore so "Vote Marking Ballot Box" cards update across refresh/devices.
+    if (options.onSaveVoted) {
+      options.onSaveVoted(token, voterId, timeMarked).catch(() => {});
+    } else {
+      void firebaseInitPromise
+        .then((api) => {
+          if (!api?.ready) return;
+          if (api.setVotedForMonitor)
+            api.setVotedForMonitor(token, voterId, timeMarked).catch(() => {});
+          const staff = api.auth && api.auth.currentUser;
+          if (staff && api.setVoterVotedAtFs)
+            api.setVoterVotedAtFs(voterId, timeMarked).catch(() => {});
+        })
+        .catch(() => {});
+    }
+
+    if (!isRemote) saveVotedEntries();
+    renderMonitorViewHeader();
     if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
     if (v) showMarkVotedToast(v);
+
+    // Refresh card grid on the admin page for immediate feedback.
+    renderZeroDayVoteTable();
   }
 
   function renderMonitorViewResult(voterOrNull) {
