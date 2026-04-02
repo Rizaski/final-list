@@ -1481,6 +1481,10 @@ function openTripVotersModal(trip) {
         </select>
       </div>
       <div class="field-group field-group--inline">
+        <label for="zdTripVotersBallotBox">Ballot box</label>
+        <select id="zdTripVotersBallotBox"><option value="all">All ballot boxes</option></select>
+      </div>
+      <div class="field-group field-group--inline">
         <label for="zdTripVotersSort">Sort</label>
         <select id="zdTripVotersSort">
           <option value="sequence">Seq</option>
@@ -1488,6 +1492,7 @@ function openTripVotersModal(trip) {
           <option value="name-desc">Name Z–A</option>
           <option value="id">ID Number</option>
           <option value="address">Permanent address</option>
+          <option value="ballot">Ballot box</option>
           <option value="pledge">Pledge status</option>
           <option value="agent">Agent</option>
         </select>
@@ -1498,6 +1503,7 @@ function openTripVotersModal(trip) {
           <option value="none">None</option>
           <option value="pledge">Pledge status</option>
           <option value="agent">Agent</option>
+          <option value="ballot">Ballot box</option>
         </select>
       </div>
       <div class="field-group field-group--inline">
@@ -1507,10 +1513,6 @@ function openTripVotersModal(trip) {
       <div class="field-group field-group--inline">
         <label for="zdTripVotersCurrLoc">Current location</label>
         <select id="zdTripVotersCurrLoc"><option value="all">All locations</option></select>
-      </div>
-      <div class="field-group field-group--inline">
-        <label for="zdTripVotersBallotBox">Ballot box</label>
-        <select id="zdTripVotersBallotBox"><option value="all">All ballot boxes</option></select>
       </div>
     </div>
   `;
@@ -1537,10 +1539,6 @@ function openTripVotersModal(trip) {
 
   const TRIP_FILTER_EMPTY_PERM = "__TRIP_EMPTY_PERM__";
   const TRIP_FILTER_EMPTY_LOC = "__TRIP_EMPTY_LOC__";
-
-  function tripFilterBallotKey(v) {
-    return String(v.ballotBox || v.island || "Unassigned").trim();
-  }
 
   function distinctStringsWithEmpty(rawValues) {
     const nonEmpty = new Set();
@@ -1583,7 +1581,7 @@ function openTripVotersModal(trip) {
   function hydrateTripFieldSelects(assigned) {
     const perm = distinctStringsWithEmpty(assigned.map((v) => v.permanentAddress));
     const loc = distinctStringsWithEmpty(assigned.map((v) => v.currentLocation));
-    const boxKeys = [...new Set(assigned.map(tripFilterBallotKey))].sort((a, b) =>
+    const boxKeys = [...new Set(assigned.map(voterBallotBoxLabel))].sort((a, b) =>
       a.localeCompare(b, "en")
     );
 
@@ -1619,7 +1617,7 @@ function openTripVotersModal(trip) {
           if (l) return false;
         } else if (l !== locVal) return false;
       }
-      if (boxVal !== "all" && tripFilterBallotKey(v) !== boxVal) return false;
+      if (boxVal !== "all" && voterBallotBoxLabel(v) !== boxVal) return false;
       return true;
     });
   }
@@ -1633,7 +1631,7 @@ function openTripVotersModal(trip) {
       const nationalId = (v.nationalId || "").toLowerCase();
       const address = (v.permanentAddress || "").toLowerCase();
       const curLoc = (v.currentLocation || "").toLowerCase();
-      const ballot = tripFilterBallotKey(v).toLowerCase();
+      const ballot = voterBallotBoxLabel(v).toLowerCase();
       const phone = (v.phone || "").toLowerCase();
       return (
         name.includes(q) ||
@@ -2029,7 +2027,17 @@ function openTripVotersModal(trip) {
   footer.appendChild(printBtn);
   footer.appendChild(closeBtn);
 
-  openModal({ title, body, footer });
+  openModal({
+    title,
+    body,
+    footer,
+    startMaximized: true,
+    dialogClass: "modal--wide",
+    closeOnBackdropClick: false,
+    closeOnEscape: false,
+  });
+  maxBtn.setAttribute("aria-label", "Restore");
+  maxBtn.textContent = "Restore";
 
   const onVotersUpdated = () => render();
   document.addEventListener("voters-updated", onVotersUpdated);
@@ -2601,6 +2609,12 @@ function getAgentForVoter(voterId) {
   return (row && row.volunteer) != null ? String(row.volunteer) : "";
 }
 
+/** Ballot box display/sort/filter key (Transportation routes + shared modals). */
+function voterBallotBoxLabel(v) {
+  if (!v) return "Unassigned";
+  return String(v.ballotBox || v.island || "Unassigned").trim();
+}
+
 /** Returns displayList: array of { type: "row", voter } or { type: "group", label }. */
 function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy) {
   let list = voters.filter((v) => {
@@ -2632,6 +2646,8 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
         const bg = getAgentForVoter(b.id);
         return ag.localeCompare(bg, "en");
       }
+      case "ballot":
+        return voterBallotBoxLabel(a).localeCompare(voterBallotBoxLabel(b), "en");
       case "time":
         return (a._timeMarked || "").localeCompare(b._timeMarked || "", "en");
       default:
@@ -2647,13 +2663,14 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
   const getGroupKey = (v) => {
     if (groupBy === "pledge") return v.pledgeStatus || "undecided";
     if (groupBy === "agent") return getAgentForVoter(v.id) || "(No agent)";
+    if (groupBy === "ballot") return voterBallotBoxLabel(v);
     return "";
   };
   const displayList = [];
   let lastKey = null;
   list.forEach((v) => {
     const key = getGroupKey(v);
-    const label = groupBy === "pledge" ? getPledgeLabel(key) : key;
+    const label = groupBy === "pledge" ? getPledgeLabel(key) : String(key);
     if (key !== lastKey) {
       displayList.push({ type: "group", label });
       lastKey = key;
@@ -2783,7 +2800,7 @@ function buildTripPassengersTable(displayList, options = {}) {
             vid
           )}" value="${escapeHtml(phoneVal)}" aria-label="Mobile number" autocomplete="off" />`,
         },
-        v.ballotBox || (v.island != null ? v.island : ""),
+        voterBallotBoxLabel(v),
         usePledgePills
           ? { html: `<span class="${escapeHtml(pledgeClass)}">${escapeHtml(pledgeLabel)}</span>` }
           : pledgeLabel,
@@ -2938,7 +2955,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
         v.nationalId != null ? v.nationalId : (v.id != null ? v.id : ""),
         v.permanentAddress != null ? v.permanentAddress : "",
         v.phone != null ? v.phone : "",
-        v.ballotBox || (v.island != null ? v.island : ""),
+        voterBallotBoxLabel(v),
         usePledgePills
           ? { html: `<span class="${escapeHtml(pledgeClass)}">${escapeHtml(pledgeLabel)}</span>` }
           : pledgeLabel,
