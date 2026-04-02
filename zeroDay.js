@@ -236,7 +236,8 @@ async function persistTripPassengerPreferredPickup(tripId, voterId, value) {
     const api = await firebaseInitPromise;
     if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
   } catch (_) {}
-  renderZeroDayTripsTable();
+  // Defer so native datetime-local picker is not interrupted by main table DOM work.
+  requestAnimationFrame(() => renderZeroDayTripsTable());
 }
 
 async function persistTripPassengerRemarks(tripId, voterId, value) {
@@ -252,7 +253,7 @@ async function persistTripPassengerRemarks(tripId, voterId, value) {
     const api = await firebaseInitPromise;
     if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
   } catch (_) {}
-  renderZeroDayTripsTable();
+  requestAnimationFrame(() => renderZeroDayTripsTable());
 }
 
 /** True when voter needs transport (Firestore may use non-boolean truthy values). */
@@ -1480,9 +1481,20 @@ function openTripVotersModal(trip) {
           <option value="undecided">Undecided</option>
         </select>
       </div>
-      <div class="field-group field-group--inline">
-        <label for="zdTripVotersBallotBox">Ballot box</label>
-        <select id="zdTripVotersBallotBox"><option value="all">All ballot boxes</option></select>
+      <div class="field-group field-group--inline trip-filter-ballot-wrap">
+        <span class="trip-filter-ballot-label" id="zdTripVotersBallotLabel">Ballot box</span>
+        <div class="trip-filter-ballot-dropdown" id="zdTripVotersBallotDropdown">
+          <button type="button" class="ghost-button ghost-button--small" id="zdTripVotersBallotToggle" aria-expanded="false" aria-haspopup="true" aria-controls="zdTripVotersBallotPanel">
+            <span id="zdTripVotersBallotSummary">All boxes</span>
+          </button>
+          <div class="trip-filter-ballot-panel" id="zdTripVotersBallotPanel" hidden role="group" aria-label="Filter by ballot box">
+            <label class="trip-filter-ballot-all">
+              <input type="checkbox" id="zdTripVotersBallotAll" checked />
+              <span>All ballot boxes</span>
+            </label>
+            <div class="trip-filter-ballot-list" id="zdTripVotersBallotList"></div>
+          </div>
+        </div>
       </div>
       <div class="field-group field-group--inline">
         <label for="zdTripVotersSort">Sort</label>
@@ -1565,45 +1577,83 @@ function openTripVotersModal(trip) {
     sel.innerHTML = html;
   }
 
-  function fillBallotSelect(sel, allLabel, keys) {
-    let html = `<option value="all">${allLabel}</option>`;
-    keys.forEach((k) => {
-      html += `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`;
-    });
-    sel.innerHTML = html;
-  }
-
   function selectHasValue(sel, val) {
     if (val === "all") return true;
     return [...sel.options].some((o) => o.value === val);
   }
 
+  /** null = all ballot boxes included; Set = only these keys (subset filter). */
+  let ballotMultiFilter = null;
+  let prevBallotKeysSorted = [];
+
   function hydrateTripFieldSelects(assigned) {
     const perm = distinctStringsWithEmpty(assigned.map((v) => v.permanentAddress));
     const loc = distinctStringsWithEmpty(assigned.map((v) => v.currentLocation));
-    const boxKeys = [...new Set(assigned.map(voterBallotBoxLabel))].sort((a, b) =>
-      a.localeCompare(b, "en")
-    );
 
     const selP = body.querySelector("#zdTripVotersPermAddr");
     const selL = body.querySelector("#zdTripVotersCurrLoc");
-    const selB = body.querySelector("#zdTripVotersBallotBox");
-    if (!selP || !selL || !selB) return;
+    if (!selP || !selL) return;
 
     const prevP = selP.value;
     const prevL = selL.value;
-    const prevB = selB.value;
 
     fillTripSelect(selP, "All addresses", perm.values, perm.hasEmpty, TRIP_FILTER_EMPTY_PERM);
     fillTripSelect(selL, "All locations", loc.values, loc.hasEmpty, TRIP_FILTER_EMPTY_LOC);
-    fillBallotSelect(selB, "All ballot boxes", boxKeys);
 
     selP.value = selectHasValue(selP, prevP) ? prevP : "all";
     selL.value = selectHasValue(selL, prevL) ? prevL : "all";
-    selB.value = selectHasValue(selB, prevB) ? prevB : "all";
   }
 
-  function applyTripFieldFilters(list, permVal, locVal, boxVal) {
+  function updateBallotFilterSummary(keyCount) {
+    const el = body.querySelector("#zdTripVotersBallotSummary");
+    if (!el) return;
+    if (keyCount === 0) {
+      el.textContent = "No boxes";
+      return;
+    }
+    if (ballotMultiFilter === null) {
+      el.textContent = "All boxes";
+      return;
+    }
+    el.textContent = `${ballotMultiFilter.size} of ${keyCount} selected`;
+  }
+
+  function hydrateBallotFilterCheckboxes(assigned) {
+    const keys = [...new Set(assigned.map(voterBallotBoxLabel))].sort((a, b) =>
+      a.localeCompare(b, "en")
+    );
+    const listEl = body.querySelector("#zdTripVotersBallotList");
+    const allCb = body.querySelector("#zdTripVotersBallotAll");
+    if (!listEl || !allCb) return;
+
+    const newKeys = keys.filter((k) => !prevBallotKeysSorted.includes(k));
+    prevBallotKeysSorted = keys.slice();
+    if (ballotMultiFilter != null && newKeys.length) {
+      newKeys.forEach((k) => ballotMultiFilter.add(k));
+    }
+
+    let html = "";
+    keys.forEach((k) => {
+      const checked =
+        ballotMultiFilter === null ? true : ballotMultiFilter.has(k);
+      html += `<label class="trip-filter-ballot-item"><input type="checkbox" data-ballot-filter="${escapeHtml(
+        k
+      )}"${checked ? " checked" : ""} /> <span>${escapeHtml(k)}</span></label>`;
+    });
+    listEl.innerHTML = html;
+
+    const n = keys.length;
+    if (ballotMultiFilter === null) {
+      allCb.checked = true;
+      allCb.indeterminate = false;
+    } else {
+      allCb.checked = ballotMultiFilter.size === n && n > 0;
+      allCb.indeterminate = ballotMultiFilter.size > 0 && ballotMultiFilter.size < n;
+    }
+    updateBallotFilterSummary(n);
+  }
+
+  function applyTripFieldFilters(list, permVal, locVal) {
     return list.filter((v) => {
       if (permVal !== "all") {
         const p = String(v.permanentAddress || "").trim();
@@ -1617,7 +1667,10 @@ function openTripVotersModal(trip) {
           if (l) return false;
         } else if (l !== locVal) return false;
       }
-      if (boxVal !== "all" && voterBallotBoxLabel(v) !== boxVal) return false;
+      if (ballotMultiFilter != null) {
+        if (ballotMultiFilter.size === 0) return false;
+        if (!ballotMultiFilter.has(voterBallotBoxLabel(v))) return false;
+      }
       return true;
     });
   }
@@ -1658,15 +1711,15 @@ function openTripVotersModal(trip) {
     const { list: assigned, byIdsCount, byRouteCount } = collectAssignedVotersForTrip(tLive);
     const obCount = (tLive?.onboardedVoterIds || []).length;
     hydrateTripFieldSelects(assigned);
+    hydrateBallotFilterCheckboxes(assigned);
     const filterPledge = (body.querySelector("#zdTripVotersFilter") || {}).value || "all";
     const sortBy = (body.querySelector("#zdTripVotersSort") || {}).value || "sequence";
     const groupBy = (body.querySelector("#zdTripVotersGroupBy") || {}).value || "none";
     const searchQuery = (body.querySelector("#zdTripVotersSearch") || {}).value || "";
     const permVal = (body.querySelector("#zdTripVotersPermAddr") || {}).value || "all";
     const locVal = (body.querySelector("#zdTripVotersCurrLoc") || {}).value || "all";
-    const boxVal = (body.querySelector("#zdTripVotersBallotBox") || {}).value || "all";
     let list = applySearchFilter(assigned, searchQuery);
-    list = applyTripFieldFilters(list, permVal, locVal, boxVal);
+    list = applyTripFieldFilters(list, permVal, locVal);
     summary.textContent = `Showing ${list.length} of ${assigned.length} assigned (Trip assignment: ${byIdsCount}, By route: ${byRouteCount}) · On-board: ${obCount}`;
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
     lastRenderedRows = displayList.filter((x) => x.type === "row").map((x) => x.voter);
@@ -1946,11 +1999,6 @@ function openTripVotersModal(trip) {
       toggleTripVoterOnboarded(trip.id, voterId).then(() => render());
       return;
     }
-    if (t.matches("[data-trip-preferred-pickup]")) {
-      const voterId = t.getAttribute("data-trip-preferred-pickup");
-      if (voterId == null || voterId === "") return;
-      persistTripPassengerPreferredPickup(trip.id, voterId, t.value);
-    }
   });
 
   tableWrap.addEventListener(
@@ -1962,6 +2010,11 @@ function openTripVotersModal(trip) {
         if (vid != null && vid !== "" && updateVoterPhoneFromHost) {
           updateVoterPhoneFromHost(vid, t.value);
         }
+        return;
+      }
+      if (t.matches("[data-trip-preferred-pickup]")) {
+        const vid = t.getAttribute("data-trip-preferred-pickup");
+        if (vid != null && vid !== "") persistTripPassengerPreferredPickup(trip.id, vid, t.value);
         return;
       }
       if (t.matches("[data-trip-passenger-remarks]")) {
@@ -1987,14 +2040,75 @@ function openTripVotersModal(trip) {
   listToolbar.querySelector("#zdTripVotersGroupBy").addEventListener("change", render);
   listToolbar.addEventListener("change", (e) => {
     const id = e.target && e.target.id;
-    if (
-      id === "zdTripVotersPermAddr" ||
-      id === "zdTripVotersCurrLoc" ||
-      id === "zdTripVotersBallotBox"
-    ) {
+    if (id === "zdTripVotersPermAddr" || id === "zdTripVotersCurrLoc") {
       render();
     }
   });
+
+  listToolbar.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t && t.id === "zdTripVotersBallotAll") {
+      const boxes = [...body.querySelectorAll("[data-ballot-filter]")];
+      if (t.checked) {
+        boxes.forEach((c) => {
+          c.checked = true;
+        });
+        ballotMultiFilter = null;
+      } else {
+        boxes.forEach((c) => {
+          c.checked = false;
+        });
+        ballotMultiFilter = new Set();
+      }
+      render();
+      return;
+    }
+    if (t && t.matches && t.matches("[data-ballot-filter]")) {
+      const boxes = [...body.querySelectorAll("[data-ballot-filter]")];
+      const allCb = body.querySelector("#zdTripVotersBallotAll");
+      const checked = boxes.filter((c) => c.checked).map((c) => c.getAttribute("data-ballot-filter"));
+      const n = boxes.length;
+      if (n === 0) {
+        ballotMultiFilter = null;
+      } else if (checked.length === n) {
+        ballotMultiFilter = null;
+        if (allCb) {
+          allCb.checked = true;
+          allCb.indeterminate = false;
+        }
+      } else {
+        ballotMultiFilter = new Set(checked);
+        if (allCb) {
+          allCb.checked = false;
+          allCb.indeterminate = checked.length > 0;
+        }
+      }
+      render();
+    }
+  });
+
+  const ballotToggle = body.querySelector("#zdTripVotersBallotToggle");
+  const ballotPanel = body.querySelector("#zdTripVotersBallotPanel");
+  const ballotDropdown = body.querySelector("#zdTripVotersBallotDropdown");
+  function closeBallotFilterPanel() {
+    if (ballotPanel) ballotPanel.hidden = true;
+    if (ballotToggle) ballotToggle.setAttribute("aria-expanded", "false");
+  }
+  if (ballotToggle && ballotPanel) {
+    ballotToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = ballotPanel.hidden;
+      ballotPanel.hidden = !open;
+      ballotToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  }
+  function onDocMouseDownBallotFilter(e) {
+    if (!ballotDropdown || ballotPanel.hidden) return;
+    if (ballotDropdown.contains(e.target)) return;
+    closeBallotFilterPanel();
+  }
+  document.addEventListener("mousedown", onDocMouseDownBallotFilter);
+
   const searchEl = listToolbar.querySelector("#zdTripVotersSearch");
   if (searchEl) searchEl.addEventListener("input", render);
 
@@ -2047,6 +2161,7 @@ function openTripVotersModal(trip) {
     new MutationObserver(() => {
       if (backdrop.hidden) {
         document.removeEventListener("voters-updated", onVotersUpdated);
+        document.removeEventListener("mousedown", onDocMouseDownBallotFilter);
         obs.disconnect();
       }
     });
