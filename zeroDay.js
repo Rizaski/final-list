@@ -197,6 +197,15 @@ function findZeroDayTripById(id) {
   return zeroDayTrips.find((x) => String(x.id) === sid);
 }
 
+/** Shown when no preferred pickup is stored (Transportation → route passengers). Still editable. */
+const DEFAULT_PREFERRED_PICKUP_DATETIME_LOCAL = "2026-04-04T10:00";
+
+function defaultPreferredPickupDisplayLocale() {
+  const d = new Date(DEFAULT_PREFERRED_PICKUP_DATETIME_LOCAL);
+  if (Number.isNaN(d.getTime())) return "4/4/2026, 10:00 AM";
+  return d.toLocaleString("en-MV", { dateStyle: "short", timeStyle: "short" });
+}
+
 function toDatetimeLocalValue(isoOrEmpty) {
   const s = String(isoOrEmpty || "").trim();
   if (!s) return "";
@@ -1585,7 +1594,7 @@ function openTripVotersModal(trip) {
         ? tLive.passengerPreferredPickupByVoterId
         : {};
     const iso = m[vid] || "";
-    if (!iso) return "";
+    if (!iso) return defaultPreferredPickupDisplayLocale();
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-MV", { dateStyle: "short", timeStyle: "short" });
   }
@@ -2601,7 +2610,9 @@ function buildTripPassengersTable(displayList, options = {}) {
         typeof tLive.passengerPreferredPickupByVoterId === "object"
           ? tLive.passengerPreferredPickupByVoterId[vid] || ""
           : "";
-      const prefLocal = toDatetimeLocalValue(prefRaw);
+      const prefLocal = prefRaw
+        ? toDatetimeLocalValue(prefRaw)
+        : DEFAULT_PREFERRED_PICKUP_DATETIME_LOCAL;
       const routeRemarks =
         tLive?.passengerRemarksByVoterId && typeof tLive.passengerRemarksByVoterId === "object"
           ? tLive.passengerRemarksByVoterId[vid] || ""
@@ -3473,7 +3484,17 @@ function openBoxVoterListModal(boxKey, kind) {
   footer.appendChild(printBtn);
   footer.appendChild(closeBtn);
 
-  openModal({ title, body, footer });
+  openModal({
+    title,
+    body,
+    footer,
+    startMaximized: true,
+    dialogClass: "modal--wide",
+    closeOnBackdropClick: false,
+    closeOnEscape: false,
+  });
+  maxBtn.setAttribute("aria-label", "Restore");
+  maxBtn.textContent = "Restore";
 }
 
 /** Gets or creates a monitor for the ballot box (same grouping as cards: ballotBox || island || "Unassigned"). Always refreshes voter list so Firestore has current voters. Returns the monitor (does not copy link). */

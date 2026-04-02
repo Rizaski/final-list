@@ -7,7 +7,18 @@ const modalCloseButton = document.getElementById("modalCloseButton");
 /** Cleared on each open so the previous dialog’s width variant does not stick. */
 const MODAL_VARIANT_CLASSES = ["modal--wide"];
 
-export function openModal({ title, body, footer, startMaximized, dialogClass, hideMaximize }) {
+export function openModal({
+  title,
+  body,
+  footer,
+  startMaximized,
+  dialogClass,
+  hideMaximize,
+  /** When false, clicking the dimmed backdrop does not close (use explicit Close / X). */
+  closeOnBackdropClick = true,
+  /** When false, Escape does not close (use explicit Close / X). */
+  closeOnEscape = true,
+} = {}) {
   if (!modalBackdrop || !modalTitle || !modalBody || !modalFooter) {
     console.error("[Modal] Missing modal DOM nodes (modalBackdrop / modalTitle / modalBody / modalFooter).");
     if (window.appNotifications) {
@@ -50,6 +61,8 @@ export function openModal({ title, body, footer, startMaximized, dialogClass, hi
   }
   if (body) modalBody.appendChild(body);
   if (footer) modalFooter.appendChild(footer);
+  modalBackdrop.setAttribute("data-close-on-backdrop", closeOnBackdropClick ? "true" : "false");
+  modalBackdrop.setAttribute("data-close-on-escape", closeOnEscape ? "true" : "false");
   modalBackdrop.hidden = false;
 }
 
@@ -68,7 +81,11 @@ function toggleModalMaximized() {
 }
 
 export function closeModal() {
-  if (modalBackdrop) modalBackdrop.hidden = true;
+  if (modalBackdrop) {
+    modalBackdrop.hidden = true;
+    modalBackdrop.removeAttribute("data-close-on-backdrop");
+    modalBackdrop.removeAttribute("data-close-on-escape");
+  }
 }
 
 /**
@@ -140,16 +157,16 @@ if (modalMaximizeButton) {
 
 if (modalBackdrop) {
   modalBackdrop.addEventListener("click", (e) => {
-    if (e.target === modalBackdrop) {
-      closeModal();
-    }
+    if (e.target !== modalBackdrop) return;
+    if (modalBackdrop.getAttribute("data-close-on-backdrop") === "false") return;
+    closeModal();
   });
 }
 
 // Close modal with Escape key as an additional safety
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && modalBackdrop && !modalBackdrop.hidden) {
-    closeModal();
-  }
+  if (e.key !== "Escape" || !modalBackdrop || modalBackdrop.hidden) return;
+  if (modalBackdrop.getAttribute("data-close-on-escape") === "false") return;
+  closeModal();
 });
 
