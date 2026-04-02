@@ -1468,7 +1468,7 @@ function openTripVotersModal(trip) {
   listToolbar.innerHTML = `
     <div class="list-toolbar__search">
       <label for="zdTripVotersSearch" class="sr-only">Search</label>
-      <input type="search" id="zdTripVotersSearch" placeholder="Search by name, ID, address…">
+      <input type="search" id="zdTripVotersSearch" placeholder="Search by name, ID, address, location, ballot box…">
     </div>
     <div class="list-toolbar__controls">
       <div class="field-group field-group--inline">
@@ -1500,6 +1500,18 @@ function openTripVotersModal(trip) {
           <option value="agent">Agent</option>
         </select>
       </div>
+      <div class="field-group field-group--inline">
+        <label for="zdTripVotersPermAddr">Permanent address</label>
+        <select id="zdTripVotersPermAddr"><option value="all">All addresses</option></select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="zdTripVotersCurrLoc">Current location</label>
+        <select id="zdTripVotersCurrLoc"><option value="all">All locations</option></select>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="zdTripVotersBallotBox">Ballot box</label>
+        <select id="zdTripVotersBallotBox"><option value="all">All ballot boxes</option></select>
+      </div>
     </div>
   `;
 
@@ -1523,6 +1535,95 @@ function openTripVotersModal(trip) {
   const tableWrap = document.createElement("div");
   tableWrap.className = "table-wrapper";
 
+  const TRIP_FILTER_EMPTY_PERM = "__TRIP_EMPTY_PERM__";
+  const TRIP_FILTER_EMPTY_LOC = "__TRIP_EMPTY_LOC__";
+
+  function tripFilterBallotKey(v) {
+    return String(v.ballotBox || v.island || "Unassigned").trim();
+  }
+
+  function distinctStringsWithEmpty(rawValues) {
+    const nonEmpty = new Set();
+    let hasEmpty = false;
+    rawValues.forEach((raw) => {
+      const t = String(raw ?? "").trim();
+      if (!t) hasEmpty = true;
+      else nonEmpty.add(t);
+    });
+    return {
+      values: Array.from(nonEmpty).sort((a, b) => a.localeCompare(b, "en")),
+      hasEmpty,
+    };
+  }
+
+  function fillTripSelect(sel, allLabel, sortedVals, hasEmpty, emptyToken) {
+    let html = `<option value="all">${allLabel}</option>`;
+    if (hasEmpty) {
+      html += `<option value="${emptyToken}">(Empty)</option>`;
+    }
+    sortedVals.forEach((v) => {
+      html += `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`;
+    });
+    sel.innerHTML = html;
+  }
+
+  function fillBallotSelect(sel, allLabel, keys) {
+    let html = `<option value="all">${allLabel}</option>`;
+    keys.forEach((k) => {
+      html += `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`;
+    });
+    sel.innerHTML = html;
+  }
+
+  function selectHasValue(sel, val) {
+    if (val === "all") return true;
+    return [...sel.options].some((o) => o.value === val);
+  }
+
+  function hydrateTripFieldSelects(assigned) {
+    const perm = distinctStringsWithEmpty(assigned.map((v) => v.permanentAddress));
+    const loc = distinctStringsWithEmpty(assigned.map((v) => v.currentLocation));
+    const boxKeys = [...new Set(assigned.map(tripFilterBallotKey))].sort((a, b) =>
+      a.localeCompare(b, "en")
+    );
+
+    const selP = body.querySelector("#zdTripVotersPermAddr");
+    const selL = body.querySelector("#zdTripVotersCurrLoc");
+    const selB = body.querySelector("#zdTripVotersBallotBox");
+    if (!selP || !selL || !selB) return;
+
+    const prevP = selP.value;
+    const prevL = selL.value;
+    const prevB = selB.value;
+
+    fillTripSelect(selP, "All addresses", perm.values, perm.hasEmpty, TRIP_FILTER_EMPTY_PERM);
+    fillTripSelect(selL, "All locations", loc.values, loc.hasEmpty, TRIP_FILTER_EMPTY_LOC);
+    fillBallotSelect(selB, "All ballot boxes", boxKeys);
+
+    selP.value = selectHasValue(selP, prevP) ? prevP : "all";
+    selL.value = selectHasValue(selL, prevL) ? prevL : "all";
+    selB.value = selectHasValue(selB, prevB) ? prevB : "all";
+  }
+
+  function applyTripFieldFilters(list, permVal, locVal, boxVal) {
+    return list.filter((v) => {
+      if (permVal !== "all") {
+        const p = String(v.permanentAddress || "").trim();
+        if (permVal === TRIP_FILTER_EMPTY_PERM) {
+          if (p) return false;
+        } else if (p !== permVal) return false;
+      }
+      if (locVal !== "all") {
+        const l = String(v.currentLocation || "").trim();
+        if (locVal === TRIP_FILTER_EMPTY_LOC) {
+          if (l) return false;
+        } else if (l !== locVal) return false;
+      }
+      if (boxVal !== "all" && tripFilterBallotKey(v) !== boxVal) return false;
+      return true;
+    });
+  }
+
   function applySearchFilter(list, query) {
     const q = (query || "").toLowerCase().trim();
     if (!q) return list;
@@ -1531,12 +1632,16 @@ function openTripVotersModal(trip) {
       const id = (v.id || "").toLowerCase();
       const nationalId = (v.nationalId || "").toLowerCase();
       const address = (v.permanentAddress || "").toLowerCase();
+      const curLoc = (v.currentLocation || "").toLowerCase();
+      const ballot = tripFilterBallotKey(v).toLowerCase();
       const phone = (v.phone || "").toLowerCase();
       return (
         name.includes(q) ||
         id.includes(q) ||
         nationalId.includes(q) ||
         address.includes(q) ||
+        curLoc.includes(q) ||
+        ballot.includes(q) ||
         phone.includes(q)
       );
     });
@@ -1554,12 +1659,17 @@ function openTripVotersModal(trip) {
     const tLive = findZeroDayTripById(trip.id) || trip;
     const { list: assigned, byIdsCount, byRouteCount } = collectAssignedVotersForTrip(tLive);
     const obCount = (tLive?.onboardedVoterIds || []).length;
-    summary.textContent = `Matched ${assigned.length} voters (Trip assignment: ${byIdsCount}, By route: ${byRouteCount}) · On-board: ${obCount}`;
+    hydrateTripFieldSelects(assigned);
     const filterPledge = (body.querySelector("#zdTripVotersFilter") || {}).value || "all";
     const sortBy = (body.querySelector("#zdTripVotersSort") || {}).value || "sequence";
     const groupBy = (body.querySelector("#zdTripVotersGroupBy") || {}).value || "none";
     const searchQuery = (body.querySelector("#zdTripVotersSearch") || {}).value || "";
+    const permVal = (body.querySelector("#zdTripVotersPermAddr") || {}).value || "all";
+    const locVal = (body.querySelector("#zdTripVotersCurrLoc") || {}).value || "all";
+    const boxVal = (body.querySelector("#zdTripVotersBallotBox") || {}).value || "all";
     let list = applySearchFilter(assigned, searchQuery);
+    list = applyTripFieldFilters(list, permVal, locVal, boxVal);
+    summary.textContent = `Showing ${list.length} of ${assigned.length} assigned (Trip assignment: ${byIdsCount}, By route: ${byRouteCount}) · On-board: ${obCount}`;
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
     lastRenderedRows = displayList.filter((x) => x.type === "row").map((x) => x.voter);
     const newTable = buildTripPassengersTable(displayList, {
@@ -1877,6 +1987,16 @@ function openTripVotersModal(trip) {
   listToolbar.querySelector("#zdTripVotersFilter").addEventListener("change", render);
   listToolbar.querySelector("#zdTripVotersSort").addEventListener("change", render);
   listToolbar.querySelector("#zdTripVotersGroupBy").addEventListener("change", render);
+  listToolbar.addEventListener("change", (e) => {
+    const id = e.target && e.target.id;
+    if (
+      id === "zdTripVotersPermAddr" ||
+      id === "zdTripVotersCurrLoc" ||
+      id === "zdTripVotersBallotBox"
+    ) {
+      render();
+    }
+  });
   const searchEl = listToolbar.querySelector("#zdTripVotersSearch");
   if (searchEl) searchEl.addEventListener("input", render);
 
@@ -3495,6 +3615,52 @@ function openBoxVoterListModal(boxKey, kind) {
   });
   maxBtn.setAttribute("aria-label", "Restore");
   maxBtn.textContent = "Restore";
+
+  function refreshBoxModalIfOpen() {
+    const backdrop = document.getElementById("modalBackdrop");
+    if (!backdrop || backdrop.hidden || !body.isConnected) return;
+    render();
+  }
+
+  const onVotedEntriesSync = () => refreshBoxModalIfOpen();
+  const onVotersSync = () => refreshBoxModalIfOpen();
+  const onZeroDayRefresh = () => refreshBoxModalIfOpen();
+  document.addEventListener("voted-entries-updated", onVotedEntriesSync);
+  document.addEventListener("voters-updated", onVotersSync);
+  document.addEventListener("zero-day-refresh", onZeroDayRefresh);
+
+  void (async () => {
+    try {
+      await syncVotedFromFirestore();
+      if (votersContext && typeof votersContext.getAllVoters === "function") {
+        mergeVotedAtFromVoters(votersContext.getAllVoters());
+      }
+    } catch (_) {}
+    refreshBoxModalIfOpen();
+  })();
+
+  let modalVotePollId = null;
+  modalVotePollId = setInterval(() => {
+    if (zeroDaySyncIntervalId != null) return;
+    void syncVotedFromFirestore();
+  }, ZERO_DAY_SYNC_INTERVAL_MS);
+
+  const backdrop = document.getElementById("modalBackdrop");
+  const obs =
+    backdrop &&
+    new MutationObserver(() => {
+      if (backdrop.hidden) {
+        document.removeEventListener("voted-entries-updated", onVotedEntriesSync);
+        document.removeEventListener("voters-updated", onVotersSync);
+        document.removeEventListener("zero-day-refresh", onZeroDayRefresh);
+        if (modalVotePollId != null) {
+          clearInterval(modalVotePollId);
+          modalVotePollId = null;
+        }
+        obs.disconnect();
+      }
+    });
+  if (backdrop && obs) obs.observe(backdrop, { attributes: true, attributeFilter: ["hidden"] });
 }
 
 /** Gets or creates a monitor for the ballot box (same grouping as cards: ballotBox || island || "Unassigned"). Always refreshes voter list so Firestore has current voters. Returns the monitor (does not copy link). */
