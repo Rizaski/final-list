@@ -4307,12 +4307,9 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-labelledby", "monitorPauseOverlayTitle");
-    overlay.innerHTML = `
-      <div class="monitor-pause-overlay__backdrop"></div>
-      <div class="monitor-pause-overlay__card">
-        <h2 id="monitorPauseOverlayTitle" class="monitor-pause-overlay__title">Ballot box paused</h2>
-        <p class="monitor-pause-overlay__line"><span class="monitor-pause-overlay__label">Paused at</span> ${escapeHtml(pausedAtDisplay)}</p>
-        <p class="monitor-pause-overlay__line monitor-pause-overlay__reason"><span class="monitor-pause-overlay__label">Reason</span> ${escapeHtml(reasonDisplay)}</p>
+    const openControlsHtml = standaloneBallotPage
+      ? ""
+      : `
         <div class="monitor-slide-open" aria-label="Slide to open ballot box">
           <div class="monitor-slide-open__track" data-slide-track>
             <span class="monitor-slide-open__hint">Slide to open →</span>
@@ -4320,10 +4317,18 @@ export function initMonitorView(token, votersContextParam, options = {}) {
           </div>
         </div>
         <button type="button" class="monitor-pause-overlay__open-btn" data-pause-open-btn>Open ballot box</button>
+      `;
+    overlay.innerHTML = `
+      <div class="monitor-pause-overlay__backdrop"></div>
+      <div class="monitor-pause-overlay__card">
+        <h2 id="monitorPauseOverlayTitle" class="monitor-pause-overlay__title">Ballot box paused</h2>
+        <p class="monitor-pause-overlay__line"><span class="monitor-pause-overlay__label">Paused at</span> ${escapeHtml(pausedAtDisplay)}</p>
+        <p class="monitor-pause-overlay__line monitor-pause-overlay__reason"><span class="monitor-pause-overlay__label">Reason</span> ${escapeHtml(reasonDisplay)}</p>
+        ${openControlsHtml}
       </div>
     `;
     overlay.querySelector("[data-pause-open-btn]")?.addEventListener("click", () => void openBallotSession());
-    attachSlideToOpen(overlay);
+    if (!standaloneBallotPage) attachSlideToOpen(overlay);
   }
 
   function pauseBallotSessionModal() {
@@ -4396,15 +4401,18 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       : `<button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--close monitor-session-bar__btn--icon" data-session-action="close" aria-label="Close session"${
           closeDisabled ? ' disabled title="Already closed"' : ' title="Close marking for this session"'
         }>${iconClose}</button>`;
+    const openBtnHtml = standaloneBallotPage
+      ? ""
+      : `<button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--open monitor-session-bar__btn--icon" data-session-action="open" aria-label="Open session"${
+          openDisabled
+            ? " disabled title=\"Session is already open\""
+            : ' title="Resume marking (after pause or close)"'
+        }>${iconOpen}</button>`;
     bar.innerHTML = `
       <div class="monitor-session-bar__controls">
         <span class="monitor-session-bar__status">Session: <strong>${escapeHtml(statusLabel)}</strong></span>
         <div class="monitor-session-bar__buttons monitor-session-bar__buttons--icons">
-          <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--open monitor-session-bar__btn--icon" data-session-action="open" aria-label="Open session"${
-            openDisabled
-              ? " disabled title=\"Session is already open\""
-              : ' title="Resume marking (after pause or close)"'
-          }>${iconOpen}</button>
+          ${openBtnHtml}
           <button type="button" class="monitor-session-bar__btn monitor-session-bar__btn--pause monitor-session-bar__btn--icon" data-session-action="pause" aria-label="Pause session"${
             pauseDisabled
               ? ` disabled title="${ballotSessionStatus === "paused" ? "Already paused" : ballotSessionStatus === "closed" ? "Open the session first" : ""}"`
