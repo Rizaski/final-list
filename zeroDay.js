@@ -545,6 +545,24 @@ function getTransportRouteDisplayNumber(routeId) {
   return ix >= 0 ? ix + 1 : 0;
 }
 
+function pickupTimeMsForRouteTripSort(trip) {
+  if (!trip || !trip.pickupTime) return Number.MAX_SAFE_INTEGER;
+  const ms = new Date(trip.pickupTime).getTime();
+  return Number.isNaN(ms) ? Number.MAX_SAFE_INTEGER : ms;
+}
+
+/** Trips linked to a route, pickup time ascending (missing/invalid pickup last; stable by trip id). */
+function getRouteLinkedTripsSortedByPickup(route) {
+  const ids = Array.isArray(route?.tripIds) ? route.tripIds : [];
+  const trips = ids.map((tid) => findZeroDayTripById(tid)).filter(Boolean);
+  return trips.sort((a, b) => {
+    const da = pickupTimeMsForRouteTripSort(a);
+    const db = pickupTimeMsForRouteTripSort(b);
+    if (da !== db) return da - db;
+    return Number(a.id) - Number(b.id);
+  });
+}
+
 /** Title + pickup line for one trip (routes table cell uses both lines). */
 function getTransportRouteTripLineParts(trip) {
   const typeLabel = getTripTypeLabel(trip);
@@ -553,32 +571,26 @@ function getTransportRouteTripLineParts(trip) {
   return { title: `${typeLabel}: ${name}`, pickupLabel: `Pickup: ${pickupDisplay}` };
 }
 
-/** One string per linked trip (search / CSV / summaries; includes pickup). */
+/** One string per linked trip (search / CSV / summaries; includes pickup). Order: pickup time ascending. */
 function getTransportRouteTripLines(route) {
-  const ids = Array.isArray(route.tripIds) ? route.tripIds : [];
-  if (!ids.length) return [];
-  return ids
-    .map((tid) => findZeroDayTripById(tid))
-    .filter(Boolean)
-    .map((t) => {
-      const p = getTransportRouteTripLineParts(t);
-      return `${p.title} · ${p.pickupLabel}`;
-    });
+  const trips = getRouteLinkedTripsSortedByPickup(route);
+  if (!trips.length) return [];
+  return trips.map((t) => {
+    const p = getTransportRouteTripLineParts(t);
+    return `${p.title} · ${p.pickupLabel}`;
+  });
 }
 
-/** One line per trip for route reports (Excel / print / share): name + pickup only, no trip type. */
+/** One line per trip for route reports (Excel / print / share): name + pickup only, no trip type. Order: pickup ascending. */
 function getTransportRouteTripsReportLines(route) {
-  const ids = Array.isArray(route.tripIds) ? route.tripIds : [];
-  if (!ids.length) return [];
-  return ids
-    .map((tid) => findZeroDayTripById(tid))
-    .filter(Boolean)
-    .map((t) => {
-      const name = (t.route || "").trim() || `Trip ${t.id}`;
-      const p = formatDateTime(t.pickupTime);
-      const pickupPart = p && p !== "–" ? p : "—";
-      return `${name} · Pickup: ${pickupPart}`;
-    });
+  const trips = getRouteLinkedTripsSortedByPickup(route);
+  if (!trips.length) return [];
+  return trips.map((t) => {
+    const name = (t.route || "").trim() || `Trip ${t.id}`;
+    const p = formatDateTime(t.pickupTime);
+    const pickupPart = p && p !== "–" ? p : "—";
+    return `${name} · Pickup: ${pickupPart}`;
+  });
 }
 
 function formatTransportRouteTripsCell(route) {
@@ -851,10 +863,7 @@ function collectAssignedVotersForTransportRoute(route) {
   const tripLabelSetsByVoterKey = new Map();
   let byIdsCount = 0;
   let byRouteCount = 0;
-  const ids = Array.isArray(route?.tripIds) ? route.tripIds : [];
-  for (const tid of ids) {
-    const t = findZeroDayTripById(tid);
-    if (!t) continue;
+  for (const t of getRouteLinkedTripsSortedByPickup(route)) {
     const tripLabel = tripAssignmentLabelForRouteModal(t);
     const { list, byIdsCount: bic, byRouteCount: brc } = collectAssignedVotersForTrip(t);
     byIdsCount += bic;
@@ -2179,8 +2188,7 @@ function buildRouteDataCellsHtml(route, displayNum) {
       case "routeNum":
         return `<td><span class="badge badge--secondary">${displayNum}</span></td>`;
       case "trips": {
-        const ids = Array.isArray(route.tripIds) ? route.tripIds : [];
-        const trips = ids.map((tid) => findZeroDayTripById(tid)).filter(Boolean);
+        const trips = getRouteLinkedTripsSortedByPickup(route);
         const inner =
           trips.length === 0
             ? "—"
@@ -2259,7 +2267,9 @@ function transportRoutesReportRowCells(r) {
   const displayNum = getTransportRouteDisplayNumber(r.id);
   const tripLines = getTransportRouteTripsReportLines(r);
   const tripsText = tripLines.length ? tripLines.join("\n") : "—";
-  const tripsHtml = tripLines.length ? tripLines.map((line) => escapeHtml(line)).join("<br>") : escapeHtml("—");
+  const tripsHtml = tripLines.length
+    ? tripLines.map((line) => `<div class="transport-routes-report-trip-line">${escapeHtml(line)}</div>`).join("")
+    : `<div class="transport-routes-report-trip-line transport-routes-report-trip-line--empty">${escapeHtml("—")}</div>`;
   const remarks = String(r.remarks || "").trim();
   const vehicle = String(r.vehicle || "").trim();
   const driver = String(r.driver || "").trim();
@@ -2280,6 +2290,11 @@ function transportRoutesReportRowCells(r) {
   };
 }
 
+function vesselKeyForTransportRoutesReport(r) {
+  const v = String(r.vehicle || "").trim();
+  return v || "__none__";
+}
+
 function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
   const list = Array.isArray(routeSnapshots) ? routeSnapshots.filter(Boolean) : [];
   if (!list.length) {
@@ -2288,11 +2303,28 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
     }
     return;
   }
+  const uniqueVesselKeys = [...new Set(list.map(vesselKeyForTransportRoutesReport))];
+  uniqueVesselKeys.sort((a, b) => {
+    if (a === "__none__") return 1;
+    if (b === "__none__") return -1;
+    return a.localeCompare(b, "en");
+  });
+  const vesselKeyToIdx = new Map(uniqueVesselKeys.map((k, i) => [k, String(i)]));
+  const vesselFilterCheckboxesHtml = uniqueVesselKeys
+    .map((key, idx) => {
+      const label = key === "__none__" ? "(No vessel)" : key;
+      return `<label class="transport-routes-report-vessel-opt"><input type="checkbox" data-report-vessel-filter value="${escapeHtml(
+        String(idx)
+      )}" checked> <span>${escapeHtml(label)}</span></label>`;
+    })
+    .join("");
+
   const tbodyHtml = list
     .map((r) => {
       const c = transportRoutesReportRowCells(r);
+      const vIdx = vesselKeyToIdx.get(vesselKeyForTransportRoutesReport(r)) || "0";
       return `
-          <tr>
+          <tr data-report-vessel-idx="${escapeHtml(vIdx)}">
             <td class="transport-routes-report-route-num">${escapeHtml(c.routeNum)}</td>
             <td class="transport-routes-report-vehicle">${escapeHtml(c.vehicleDisplay)}</td>
             <td class="transport-routes-report-driver">${escapeHtml(c.driverDisplay)}</td>
@@ -2305,6 +2337,8 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
   const printScript = autoPrint
     ? `<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},400);});<\/script>`
     : "";
+  const reportTotalRoutes = list.length;
+  const filterScript = `<script>(function(){var tbody=document.getElementById("transport-routes-report-tbody");var countEl=document.getElementById("transport-routes-report-visible-count");var total=${reportTotalRoutes};function apply(){if(!tbody)return;var checked={};document.querySelectorAll("input[data-report-vessel-filter]").forEach(function(cb){checked[cb.value]=cb.checked;});var shown=0;tbody.querySelectorAll("tr").forEach(function(tr){var idx=tr.getAttribute("data-report-vessel-idx");var ok=checked[idx]===true;tr.classList.toggle("transport-routes-report-row--hidden",!ok);if(ok)shown++;});if(countEl){countEl.textContent=shown===total?String(total)+" routes":String(shown)+" of "+String(total)+" routes";}}document.querySelectorAll("input[data-report-vessel-filter]").forEach(function(cb){cb.addEventListener("change",apply);});var allBtn=document.getElementById("transport-routes-report-vessel-all");var noneBtn=document.getElementById("transport-routes-report-vessel-none");if(allBtn)allBtn.addEventListener("click",function(){document.querySelectorAll("input[data-report-vessel-filter]").forEach(function(cb){cb.checked=true;});apply();});if(noneBtn)noneBtn.addEventListener("click",function(){document.querySelectorAll("input[data-report-vessel-filter]").forEach(function(cb){cb.checked=false;});apply();});apply();})();<\/script>`;
   const title = `Transport routes (${list.length})`;
   const w = window.open("about:blank", "_blank");
   if (!w) {
@@ -2362,8 +2396,64 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             font-size: 12px;
             color: var(--color-text-muted);
           }
+          .transport-routes-report-count {
+            margin-top: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--color-text);
+          }
+          .transport-routes-report-filters {
+            margin-bottom: 16px;
+            padding: 12px 14px;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border-subtle);
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+          }
+          .transport-routes-report-filters__title {
+            font-weight: 600;
+            font-size: 13px;
+            margin: 0 0 4px;
+            color: var(--color-text);
+          }
+          .transport-routes-report-filters__hint {
+            margin: 0 0 8px;
+            font-size: 11px;
+            color: var(--color-text-muted);
+            line-height: 1.4;
+          }
+          .transport-routes-report-filters__scroll {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 168px;
+            overflow-y: auto;
+            padding: 8px 10px;
+            border: 1px solid var(--color-border-subtle);
+            border-radius: 6px;
+            background: #fafbfc;
+          }
+          .transport-routes-report-vessel-opt {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            user-select: none;
+          }
+          .transport-routes-report-filters__bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-top: 10px;
+          }
+          .transport-routes-report-row--hidden {
+            display: none !important;
+          }
           table {
             width: 100%;
+            table-layout: fixed;
             border-collapse: collapse;
             font-size: 12px;
             background: var(--color-surface);
@@ -2391,35 +2481,51 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             font-weight: 500;
           }
           .transport-routes-report-vehicle {
-            min-width: 100px;
-            width: 12%;
+            width: 10%;
             white-space: normal;
             word-wrap: break-word;
+            overflow-wrap: anywhere;
           }
           .transport-routes-report-driver {
-            min-width: 100px;
-            width: 12%;
+            width: 10%;
             white-space: normal;
             word-wrap: break-word;
+            overflow-wrap: anywhere;
           }
           .transport-routes-report-start {
-            width: 120px;
+            width: 11%;
             white-space: nowrap;
             font-size: 11px;
           }
           .transport-routes-report-trips {
+            width: 40%;
+            min-width: 0;
+            line-height: 1.45;
+            vertical-align: top;
+          }
+          .transport-routes-report-trip-line {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            line-height: 1.45;
+          }
+          .transport-routes-report-trip-line + .transport-routes-report-trip-line {
+            margin-top: 5px;
+          }
+          .transport-routes-report-trip-line--empty {
             white-space: normal;
-            line-height: 1.5;
-            min-width: 180px;
-            width: 22%;
           }
           .transport-routes-report-remarks {
-            min-width: 200px;
-            width: auto;
-            max-width: none;
+            width: 12%;
+            max-width: 140px;
+            min-width: 0;
+            font-size: 11px;
+            line-height: 1.35;
             white-space: normal;
             word-wrap: break-word;
-            line-height: 1.5;
+            overflow-wrap: anywhere;
+            vertical-align: top;
           }
           .transport-routes-report-actions {
             margin-top: 20px;
@@ -2455,10 +2561,16 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             background: rgba(0, 156, 156, 0.06);
             border-color: var(--color-primary);
           }
+          .ghost-button--small {
+            padding: 4px 10px;
+            font-size: 12px;
+          }
           @media print {
             body { background: #fff; padding: 12px; }
             table { box-shadow: none; border-radius: 0; }
             .transport-routes-report-actions { display: none !important; }
+            .transport-routes-report-filters { display: none !important; }
+            .transport-routes-report-screen-only { display: none !important; }
           }
         </style>
       </head>
@@ -2466,8 +2578,20 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
         <header class="transport-routes-report-header">
           <h1>Transportation routes</h1>
           <p>${escapeHtml(new Date().toLocaleString("en-MV"))}</p>
+          <p id="transport-routes-report-visible-count" class="transport-routes-report-count transport-routes-report-screen-only" aria-live="polite"></p>
         </header>
-        <table>
+        <section class="transport-routes-report-filters" aria-label="Filter routes by vessel">
+          <h2 class="transport-routes-report-filters__title">Filter by vessel</h2>
+          <p class="transport-routes-report-filters__hint">Same idea as Columns… in the routes table: check only the vessels you want in the report. Unchecked vessels hide those routes until you print.</p>
+          <div class="transport-routes-report-filters__scroll">
+            ${vesselFilterCheckboxesHtml}
+          </div>
+          <div class="transport-routes-report-filters__bar">
+            <button type="button" class="ghost-button ghost-button--small" id="transport-routes-report-vessel-all">Select all</button>
+            <button type="button" class="ghost-button ghost-button--small" id="transport-routes-report-vessel-none">Clear all</button>
+          </div>
+        </section>
+        <table id="transport-routes-report-table">
           <thead>
             <tr>
               <th scope="col">Route #</th>
@@ -2478,12 +2602,13 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
               <th scope="col">Remarks</th>
             </tr>
           </thead>
-          <tbody>${tbodyHtml}</tbody>
+          <tbody id="transport-routes-report-tbody">${tbodyHtml}</tbody>
         </table>
         <div class="transport-routes-report-actions">
           <button type="button" class="primary-button" onclick="window.print()">Print</button>
           <button type="button" class="ghost-button" onclick="window.close()">Close</button>
         </div>
+        ${filterScript}
         ${printScript}
       </body>
       </html>
