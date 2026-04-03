@@ -45,6 +45,9 @@ const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
 const VOTED_STORAGE_KEY = "zero-day-voted";
 const TRIPS_STORAGE_KEY = "zero-day-trips";
+/** Trip ids the user deleted locally — prevents Firestore merge/snapshot from bringing them back (stale cache). */
+const TRIPS_DELETED_IDS_KEY = "zero-day-transport-trips-deleted-ids";
+const TRIPS_DELETED_IDS_MAX = 2000;
 /** localStorage key prefix for ballot session when Firestore is unavailable */
 const MONITOR_BALLOT_SESSION_PREFIX = "monitor_ballot_session_";
 
@@ -56,6 +59,8 @@ const VOTE_BOX_VIEW_VOTED_SVG = `<svg class="vote-box-card__view-icon vote-box-c
 const VOTE_BOX_VIEW_NOT_YET_SVG = `<svg class="vote-box-card__view-icon vote-box-card__view-icon--not-yet" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#fb923c" stroke="#c2410c" stroke-width="1.15"/><path d="M12 7v5l3 2" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 let zeroDayTrips = [];
+/** Set of string trip ids deleted by user; persisted so sync does not resurrect them. */
+let deletedTransportTripIds = new Set();
 let transportTripsUnsubscribe = null;
 let zeroDayVotedEntries = []; // { voterId, timeMarked }
 let zeroDayMonitors = []; // { id, name, mobile, ballotBox, voterIds: [], shareToken, sequenceOffset? } — offset unused (legacy field)
@@ -151,12 +156,51 @@ export async function addTransportRouteFromName(routeName, options = {}) {
   return { ok: true, route, trip };
 }
 
+function loadDeletedTransportTripIds() {
+  try {
+    const raw = localStorage.getItem(TRIPS_DELETED_IDS_KEY);
+    if (!raw) {
+      deletedTransportTripIds = new Set();
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    deletedTransportTripIds = new Set(
+      Array.isArray(parsed) ? parsed.map((x) => String(x).trim()).filter(Boolean) : []
+    );
+  } catch (_) {
+    deletedTransportTripIds = new Set();
+  }
+}
+
+function saveDeletedTransportTripIds() {
+  try {
+    let arr = Array.from(deletedTransportTripIds);
+    if (arr.length > TRIPS_DELETED_IDS_MAX) {
+      arr = arr.slice(-TRIPS_DELETED_IDS_MAX);
+      deletedTransportTripIds = new Set(arr);
+    }
+    localStorage.setItem(TRIPS_DELETED_IDS_KEY, JSON.stringify(arr));
+  } catch (_) {}
+}
+
+function recordTransportTripDeleted(tripId) {
+  const sid = String(tripId ?? "").trim();
+  if (!sid) return;
+  deletedTransportTripIds.add(sid);
+  saveDeletedTransportTripIds();
+}
+
 function loadTrips() {
+  loadDeletedTransportTripIds();
   try {
     const raw = localStorage.getItem(TRIPS_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) zeroDayTrips = parsed.map(normalizeTrip);
+      if (Array.isArray(parsed)) {
+        zeroDayTrips = parsed
+          .map(normalizeTrip)
+          .filter((t) => t && t.id != null && !deletedTransportTripIds.has(String(t.id)));
+      }
     }
   } catch (_) {}
 }
@@ -296,13 +340,19 @@ function mergeTransportTripLists(localList, remoteList) {
   const localById = new Map(local.map((t) => [String(t.id), t]));
   const remoteById = new Map(remote.map((t) => [String(t.id), t]));
   const remoteIds = new Set(remoteById.keys());
+  const maxRemoteNumericId = remote.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0);
+  const remoteNonEmpty = remote.length > 0;
   const result = [];
   remoteById.forEach((R, id) => {
+    if (deletedTransportTripIds.has(String(id))) return;
     const L = localById.get(id);
     result.push(mergeTwoTransportTrips(R, L));
   });
   localById.forEach((L, id) => {
-    if (!remoteIds.has(id)) result.push(L);
+    if (remoteIds.has(id) || deletedTransportTripIds.has(String(id))) return;
+    const numId = Number(id);
+    if (remoteNonEmpty && !Number.isNaN(numId) && numId <= maxRemoteNumericId) return;
+    result.push(L);
   });
   result.sort((a, b) => {
     const na = Number(a.id);
@@ -1753,11 +1803,16 @@ function openTripForm(existing, defaultType) {
 function deleteTrip(id) {
   const idx = zeroDayTrips.findIndex((t) => String(t.id) === String(id));
   if (idx === -1) return;
+  recordTransportTripDeleted(id);
   zeroDayTrips.splice(idx, 1);
   saveTrips();
-  firebaseInitPromise.then((api) => {
-    if (api.ready && api.deleteTransportTripFs) return api.deleteTransportTripFs(id);
-  }).catch(() => {});
+  firebaseInitPromise
+    .then((api) => {
+      if (api.ready && api.deleteTransportTripFs) return api.deleteTransportTripFs(id);
+    })
+    .catch((err) => {
+      console.warn("[ZeroDay] deleteTransportTripFs failed", id, err);
+    });
   renderZeroDayTripsTable();
 }
 
