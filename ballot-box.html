@@ -91,6 +91,8 @@
         <div class="monitor-view__header monitor-view__header--search-only">
           <h1 id="monitorViewTitle">Ballot box</h1>
         </div>
+        <!-- Outside header so renderMonitorViewHeader() (e.g. after voted snapshot) does not destroy the undo toast -->
+        <div id="monitorStandaloneStrip" class="monitor-standalone-strip" hidden aria-live="polite"></div>
         <div class="monitor-view__toolbar ballot-box-toolbar">
           <span id="monitorViewSearchLabel" class="ballot-box-label ballot-box-toolbar__label">Find voter</span>
           <div class="ballot-box-toolbar__search-row">

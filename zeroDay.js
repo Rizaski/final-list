@@ -5637,11 +5637,16 @@ export function initMonitorView(token, votersContextParam, options = {}) {
 
   const undoIconSvg = `<svg class="monitor-standalone-strip__undo-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>`;
 
-  function showMarkVotedToast(voter) {
+  /** @param undoVoterId Same id written to voted entries / Firestore (required for undo to match). */
+  function showMarkVotedToast(voter, undoVoterId) {
     hideMarkVotedToast();
     const seq = sequenceAsImportedFromCsv(voter);
     const id = voter.nationalId || voter.id || "";
     const addr = voter.permanentAddress || "";
+    const undoKey =
+      undoVoterId != null && String(undoVoterId).trim() !== ""
+        ? undoVoterId
+        : voter.nationalId || voter.id;
     if (standaloneBallotPage) {
       const strip = document.getElementById("monitorStandaloneStrip");
       if (!strip) return;
@@ -5666,7 +5671,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       attachMarkVotedToastTimers(strip);
       strip.querySelector("[data-toast-undo]")?.addEventListener("click", async () => {
         hideMarkVotedToast();
-        await undoMarkVoted(voter.id);
+        await undoMarkVoted(undoKey);
       });
       return;
     }
@@ -5698,7 +5703,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     attachMarkVotedToastTimers(el);
     el.querySelector("[data-toast-undo]")?.addEventListener("click", async () => {
       hideMarkVotedToast();
-      await undoMarkVoted(voter.id);
+      await undoMarkVoted(undoKey);
     });
     el.querySelector("[data-toast-dismiss]")?.addEventListener("click", () => hideMarkVotedToast());
   }
@@ -5718,7 +5723,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     if (!isRemote) saveVotedEntries();
     if (isRemote && options.onRefreshVoted) await options.onRefreshVoted().catch(() => {});
     renderMonitorViewHeader();
-    const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
+    const v = findAssignedVoterForMark(voterId);
     if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
 
     try {
@@ -5853,7 +5858,6 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         "%)</span>" +
         "</div>" +
         "</div>" +
-        '<div id="monitorStandaloneStrip" class="monitor-standalone-strip" hidden aria-live="polite"></div>' +
         "</div>";
     } else {
       main.innerHTML =
@@ -5893,6 +5897,13 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     }
   }
 
+  function findAssignedVoterForMark(voterId) {
+    return (
+      assignedVoters.find((x) => sameVoterId(x.id, voterId)) ||
+      assignedVoters.find((x) => sameVoterId(x.nationalId, voterId))
+    );
+  }
+
   function markVoterVoted(voterId) {
     const timeMarked = new Date().toISOString();
     const ve = getVotedEntries();
@@ -5900,7 +5911,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     if (idx >= 0) ve[idx].timeMarked = timeMarked;
     else ve.push({ voterId, timeMarked });
 
-    const v = assignedVoters.find((x) => sameVoterId(x.id, voterId));
+    const v = findAssignedVoterForMark(voterId);
 
     // When the monitor view is opened inside the admin app, `isRemote` can be false.
     // Still write to Firestore so "Vote Marking Ballot Box" cards update across refresh/devices.
@@ -5922,7 +5933,20 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     if (!isRemote) saveVotedEntries();
     renderMonitorViewHeader();
     if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
-    if (v) showMarkVotedToast(v);
+    const toastVoter =
+      v ||
+      (() => {
+        const idStr = String(voterId || "").trim();
+        return idStr
+          ? {
+              id: voterId,
+              nationalId: voterId,
+              fullName: "",
+              permanentAddress: "",
+            }
+          : null;
+      })();
+    if (toastVoter) showMarkVotedToast(toastVoter, voterId);
 
     // Refresh card grid on the admin page for immediate feedback.
     renderZeroDayVoteTable();
@@ -6185,6 +6209,19 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     }
     if (monitorViewEl) monitorViewEl.hidden = false;
     if (monitorViewResult) monitorViewResult.innerHTML = "";
+
+    if (standaloneBallotPage && contentEl && !document.getElementById("monitorStandaloneStrip")) {
+      const strip = document.createElement("div");
+      strip.id = "monitorStandaloneStrip";
+      strip.className = "monitor-standalone-strip";
+      strip.hidden = true;
+      strip.setAttribute("aria-live", "polite");
+      const hdr = contentEl.querySelector(".monitor-view__header");
+      const toolbar = contentEl.querySelector(".monitor-view__toolbar");
+      if (hdr && toolbar) hdr.insertAdjacentElement("afterend", strip);
+      else if (toolbar) toolbar.insertAdjacentElement("beforebegin", strip);
+      else contentEl.insertBefore(strip, contentEl.firstChild);
+    }
 
     // Session state already streams from Firestore (subscription started at init); paint workspace UI.
     syncBallotSessionUi();
