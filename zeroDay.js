@@ -203,6 +203,130 @@ function normalizeTrip(t) {
   };
 }
 
+/** Prefer non-empty local edits when merging offline/localStorage with Firestore. */
+function mergeTripScalarPreferLocal(localVal, remoteVal) {
+  const ls = String(localVal ?? "").trim();
+  if (ls) return ls;
+  return String(remoteVal ?? "").trim();
+}
+
+function unionTripIdArrays(a, b) {
+  const s = new Set();
+  (Array.isArray(a) ? a : []).forEach((x) => {
+    const v = String(x).trim();
+    if (v) s.add(v);
+  });
+  (Array.isArray(b) ? b : []).forEach((x) => {
+    const v = String(x).trim();
+    if (v) s.add(v);
+  });
+  return Array.from(s);
+}
+
+/** Union explicit id lists from two sources, then drop any id listed as excluded on either side (avoids reviving removed voters after Firestore merge). */
+function mergeTripExplicitIdsWithExclusions(rIds, lIds, rEx, lEx) {
+  const ex = new Set(
+    unionTripIdArrays(rEx, lEx)
+      .map((x) => String(x).trim())
+      .filter(Boolean)
+  );
+  return unionTripIdArrays(rIds, lIds).filter((id) => !ex.has(String(id).trim()));
+}
+
+/** Local map wins on key overlap (spread); empty values dropped. */
+function mergeTripPassengerMaps(mapR, mapL) {
+  const R = sanitizeTripStringMap(mapR);
+  const L = sanitizeTripStringMap(mapL);
+  const merged = { ...R, ...L };
+  const out = {};
+  Object.entries(merged).forEach(([k, v]) => {
+    const s = String(v ?? "").trim();
+    if (s) out[k] = v;
+  });
+  return out;
+}
+
+/**
+ * Merge one trip from Firestore with the same id from localStorage (offline edits).
+ */
+function mergeTwoTransportTrips(remote, local) {
+  if (!remote && !local) return null;
+  if (!local) return normalizeTrip(remote);
+  if (!remote) return normalizeTrip(local);
+  const R = normalizeTrip(remote);
+  const L = normalizeTrip(local);
+  const mergedExcluded = unionTripIdArrays(R.excludedVoterIds, L.excludedVoterIds);
+  const merged = {
+    id: L.id != null ? L.id : R.id,
+    tripType: mergeTripScalarPreferLocal(L.tripType, R.tripType) || "flight",
+    route: mergeTripScalarPreferLocal(L.route, R.route),
+    driver: mergeTripScalarPreferLocal(L.driver, R.driver),
+    vehicle: mergeTripScalarPreferLocal(L.vehicle, R.vehicle),
+    pickupTime: mergeTripScalarPreferLocal(L.pickupTime, R.pickupTime),
+    status: mergeTripScalarPreferLocal(L.status, R.status) || "Scheduled",
+    rate: mergeTripScalarPreferLocal(L.rate, R.rate),
+    amount: mergeTripScalarPreferLocal(L.amount, R.amount),
+    remarks: mergeTripScalarPreferLocal(L.remarks, R.remarks),
+    excludedVoterIds: mergedExcluded,
+    voterIds: mergeTripExplicitIdsWithExclusions(R.voterIds, L.voterIds, R.excludedVoterIds, L.excludedVoterIds),
+    onboardedVoterIds: (() => {
+      const ex = new Set(
+        mergedExcluded
+          .map((x) => String(x).trim())
+          .filter(Boolean)
+      );
+      return unionTripIdArrays(R.onboardedVoterIds, L.onboardedVoterIds).filter((id) => !ex.has(String(id).trim()));
+    })(),
+    passengerPreferredPickupByVoterId: mergeTripPassengerMaps(
+      R.passengerPreferredPickupByVoterId,
+      L.passengerPreferredPickupByVoterId
+    ),
+    passengerRemarksByVoterId: mergeTripPassengerMaps(R.passengerRemarksByVoterId, L.passengerRemarksByVoterId),
+  };
+  return normalizeTrip(merged);
+}
+
+/**
+ * Union of remote trips (Firestore) and local trips (localStorage): same id is merged;
+ * ids only on local are kept (e.g. created offline).
+ */
+function mergeTransportTripLists(localList, remoteList) {
+  const local = Array.isArray(localList) ? localList.map(normalizeTrip) : [];
+  const remote = Array.isArray(remoteList) ? remoteList.map(normalizeTrip) : [];
+  const localById = new Map(local.map((t) => [String(t.id), t]));
+  const remoteById = new Map(remote.map((t) => [String(t.id), t]));
+  const remoteIds = new Set(remoteById.keys());
+  const result = [];
+  remoteById.forEach((R, id) => {
+    const L = localById.get(id);
+    result.push(mergeTwoTransportTrips(R, L));
+  });
+  localById.forEach((L, id) => {
+    if (!remoteIds.has(id)) result.push(L);
+  });
+  result.sort((a, b) => {
+    const na = Number(a.id);
+    const nb = Number(b.id);
+    if (!Number.isNaN(na) && !Number.isNaN(nb) && String(na) === String(a.id) && String(nb) === String(b.id)) {
+      return na - nb;
+    }
+    return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+  });
+  return result;
+}
+
+/** Push every in-memory transport trip to Firestore (merge writes). Exported for manual sync if needed. */
+export async function flushTransportTripsToFirestore() {
+  const api = await firebaseInitPromise;
+  if (!api.ready || typeof api.setTransportTripFs !== "function") return;
+  const trips = zeroDayTrips.slice();
+  const results = await Promise.allSettled(trips.map((t) => api.setTransportTripFs(t)));
+  const failed = results.filter((r) => r.status === "rejected");
+  if (failed.length) {
+    console.warn("[ZeroDay] flushTransportTripsToFirestore: some trips failed to sync", failed.length);
+  }
+}
+
 function normalizeTransportRouteKey(s) {
   return String(s || "")
     .trim()
@@ -254,7 +378,9 @@ async function persistTripPassengerPreferredPickup(tripId, voterId, value) {
   try {
     const api = await firebaseInitPromise;
     if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[ZeroDay] persistTripPassengerPreferredPickup Firestore sync failed", tripId, voterId, err);
+  }
   // Defer so native datetime-local picker is not interrupted by main table DOM work.
   requestAnimationFrame(() => renderZeroDayTripsTable());
 }
@@ -271,7 +397,9 @@ async function persistTripPassengerRemarks(tripId, voterId, value) {
   try {
     const api = await firebaseInitPromise;
     if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[ZeroDay] persistTripPassengerRemarks Firestore sync failed", tripId, voterId, err);
+  }
   requestAnimationFrame(() => renderZeroDayTripsTable());
 }
 
@@ -307,7 +435,8 @@ function collectAssignedVotersForTrip(trip) {
         if (!v || !voterTransportNeededFlag(v)) return false;
         const r = normalizeRoute(v.transportRoute);
         if (!r) return false;
-        return r === routeKey || r.includes(routeKey) || routeKey.includes(r);
+        // Exact match only — loose substring matching caused voters to appear on multiple routes.
+        return r === routeKey;
       })
     : [];
   const byId = new Map();
@@ -381,7 +510,9 @@ async function persistTripMetaField(tripId, field, value) {
   try {
     const api = await firebaseInitPromise;
     if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[ZeroDay] persistTripMetaField Firestore sync failed", tripId, field, err);
+  }
 }
 
 function csvEscapeTransportCell(val) {
@@ -696,7 +827,9 @@ async function toggleTripVoterOnboarded(tripId, voterIdStr) {
   try {
     const api = await firebaseInitPromise;
     if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[ZeroDay] toggleTripVoterOnboarded Firestore sync failed", tripId, err);
+  }
   renderZeroDayTripsTable();
 }
 
@@ -734,7 +867,9 @@ async function removeAssignedVoterFromTrip(tripId, voterIdStr) {
   try {
     const api = await firebaseInitPromise;
     if (api.ready && api.setTransportTripFs) await api.setTransportTripFs(t);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[ZeroDay] removeAssignedVoterFromTrip Firestore sync failed", tripId, err);
+  }
   renderZeroDayTripsTable();
 }
 
@@ -806,16 +941,18 @@ export async function syncVotedFromFirestore() {
   } catch (_) {}
 }
 
-/** One-shot pull of transport trips from Firestore (e.g. header hard refresh). */
+/** One-shot pull of transport trips from Firestore (e.g. header hard refresh). Merges with localStorage, then pushes merged trips to Firestore. */
 export async function refreshTransportTripsFromFirestore() {
   try {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.getAllTransportTripsFs) return;
     const remote = await api.getAllTransportTripsFs();
     if (!Array.isArray(remote)) return;
-    zeroDayTrips = remote.map(normalizeTrip);
+    const localBefore = zeroDayTrips.slice();
+    zeroDayTrips = mergeTransportTripLists(localBefore, remote.map(normalizeTrip));
     saveTrips();
     renderZeroDayTripsTable();
+    await flushTransportTripsToFirestore();
   } catch (e) {
     console.warn("[ZeroDay] refreshTransportTripsFromFirestore", e);
   }
@@ -1256,7 +1393,7 @@ function getTripAssignedVoterCount(trip) {
       if (!v || !voterTransportNeededFlag(v)) return;
       const r = normalizeRoute(v.transportRoute);
       if (!r) return;
-      if (r === routeKey || r.includes(routeKey) || routeKey.includes(r)) {
+      if (r === routeKey) {
         const key = v.id != null ? String(v.id) : v.nationalId != null ? String(v.nationalId) : "";
         if (key && !excluded.has(String(key).trim())) dedup.add(key);
       }
@@ -4339,20 +4476,28 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 
   firebaseInitPromise.then((api) => {
     if (!api.ready || !api.getAllTransportTripsFs) return;
-    api.getAllTransportTripsFs().then((remote) => {
-      if (Array.isArray(remote) && remote.length > 0) {
-        zeroDayTrips = remote.map(normalizeTrip);
+    api
+      .getAllTransportTripsFs()
+      .then(async (remote) => {
+        if (!Array.isArray(remote)) return;
+        const localBefore = zeroDayTrips.slice();
+        zeroDayTrips = mergeTransportTripLists(localBefore, remote.map(normalizeTrip));
         saveTrips();
-      }
-      renderZeroDayTripsTable();
-    }).catch(() => {});
+        renderZeroDayTripsTable();
+        try {
+          await flushTransportTripsToFirestore();
+        } catch (e) {
+          console.warn("[ZeroDay] flush transport trips after initial merge", e);
+        }
+      })
+      .catch(() => {});
     if (api.onTransportTripsSnapshotFs) {
       transportTripsUnsubscribe = api.onTransportTripsSnapshotFs((items) => {
-        if (Array.isArray(items)) {
-          zeroDayTrips = items.map(normalizeTrip);
-          saveTrips();
-          renderZeroDayTripsTable();
-        }
+        if (!Array.isArray(items)) return;
+        const remote = items.map(normalizeTrip);
+        zeroDayTrips = mergeTransportTripLists(zeroDayTrips, remote);
+        saveTrips();
+        renderZeroDayTripsTable();
       });
     }
   }).catch(() => {});

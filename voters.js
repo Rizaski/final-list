@@ -3714,12 +3714,12 @@ export function updateVoterTransportNeeded(voterId, transportNeeded) {
   })();
 }
 
-/** Update mobile number from Transportation route modal; syncs voters list and Firestore. */
+/** Update mobile number from Transportation route modal; syncs voters list and Firestore. Returns a promise that settles after Firestore write (or immediately if offline / no voter). */
 export function updateVoterPhone(voterId, phone) {
   const v = findVoterById(voterId);
-  if (!v) return;
+  if (!v) return Promise.resolve();
   v.phone = String(phone ?? "").trim();
-  (async () => {
+  return (async () => {
     try {
       const api = await firebaseInitPromise;
       if (api.ready && api.setVoterFs) await api.setVoterFs(v);
@@ -3727,7 +3727,9 @@ export function updateVoterPhone(voterId, phone) {
       renderVotersTable();
       if (sameVoterId(selectedVoterId, voterId)) renderVoterDetails(v);
       document.dispatchEvent(new CustomEvent("voters-updated"));
-    } catch (_) {}
+    } catch (err) {
+      console.warn("[Voters] updateVoterPhone Firestore sync failed", voterId, err);
+    }
   })();
 }
 
