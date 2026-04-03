@@ -26,6 +26,7 @@ import {
   initMonitorView,
   syncVotedFromFirestore,
   refreshTransportTripsFromFirestore,
+  refreshTransportRoutesFromFirestore,
 } from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
 import { initTableViewMenus } from "./table-view-menu.js";
@@ -901,6 +902,7 @@ async function startAppModules(firebaseApi) {
           refreshCandidatesFromFirestore(),
           refreshEventsFromFirestore(),
           refreshTransportTripsFromFirestore(),
+          refreshTransportRoutesFromFirestore(),
         ]);
         await syncVotedFromFirestore();
         const scope = {

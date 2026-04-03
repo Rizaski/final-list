@@ -6248,6 +6248,90 @@ textarea.voter-detail-referendum-notes:focus {
   flex-shrink: 0;
 }
 
+/* Transportation module: Trips / Route tabs */
+.transport-main-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 20px;
+  margin: 4px 0 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.transport-main-tabs__tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.transport-main-tabs__tab:hover {
+  color: var(--color-text);
+  background: rgba(0, 156, 156, 0.06);
+}
+.transport-main-tabs__tab--active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  background: rgba(0, 156, 156, 0.08);
+}
+.transport-tab-panel__subheader {
+  padding: 12px 20px 0;
+  margin: 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+.transport-tab-panel .card-body {
+  padding-top: 16px;
+}
+.transport-tab-panel--hidden {
+  display: none !important;
+}
+
+.transport-route-trips-cell {
+  max-width: 280px;
+  white-space: normal;
+  line-height: 1.35;
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.transport-route-trip-line {
+  display: block;
+  padding: 2px 0;
+}
+
+.transport-route-trip-line + .transport-route-trip-line {
+  border-top: 1px solid var(--color-border-subtle);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.transport-route-trip-line__title {
+  display: block;
+  font-weight: 500;
+}
+
+.transport-route-trip-line__pickup {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-muted, #6b7280);
+  margin-top: 2px;
+}
+
+.data-table-col--trip-assignment,
+.trip-passenger-trip-cell {
+  max-width: 220px;
+  white-space: normal;
+  line-height: 1.35;
+  font-size: 13px;
+  vertical-align: top;
+}
+
 /* Zero Day → View voters (trip): on-board status + action */
 .trip-voter-onboard-cell {
   display: flex;
@@ -6255,6 +6339,62 @@ textarea.voter-detail-referendum-notes:focus {
   align-items: center;
   gap: 8px;
   max-width: 220px;
+}
+
+/* Zero Day → Transportation routes table (same cell treatment as trips) */
+#zeroDayRoutesTable .transport-trips-table__meta-cell {
+  padding: 10px 12px;
+  vertical-align: middle;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 156, 156, 0.06) 0%,
+    rgba(0, 156, 156, 0.02) 50%,
+    transparent 100%
+  );
+}
+#zeroDayRoutesTable .transport-trips-table__meta-cell--amount {
+  border-left: 1px solid var(--color-border-subtle);
+}
+#zeroDayRoutesTable .transport-trips-table__meta-cell--remarks {
+  border-left: 1px solid var(--color-border-subtle);
+}
+#zeroDayRoutesTable .transport-trips-table__meta-cell--vehicle .input--trip-table-meta,
+#zeroDayRoutesTable .transport-trips-table__meta-cell--driver .input--trip-table-meta {
+  max-width: 168px;
+}
+#zeroDayRoutesTable .transport-trips-table__meta-cell--pickup .input--trip-pickup-local {
+  max-width: 12rem;
+  min-width: 0;
+}
+#zeroDayRoutesTable .input--trip-table-meta {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 120px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--color-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+#zeroDayRoutesTable .input--trip-table-meta-remarks {
+  max-width: 220px;
+}
+#zeroDayRoutesTable .input--trip-table-meta:hover {
+  border-color: var(--color-primary);
+}
+#zeroDayRoutesTable .input--trip-table-meta:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+#zeroDayRoutesTable .input--trip-table-meta::placeholder {
+  color: var(--color-text-muted);
 }
 
 /* Zero Day → Transportation Management: rate & amount (brand-aligned) */

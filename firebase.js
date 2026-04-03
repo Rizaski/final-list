@@ -31,6 +31,7 @@ const EVENT_PARTICIPANT_SHARES_COLLECTION = "eventParticipantShares";
 const CAMPAIGN_USERS_COLLECTION = "campaignUsers";
 const EVENTS_COLLECTION = "events";
 const TRANSPORT_TRIPS_COLLECTION = "transportTrips";
+const TRANSPORT_ROUTES_COLLECTION = "transportRoutes";
 
 export const firebaseInitPromise = (async () => {
   try {
@@ -99,6 +100,11 @@ export const firebaseInitPromise = (async () => {
     let setTransportTripFs = async () => {};
     let deleteTransportTripFs = async () => {};
     let onTransportTripsSnapshotFs = () => noopUnsubscribe;
+
+    let getAllTransportRoutesFs = async () => [];
+    let setTransportRouteFs = async () => {};
+    let deleteTransportRouteFs = async () => {};
+    let onTransportRoutesSnapshotFs = () => noopUnsubscribe;
 
     let getAllVoterListsFs = async () => [];
     let getVoterListFs = async () => null;
@@ -804,6 +810,56 @@ export const firebaseInitPromise = (async () => {
           "transportTrips"
         );
       };
+
+      const transportRoutesColRef = firestoreMod.collection(db, TRANSPORT_ROUTES_COLLECTION);
+      getAllTransportRoutesFs = async () => {
+        const snap = await firestoreMod.getDocs(transportRoutesColRef);
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      };
+      setTransportRouteFs = async (route) => {
+        if (!route || route.id == null) return;
+        const ref = firestoreMod.doc(db, TRANSPORT_ROUTES_COLLECTION, String(route.id));
+        const data = {
+          tripIds: Array.isArray(route.tripIds) ? route.tripIds.map((x) => (typeof x === "number" ? x : Number(x))) : [],
+          createdAt:
+            typeof route.createdAt === "number" && !Number.isNaN(route.createdAt)
+              ? route.createdAt
+              : Date.now(),
+          driver: route.driver || "",
+          vehicle: route.vehicle || "",
+          pickupTime: route.pickupTime || "",
+          status: route.status || "Scheduled",
+          remarks: route.remarks != null ? String(route.remarks) : "",
+          rate: route.rate != null ? String(route.rate) : "",
+          amount: route.amount != null ? String(route.amount) : "",
+          onboardedVoterIds: Array.isArray(route.onboardedVoterIds) ? route.onboardedVoterIds.map(String) : [],
+          passengerPreferredPickupByVoterId:
+            route.passengerPreferredPickupByVoterId &&
+            typeof route.passengerPreferredPickupByVoterId === "object"
+              ? route.passengerPreferredPickupByVoterId
+              : {},
+          passengerRemarksByVoterId:
+            route.passengerRemarksByVoterId && typeof route.passengerRemarksByVoterId === "object"
+              ? route.passengerRemarksByVoterId
+              : {},
+        };
+        await firestoreMod.setDoc(ref, data, { merge: true });
+      };
+      deleteTransportRouteFs = async (routeId) => {
+        if (routeId == null) return;
+        const ref = firestoreMod.doc(db, TRANSPORT_ROUTES_COLLECTION, String(routeId));
+        await firestoreMod.deleteDoc(ref);
+      };
+      onTransportRoutesSnapshotFs = (handler) => {
+        if (typeof handler !== "function") return noopUnsubscribe;
+        return onSnapshotSafe(
+          transportRoutesColRef,
+          (snap) => {
+            handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          },
+          "transportRoutes"
+        );
+      };
     } catch (fsErr) {
       // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
       console.error(
@@ -897,6 +953,10 @@ export const firebaseInitPromise = (async () => {
       setTransportTripFs,
       deleteTransportTripFs,
       onTransportTripsSnapshotFs,
+      getAllTransportRoutesFs,
+      setTransportRouteFs,
+      deleteTransportRouteFs,
+      onTransportRoutesSnapshotFs,
     };
   } catch (err) {
     console.error(

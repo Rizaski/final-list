@@ -92,6 +92,12 @@ service cloud.firestore {
       allow write: if signedIn() && sizeOk();
     }
 
+    // Transportation route groupings (links multiple trips + route-level fields)
+    match /transportRoutes/{routeId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && sizeOk();
+    }
+
     // Shared list view (candidate opens by link; doc id = share token)
     match /voterListShares/{token} {
       allow read: if true;

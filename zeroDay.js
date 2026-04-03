@@ -15,6 +15,7 @@ const zeroDayMarkVotedButton = document.getElementById("zeroDayMarkVotedButton")
 const zeroDayVoteSearch = document.getElementById("zeroDayVoteSearch");
 const zeroDayVoteFilter = document.getElementById("zeroDayVoteFilter");
 const zeroDayTripsTableBody = document.querySelector("#zeroDayTripsTable tbody");
+const zeroDayRoutesTableBody = document.querySelector("#zeroDayRoutesTable tbody");
 const zeroDayVoteCardsContainer = document.getElementById("zeroDayVoteCards");
 const zeroDayVotePaginationEl = document.getElementById("zeroDayVotePagination");
 const zeroDayAddMonitorButton = document.getElementById("zeroDayAddMonitorButton");
@@ -48,6 +49,33 @@ const TRIPS_STORAGE_KEY = "zero-day-trips";
 /** Trip ids the user deleted locally — prevents Firestore merge/snapshot from bringing them back (stale cache). */
 const TRIPS_DELETED_IDS_KEY = "zero-day-transport-trips-deleted-ids";
 const TRIPS_DELETED_IDS_MAX = 2000;
+const ROUTES_STORAGE_KEY = "zero-day-transport-routes";
+const ROUTES_DELETED_IDS_KEY = "zero-day-transport-routes-deleted-ids";
+const ROUTES_DELETED_IDS_MAX = 2000;
+/** Route table columns (same styling patterns as trips; route # is display-only). */
+const ROUTE_TABLE_COLUMN_DEFS = [
+  { key: "routeNum", label: "Route #", sortKey: "routeNum" },
+  { key: "trips", label: "Trips", sortKey: "trips" },
+  { key: "vehicle", label: "Vessel / Flight no.", sortKey: "vehicle" },
+  { key: "driver", label: "Driver / Pilot / Captain", sortKey: "driver" },
+  { key: "pickup", label: "Pickup time", sortKey: "pickup" },
+  { key: "voters", label: "Voters assigned", sortKey: "voters" },
+  { key: "status", label: "Status", sortKey: "status" },
+  { key: "rate", label: "Rate", sortKey: "rate" },
+  { key: "amount", label: "Amount", sortKey: "amount" },
+  { key: "remarks", label: "Remarks", sortKey: "remarks" },
+];
+const ROUTE_TABLE_EDITABLE_FIELDS = new Set([
+  "vehicle",
+  "driver",
+  "pickupTime",
+  "rate",
+  "amount",
+  "remarks",
+]);
+const ROUTES_VISIBLE_COLS_KEY = "zero-day-routes-visible-columns";
+const ROUTE_COLUMN_DEFAULT_KEYS = ROUTE_TABLE_COLUMN_DEFS.map((c) => c.key);
+let transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_KEYS.slice();
 /** localStorage key prefix for ballot session when Firestore is unavailable */
 const MONITOR_BALLOT_SESSION_PREFIX = "monitor_ballot_session_";
 
@@ -62,6 +90,9 @@ let zeroDayTrips = [];
 /** Set of string trip ids deleted by user; persisted so sync does not resurrect them. */
 let deletedTransportTripIds = new Set();
 let transportTripsUnsubscribe = null;
+let zeroDayTransportRoutes = [];
+let deletedTransportRouteIds = new Set();
+let transportRoutesUnsubscribe = null;
 let zeroDayVotedEntries = []; // { voterId, timeMarked }
 let zeroDayMonitors = []; // { id, name, mobile, ballotBox, voterIds: [], shareToken, sequenceOffset? } — offset unused (legacy field)
 
@@ -365,6 +396,210 @@ function mergeTransportTripLists(localList, remoteList) {
   return result;
 }
 
+function normalizeTransportRoute(r) {
+  const tripIds = Array.isArray(r.tripIds)
+    ? r.tripIds.map((x) => Number(x)).filter((n) => !Number.isNaN(n))
+    : [];
+  const createdAt =
+    typeof r.createdAt === "number" && !Number.isNaN(r.createdAt)
+      ? r.createdAt
+      : r.createdAt != null && !Number.isNaN(Number(r.createdAt))
+        ? Number(r.createdAt)
+        : 0;
+  return {
+    id: String(r.id || "").trim(),
+    tripIds,
+    createdAt,
+    driver: r.driver || "",
+    vehicle: r.vehicle || "",
+    pickupTime: r.pickupTime || "",
+    status: r.status || "Scheduled",
+    remarks: r.remarks != null ? String(r.remarks) : "",
+    rate: r.rate != null ? String(r.rate) : "",
+    amount: r.amount != null ? String(r.amount) : "",
+    onboardedVoterIds: Array.isArray(r.onboardedVoterIds) ? r.onboardedVoterIds.map((x) => String(x)) : [],
+    passengerPreferredPickupByVoterId: sanitizeTripStringMap(r.passengerPreferredPickupByVoterId),
+    passengerRemarksByVoterId: sanitizeTripStringMap(r.passengerRemarksByVoterId),
+  };
+}
+
+function mergeTwoTransportRoutes(remote, local) {
+  if (!remote && !local) return null;
+  if (!local) return normalizeTransportRoute(remote);
+  if (!remote) return normalizeTransportRoute(local);
+  const R = normalizeTransportRoute(remote);
+  const L = normalizeTransportRoute(local);
+  const tripIdSet = new Set([...R.tripIds, ...L.tripIds]);
+  return normalizeTransportRoute({
+    id: L.id || R.id,
+    tripIds: Array.from(tripIdSet),
+    createdAt: L.createdAt || R.createdAt || Date.now(),
+    driver: mergeTripScalarPreferLocal(L.driver, R.driver),
+    vehicle: mergeTripScalarPreferLocal(L.vehicle, R.vehicle),
+    pickupTime: mergeTripScalarPreferLocal(L.pickupTime, R.pickupTime),
+    status: mergeTripScalarPreferLocal(L.status, R.status) || "Scheduled",
+    remarks: mergeTripScalarPreferLocal(L.remarks, R.remarks),
+    rate: mergeTripScalarPreferLocal(L.rate, R.rate),
+    amount: mergeTripScalarPreferLocal(L.amount, R.amount),
+    onboardedVoterIds: unionTripIdArrays(R.onboardedVoterIds, L.onboardedVoterIds),
+    passengerPreferredPickupByVoterId: mergeTripPassengerMaps(
+      R.passengerPreferredPickupByVoterId,
+      L.passengerPreferredPickupByVoterId
+    ),
+    passengerRemarksByVoterId: mergeTripPassengerMaps(R.passengerRemarksByVoterId, L.passengerRemarksByVoterId),
+  });
+}
+
+function mergeTransportRouteLists(localList, remoteList) {
+  const local = Array.isArray(localList) ? localList.map(normalizeTransportRoute) : [];
+  const remote = Array.isArray(remoteList) ? remoteList.map(normalizeTransportRoute) : [];
+  const localById = new Map(local.map((r) => [String(r.id), r]));
+  const remoteById = new Map(remote.map((r) => [String(r.id), r]));
+  const remoteIds = new Set(remoteById.keys());
+  const result = [];
+  remoteById.forEach((R, id) => {
+    if (deletedTransportRouteIds.has(id)) return;
+    const L = localById.get(id);
+    result.push(mergeTwoTransportRoutes(R, L));
+  });
+  localById.forEach((L, id) => {
+    if (remoteIds.has(id) || deletedTransportRouteIds.has(id)) return;
+    result.push(L);
+  });
+  result.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  return result;
+}
+
+function loadDeletedTransportRouteIds() {
+  try {
+    const raw = localStorage.getItem(ROUTES_DELETED_IDS_KEY);
+    if (!raw) {
+      deletedTransportRouteIds = new Set();
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    deletedTransportRouteIds = new Set(
+      Array.isArray(parsed) ? parsed.map((x) => String(x).trim()).filter(Boolean) : []
+    );
+  } catch (_) {
+    deletedTransportRouteIds = new Set();
+  }
+}
+
+function saveDeletedTransportRouteIds() {
+  try {
+    let arr = Array.from(deletedTransportRouteIds);
+    if (arr.length > ROUTES_DELETED_IDS_MAX) {
+      arr = arr.slice(-ROUTES_DELETED_IDS_MAX);
+      deletedTransportRouteIds = new Set(arr);
+    }
+    localStorage.setItem(ROUTES_DELETED_IDS_KEY, JSON.stringify(arr));
+  } catch (_) {}
+}
+
+function recordTransportRouteDeleted(routeId) {
+  const sid = String(routeId ?? "").trim();
+  if (!sid) return;
+  deletedTransportRouteIds.add(sid);
+  saveDeletedTransportRouteIds();
+}
+
+function loadTransportRoutes() {
+  loadDeletedTransportRouteIds();
+  try {
+    const raw = localStorage.getItem(ROUTES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        zeroDayTransportRoutes = parsed
+          .map(normalizeTransportRoute)
+          .filter((r) => r && r.id && !deletedTransportRouteIds.has(String(r.id)));
+      }
+    }
+  } catch (_) {}
+}
+
+function saveTransportRoutes() {
+  try {
+    localStorage.setItem(ROUTES_STORAGE_KEY, JSON.stringify(zeroDayTransportRoutes));
+  } catch (_) {}
+}
+
+function newTransportRouteId() {
+  return `troute_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function findTransportRouteById(id) {
+  if (id == null) return undefined;
+  const sid = String(id);
+  return zeroDayTransportRoutes.find((x) => String(x.id) === sid);
+}
+
+function getSortedTransportRoutesForDisplay() {
+  return [...zeroDayTransportRoutes].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+
+function getTransportRouteDisplayNumber(routeId) {
+  const sorted = getSortedTransportRoutesForDisplay();
+  const ix = sorted.findIndex((r) => String(r.id) === String(routeId));
+  return ix >= 0 ? ix + 1 : 0;
+}
+
+/** Title + pickup line for one trip (routes table cell uses both lines). */
+function getTransportRouteTripLineParts(trip) {
+  const typeLabel = getTripTypeLabel(trip);
+  const name = (trip.route || "").trim() || `Trip ${trip.id}`;
+  const pickupDisplay = formatDateTime(trip.pickupTime) || "—";
+  return { title: `${typeLabel}: ${name}`, pickupLabel: `Pickup: ${pickupDisplay}` };
+}
+
+/** One string per linked trip (search / CSV / summaries; includes pickup). */
+function getTransportRouteTripLines(route) {
+  const ids = Array.isArray(route.tripIds) ? route.tripIds : [];
+  if (!ids.length) return [];
+  return ids
+    .map((tid) => findZeroDayTripById(tid))
+    .filter(Boolean)
+    .map((t) => {
+      const p = getTransportRouteTripLineParts(t);
+      return `${p.title} · ${p.pickupLabel}`;
+    });
+}
+
+function formatTransportRouteTripsCell(route) {
+  const lines = getTransportRouteTripLines(route);
+  return lines.length ? lines.join("; ") : "—";
+}
+
+/** Push every in-memory transport route to Firestore (merge writes). */
+export async function flushTransportRoutesToFirestore() {
+  const api = await firebaseInitPromise;
+  if (!api.ready || typeof api.setTransportRouteFs !== "function") return;
+  const routes = zeroDayTransportRoutes.slice();
+  const results = await Promise.allSettled(routes.map((r) => api.setTransportRouteFs(r)));
+  const failed = results.filter((r) => r.status === "rejected");
+  if (failed.length) {
+    console.warn("[ZeroDay] flushTransportRoutesToFirestore: some routes failed", failed.length);
+  }
+}
+
+/** One-shot pull of transport routes from Firestore. */
+export async function refreshTransportRoutesFromFirestore() {
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getAllTransportRoutesFs) return;
+    const remote = await api.getAllTransportRoutesFs();
+    if (!Array.isArray(remote)) return;
+    const localBefore = zeroDayTransportRoutes.slice();
+    zeroDayTransportRoutes = mergeTransportRouteLists(localBefore, remote.map(normalizeTransportRoute));
+    saveTransportRoutes();
+    renderTransportRoutesTable();
+    await flushTransportRoutesToFirestore();
+  } catch (e) {
+    console.warn("[ZeroDay] refreshTransportRoutesFromFirestore", e);
+  }
+}
+
 /** Push every in-memory transport trip to Firestore (merge writes). Exported for manual sync if needed. */
 export async function flushTransportTripsToFirestore() {
   const api = await firebaseInitPromise;
@@ -453,6 +688,93 @@ async function persistTripPassengerRemarks(tripId, voterId, value) {
   requestAnimationFrame(() => renderZeroDayTripsTable());
 }
 
+async function persistRouteMetaField(routeId, field, value) {
+  const r = findTransportRouteById(routeId);
+  if (!r || !ROUTE_TABLE_EDITABLE_FIELDS.has(field)) return;
+  if (field === "vehicle" || field === "driver") {
+    r[field] = String(value || "").trim();
+  } else if (field === "pickupTime") {
+    r.pickupTime = fromDatetimeLocalToIso(value) || "";
+  } else if (field === "rate" || field === "amount" || field === "remarks") {
+    r[field] = String(value || "").trim();
+  }
+  saveTransportRoutes();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+  } catch (err) {
+    console.warn("[ZeroDay] persistRouteMetaField Firestore sync failed", routeId, field, err);
+  }
+}
+
+async function persistRoutePassengerPreferredPickup(routeId, voterId, value) {
+  const r = findTransportRouteById(routeId);
+  if (!r) return;
+  if (!r.passengerPreferredPickupByVoterId) r.passengerPreferredPickupByVoterId = {};
+  const vid = String(voterId);
+  const iso = fromDatetimeLocalToIso(value);
+  if (!iso) delete r.passengerPreferredPickupByVoterId[vid];
+  else r.passengerPreferredPickupByVoterId[vid] = iso;
+  saveTransportRoutes();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+  } catch (err) {
+    console.warn("[ZeroDay] persistRoutePassengerPreferredPickup Firestore sync failed", routeId, voterId, err);
+  }
+  requestAnimationFrame(() => renderTransportRoutesTable());
+}
+
+async function persistRoutePassengerRemarks(routeId, voterId, value) {
+  const r = findTransportRouteById(routeId);
+  if (!r) return;
+  if (!r.passengerRemarksByVoterId) r.passengerRemarksByVoterId = {};
+  const vid = String(voterId);
+  const s = String(value || "").trim();
+  if (!s) delete r.passengerRemarksByVoterId[vid];
+  else r.passengerRemarksByVoterId[vid] = s;
+  saveTransportRoutes();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+  } catch (err) {
+    console.warn("[ZeroDay] persistRoutePassengerRemarks Firestore sync failed", routeId, voterId, err);
+  }
+  requestAnimationFrame(() => renderTransportRoutesTable());
+}
+
+async function toggleRouteVoterOnboarded(routeId, voterIdStr) {
+  const r = findTransportRouteById(routeId);
+  if (!r) return;
+  const id = String(voterIdStr);
+  let arr = Array.isArray(r.onboardedVoterIds) ? r.onboardedVoterIds.map(String) : [];
+  const ix = arr.indexOf(id);
+  if (ix >= 0) arr.splice(ix, 1);
+  else arr.push(id);
+  r.onboardedVoterIds = arr;
+  saveTransportRoutes();
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+  } catch (err) {
+    console.warn("[ZeroDay] toggleRouteVoterOnboarded Firestore sync failed", routeId, err);
+  }
+  renderTransportRoutesTable();
+}
+
+async function removeAssignedVoterFromTransportRoute(routeId, voterIdStr) {
+  const routeRow = findTransportRouteById(routeId);
+  if (!routeRow) return;
+  const voterId = String(voterIdStr || "").trim();
+  if (!voterId) return;
+  const tripIds = Array.isArray(routeRow.tripIds) ? routeRow.tripIds : [];
+  for (const tid of tripIds) {
+    await removeAssignedVoterFromTrip(tid, voterId);
+  }
+  renderZeroDayTripsTable();
+  renderTransportRoutesTable();
+}
+
 /** True when voter needs transport (Firestore may use non-boolean truthy values). */
 function voterTransportNeededFlag(v) {
   if (!v) return false;
@@ -506,6 +828,45 @@ function collectAssignedVotersForTrip(trip) {
     byIdsCount: assignedByIds.length,
     byRouteCount: assignedByRoute.length,
   };
+}
+
+/** Union of passengers across all trips linked to a transport route (deduped by voter id). */
+function collectAssignedVotersForTransportRoute(route) {
+  const byId = new Map();
+  const tripLabelSetsByVoterKey = new Map();
+  let byIdsCount = 0;
+  let byRouteCount = 0;
+  const ids = Array.isArray(route?.tripIds) ? route.tripIds : [];
+  for (const tid of ids) {
+    const t = findZeroDayTripById(tid);
+    if (!t) continue;
+    const tripLabel = tripAssignmentLabelForRouteModal(t);
+    const { list, byIdsCount: bic, byRouteCount: brc } = collectAssignedVotersForTrip(t);
+    byIdsCount += bic;
+    byRouteCount += brc;
+    list.forEach((v) => {
+      if (!v) return;
+      const k = String(v.id || v.nationalId || "").trim();
+      if (!k) return;
+      byId.set(k, v);
+      if (!tripLabelSetsByVoterKey.has(k)) tripLabelSetsByVoterKey.set(k, new Set());
+      tripLabelSetsByVoterKey.get(k).add(tripLabel);
+    });
+  }
+  const list = Array.from(byId.values());
+  list.sort(compareVotersByBallotSequenceThenName);
+  const tripLabelsByVoterKey = new Map();
+  tripLabelSetsByVoterKey.forEach((set, k) => {
+    tripLabelsByVoterKey.set(
+      k,
+      Array.from(set).sort((a, b) => a.localeCompare(b, "en")).join(" · ")
+    );
+  });
+  return { list, byIdsCount, byRouteCount, tripLabelsByVoterKey };
+}
+
+function getRouteAssignedVoterCount(route) {
+  return collectAssignedVotersForTransportRoute(route).list.length;
 }
 
 function mergeTripRowInputs(tripId) {
@@ -1002,6 +1363,7 @@ export async function refreshTransportTripsFromFirestore() {
     zeroDayTrips = mergeTransportTripLists(localBefore, remote.map(normalizeTrip));
     saveTrips();
     renderZeroDayTripsTable();
+    renderTransportRoutesTable();
     await flushTransportTripsToFirestore();
   } catch (e) {
     console.warn("[ZeroDay] refreshTransportTripsFromFirestore", e);
@@ -1408,6 +1770,14 @@ function getTripTypeLabel(trip) {
   return TRIP_TYPES.find((t) => t.value === trip.tripType)?.label || trip.tripType || "—";
 }
 
+/** Label for route passengers modal: which trip (with trip pickup time when set). */
+function tripAssignmentLabelForRouteModal(trip) {
+  const typeLabel = getTripTypeLabel(trip);
+  const name = (trip.route || "").trim() || `Trip ${trip.id}`;
+  const pu = formatDateTime(trip.pickupTime);
+  return pu ? `${typeLabel}: ${name} (${pu})` : `${typeLabel}: ${name}`;
+}
+
 function tripStatusBadgeClass(status) {
   if (status === "Completed") return "badge badge--success";
   if (status === "In progress") return "badge badge--warning";
@@ -1466,6 +1836,24 @@ function initTransportVisibleColumns() {
     }
   } catch (_) {}
   transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_KEYS.slice();
+}
+
+function initTransportRoutesVisibleColumns() {
+  try {
+    const raw = localStorage.getItem(ROUTES_VISIBLE_COLS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) {
+        const valid = new Set(ROUTE_COLUMN_DEFAULT_KEYS);
+        transportRouteVisibleColumnKeys = parsed.filter((k) => valid.has(k));
+        if (transportRouteVisibleColumnKeys.length === 0) {
+          transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_KEYS.slice();
+        }
+        return;
+      }
+    }
+  } catch (_) {}
+  transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_KEYS.slice();
 }
 
 function getTransportVisibleColumnDefs() {
@@ -1537,6 +1925,813 @@ function buildTripActionsCellHtml(trip) {
       </td>`;
 }
 
+function getTransportRouteVisibleColumnDefs() {
+  const keys = new Set(transportRouteVisibleColumnKeys);
+  return ROUTE_TABLE_COLUMN_DEFS.filter((c) => keys.has(c.key));
+}
+
+function getVisibleRouteColumnCount() {
+  return getTransportRouteVisibleColumnDefs().length + 1;
+}
+
+function syncTransportRoutesTableHeader() {
+  const theadRow = document.getElementById("zeroDayRoutesTableHeadRow");
+  if (!theadRow) return;
+  const defs = getTransportRouteVisibleColumnDefs();
+  const ths = defs.map((col) => {
+    const sortable = col.sortKey
+      ? ` class="th-sortable" data-sort-key="${escapeHtml(col.sortKey)}"`
+      : "";
+    const ind = col.sortKey ? `<span class="sort-indicator"></span>` : "";
+    return `<th scope="col"${sortable}>${escapeHtml(col.label)}${ind}</th>`;
+  });
+  ths.push(`<th scope="col"><span class="sr-only">Actions</span></th>`);
+  theadRow.innerHTML = ths.join("");
+}
+
+function routeMatchesToolbarQuery(route, query) {
+  if (!query) return true;
+  const blob = [
+    formatTransportRouteTripsCell(route),
+    String(getTransportRouteDisplayNumber(route.id)),
+    route.vehicle,
+    route.driver,
+    route.status,
+    route.rate,
+    route.amount,
+    route.remarks,
+    formatDateTime(route.pickupTime),
+    String(getRouteAssignedVoterCount(route)),
+  ]
+    .map((x) => String(x ?? "").toLowerCase())
+    .join(" ");
+  return blob.includes(query);
+}
+
+function sortTransportRoutesByKey(arr, sortBy) {
+  const pickupMs = (r) => (r.pickupTime ? new Date(r.pickupTime).getTime() : 0);
+  const vCount = (r) => getRouteAssignedVoterCount(r);
+  const tripsLabel = (r) => formatTransportRouteTripsCell(r);
+  const displayOrder = (r) => {
+    const sorted = getSortedTransportRoutesForDisplay();
+    const ix = sorted.findIndex((x) => String(x.id) === String(r.id));
+    return ix >= 0 ? ix : 999999;
+  };
+  arr.sort((a, b) => {
+    switch (sortBy) {
+      case "routeNum":
+        return displayOrder(a) - displayOrder(b);
+      case "pickup-desc":
+        return pickupMs(b) - pickupMs(a);
+      case "pickup":
+        return pickupMs(a) - pickupMs(b);
+      case "trips-desc":
+        return tripsLabel(b).localeCompare(tripsLabel(a), "en");
+      case "trips":
+        return tripsLabel(a).localeCompare(tripsLabel(b), "en");
+      case "vehicle":
+        return (a.vehicle || "").localeCompare(b.vehicle || "", "en");
+      case "driver":
+        return (a.driver || "").localeCompare(b.driver || "", "en");
+      case "voters-desc":
+        return vCount(b) - vCount(a);
+      case "voters":
+        return vCount(a) - vCount(b);
+      case "status":
+        return (a.status || "").localeCompare(b.status || "", "en");
+      case "rate-desc":
+        return (b.rate || "").localeCompare(a.rate || "", "en", { numeric: true });
+      case "rate":
+        return (a.rate || "").localeCompare(b.rate || "", "en", { numeric: true });
+      case "amount-desc":
+        return (b.amount || "").localeCompare(a.amount || "", "en", { numeric: true });
+      case "amount":
+        return (a.amount || "").localeCompare(b.amount || "", "en", { numeric: true });
+      case "remarks":
+        return (a.remarks || "").localeCompare(b.remarks || "", "en");
+      default:
+        return displayOrder(a) - displayOrder(b);
+    }
+  });
+}
+
+function getFilteredTransportRoutes() {
+  const list = [...zeroDayTransportRoutes];
+  const searchEl = document.getElementById("zeroDayRoutesSearch");
+  const filterEl = document.getElementById("zeroDayRoutesFilterStatus");
+  const sortEl = document.getElementById("zeroDayRoutesSort");
+  const query = (searchEl?.value || "").trim().toLowerCase();
+  const statusFilter = (filterEl?.value || "all").trim();
+  const sortBy = sortEl?.value || "routeNum";
+  const filtered = list.filter((r) => {
+    if (statusFilter !== "all" && String(r.status || "") !== statusFilter) return false;
+    return routeMatchesToolbarQuery(r, query);
+  });
+  sortTransportRoutesByKey(filtered, sortBy);
+  return filtered;
+}
+
+function getFilteredSortedGroupedTransportRoutes() {
+  const filtered = getFilteredTransportRoutes();
+  const groupEl = document.getElementById("zeroDayRoutesGroupBy");
+  const groupBy = groupEl?.value || "none";
+  if (groupBy === "none") {
+    return filtered.map((route) => ({ type: "row", route }));
+  }
+  const getGroupKey = (r) => {
+    if (groupBy === "status") return (r.status || "").trim() || "—";
+    return "";
+  };
+  const displayList = [];
+  let lastKey = null;
+  for (const route of filtered) {
+    const key = getGroupKey(route);
+    if (key !== lastKey) {
+      displayList.push({ type: "group", label: key });
+      lastKey = key;
+    }
+    displayList.push({ type: "row", route });
+  }
+  return displayList;
+}
+
+function updateTransportRoutesSortIndicators() {
+  const headers = document.querySelectorAll("#zeroDayRoutesTable thead th.th-sortable");
+  if (!headers.length) return;
+  const sortEl = document.getElementById("zeroDayRoutesSort");
+  const sortBy = sortEl?.value || "routeNum";
+  headers.forEach((th) => {
+    const key = th.getAttribute("data-sort-key");
+    th.classList.remove("is-sorted-asc", "is-sorted-desc");
+    th.removeAttribute("aria-sort");
+    if (key === "routeNum" && sortBy === "routeNum") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "trips" && (sortBy === "trips" || sortBy === "trips-desc")) {
+      th.classList.add(sortBy === "trips" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "trips" ? "ascending" : "descending");
+    } else if (key === "pickup" && (sortBy === "pickup" || sortBy === "pickup-desc")) {
+      th.classList.add(sortBy === "pickup" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "pickup" ? "ascending" : "descending");
+    } else if (key === "voters" && (sortBy === "voters" || sortBy === "voters-desc")) {
+      th.classList.add(sortBy === "voters" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "voters" ? "ascending" : "descending");
+    } else if (key === "rate" && (sortBy === "rate" || sortBy === "rate-desc")) {
+      th.classList.add(sortBy === "rate" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "rate" ? "ascending" : "descending");
+    } else if (key === "amount" && (sortBy === "amount" || sortBy === "amount-desc")) {
+      th.classList.add(sortBy === "amount" ? "is-sorted-asc" : "is-sorted-desc");
+      th.setAttribute("aria-sort", sortBy === "amount" ? "ascending" : "descending");
+    } else if (key === "vehicle" && sortBy === "vehicle") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "driver" && sortBy === "driver") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "status" && sortBy === "status") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    } else if (key === "remarks" && sortBy === "remarks") {
+      th.classList.add("is-sorted-asc");
+      th.setAttribute("aria-sort", "ascending");
+    }
+  });
+}
+
+function bindTransportRoutesTableHeaderSort() {
+  const thead = document.querySelector("#zeroDayRoutesTable thead");
+  if (!thead || thead.dataset.transportRoutesSortBound === "1") return;
+  thead.dataset.transportRoutesSortBound = "1";
+  thead.addEventListener("click", (e) => {
+    const th = e.target.closest("th.th-sortable");
+    if (!th) return;
+    const key = th.getAttribute("data-sort-key");
+    const sortEl = document.getElementById("zeroDayRoutesSort");
+    if (!key || !sortEl) return;
+    const cur = sortEl.value;
+    if (key === "routeNum") {
+      sortEl.value = "routeNum";
+    } else if (key === "trips") {
+      sortEl.value = cur === "trips" ? "trips-desc" : "trips";
+    } else if (key === "pickup") {
+      sortEl.value = cur === "pickup" ? "pickup-desc" : "pickup";
+    } else if (key === "voters") {
+      sortEl.value = cur === "voters" ? "voters-desc" : "voters";
+    } else if (key === "rate") {
+      sortEl.value = cur === "rate" ? "rate-desc" : "rate";
+    } else if (key === "amount") {
+      sortEl.value = cur === "amount" ? "amount-desc" : "amount";
+    } else {
+      const map = { vehicle: "vehicle", driver: "driver", status: "status", remarks: "remarks" };
+      if (map[key]) sortEl.value = map[key];
+    }
+    renderTransportRoutesTable();
+  });
+}
+
+function initTransportRoutesToolbarListeners() {
+  const searchEl = document.getElementById("zeroDayRoutesSearch");
+  const filterEl = document.getElementById("zeroDayRoutesFilterStatus");
+  const sortEl = document.getElementById("zeroDayRoutesSort");
+  const groupEl = document.getElementById("zeroDayRoutesGroupBy");
+  const re = () => renderTransportRoutesTable();
+  if (searchEl && !searchEl.dataset.zdRoutesToolbarBound) {
+    searchEl.dataset.zdRoutesToolbarBound = "1";
+    searchEl.addEventListener("input", re);
+  }
+  if (filterEl && !filterEl.dataset.zdRoutesToolbarBound) {
+    filterEl.dataset.zdRoutesToolbarBound = "1";
+    filterEl.addEventListener("change", re);
+  }
+  if (sortEl && !sortEl.dataset.zdRoutesToolbarBound) {
+    sortEl.dataset.zdRoutesToolbarBound = "1";
+    sortEl.addEventListener("change", re);
+  }
+  if (groupEl && !groupEl.dataset.zdRoutesToolbarBound) {
+    groupEl.dataset.zdRoutesToolbarBound = "1";
+    groupEl.addEventListener("change", re);
+  }
+  bindTransportRoutesTableHeaderSort();
+}
+
+function buildRouteDataCellsHtml(route, displayNum) {
+  const count = getRouteAssignedVoterCount(route);
+  const statusClass = tripStatusBadgeClass(route.status);
+  const rid = escapeHtml(String(route.id));
+  const defs = getTransportRouteVisibleColumnDefs();
+  return defs.map((col) => {
+    switch (col.key) {
+      case "routeNum":
+        return `<td><span class="badge badge--secondary">${displayNum}</span></td>`;
+      case "trips": {
+        const ids = Array.isArray(route.tripIds) ? route.tripIds : [];
+        const trips = ids.map((tid) => findZeroDayTripById(tid)).filter(Boolean);
+        const inner =
+          trips.length === 0
+            ? "—"
+            : trips
+                .map((t) => {
+                  const p = getTransportRouteTripLineParts(t);
+                  return `<div class="transport-route-trip-line"><div class="transport-route-trip-line__title">${escapeHtml(
+                    p.title
+                  )}</div><div class="transport-route-trip-line__pickup">${escapeHtml(p.pickupLabel)}</div></div>`;
+                })
+                .join("");
+        return `<td class="transport-route-trips-cell">${inner}</td>`;
+      }
+      case "vehicle":
+        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--vehicle"><input type="text" class="input input--trip-table-meta" data-route-meta-field="vehicle" data-route-id="${rid}" value="${escapeHtml(route.vehicle || "")}" placeholder="—" aria-label="Vessel or flight number"></td>`;
+      case "driver":
+        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--driver"><input type="text" class="input input--trip-table-meta" data-route-meta-field="driver" data-route-id="${rid}" value="${escapeHtml(route.driver || "")}" placeholder="—" aria-label="Driver, pilot, or captain"></td>`;
+      case "pickup":
+        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--pickup"><input type="datetime-local" class="input input--trip-table-meta input--trip-pickup-local" data-route-meta-field="pickupTime" data-route-id="${rid}" value="${escapeHtml(toDatetimeLocalValue(route.pickupTime))}" aria-label="Pickup time"></td>`;
+      case "voters":
+        return `<td>${count}</td>`;
+      case "status":
+        return `<td><span class="${escapeHtml(statusClass)}">${escapeHtml(route.status)}</span></td>`;
+      case "rate":
+        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate"><input type="text" class="input input--trip-table-meta" data-route-meta-field="rate" data-route-id="${rid}" value="${escapeHtml(route.rate || "")}" placeholder="—" aria-label="Rate"></td>`;
+      case "amount":
+        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount"><input type="text" class="input input--trip-table-meta" data-route-meta-field="amount" data-route-id="${rid}" value="${escapeHtml(route.amount || "")}" placeholder="—" aria-label="Amount"></td>`;
+      case "remarks":
+        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks"><input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-route-meta-field="remarks" data-route-id="${rid}" value="${escapeHtml(route.remarks || "")}" placeholder="Notes / remarks" aria-label="Remarks"></td>`;
+      default:
+        return "<td></td>";
+    }
+  }).join("");
+}
+
+function buildRouteActionsCellHtml(route) {
+  const rid = escapeHtml(String(route.id));
+  return `<td class="transport-trips-table__actions">
+        <button type="button" class="ghost-button ghost-button--small" data-route-status="${rid}" title="Change status">Status</button>
+        <button type="button" class="ghost-button ghost-button--small" data-view-route-voters="${rid}" title="View voters">Voters</button>
+        <button type="button" class="ghost-button ghost-button--small" data-edit-route="${rid}">Edit</button>
+        <button type="button" class="ghost-button ghost-button--small" data-delete-route="${rid}" aria-label="Delete">Delete</button>
+      </td>`;
+}
+
+function mergeRouteRowInputs(routeId) {
+  const r = findTransportRouteById(routeId);
+  if (!r) return null;
+  const row = zeroDayRoutesTableBody?.querySelector(`tr[data-route-id="${String(routeId).replace(/"/g, "")}"]`);
+  const vehicleInp = row?.querySelector('[data-route-meta-field="vehicle"]');
+  const driverInp = row?.querySelector('[data-route-meta-field="driver"]');
+  const pickupInp = row?.querySelector('[data-route-meta-field="pickupTime"]');
+  const rateInp = row?.querySelector('[data-route-meta-field="rate"]');
+  const amountInp = row?.querySelector('[data-route-meta-field="amount"]');
+  const remarksInp = row?.querySelector('[data-route-meta-field="remarks"]');
+  const vehicle = vehicleInp ? String(vehicleInp.value || "").trim() : String(r.vehicle || "");
+  const driver = driverInp ? String(driverInp.value || "").trim() : String(r.driver || "");
+  let pickupTime = r.pickupTime;
+  if (pickupInp) {
+    const iso = fromDatetimeLocalToIso(pickupInp.value);
+    pickupTime = iso !== "" ? iso : r.pickupTime;
+  }
+  const rate = rateInp ? String(rateInp.value || "").trim() : String(r.rate || "");
+  const amount = amountInp ? String(amountInp.value || "").trim() : String(r.amount || "");
+  const remarks = remarksInp ? String(remarksInp.value || "").trim() : String(r.remarks || "");
+  return { ...r, vehicle, driver, pickupTime, rate, amount, remarks };
+}
+
+function getAllVisibleRouteSnapshots() {
+  return getFilteredTransportRoutes()
+    .map((r) => mergeRouteRowInputs(r.id))
+    .filter(Boolean);
+}
+
+function transportRoutesReportRowCells(r) {
+  const displayNum = getTransportRouteDisplayNumber(r.id);
+  return {
+    routeNum: String(displayNum || ""),
+    trips: formatTransportRouteTripsCell(r),
+    vehicle: r.vehicle || "",
+    driver: r.driver || "",
+    pickup: formatDateTime(r.pickupTime) || "",
+    votersAssigned: String(getRouteAssignedVoterCount(r)),
+    status: r.status || "",
+    rate: r.rate || "",
+    amount: r.amount || "",
+    remarks: r.remarks || "",
+  };
+}
+
+function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
+  const list = Array.isArray(routeSnapshots) ? routeSnapshots.filter(Boolean) : [];
+  if (!list.length) {
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "No routes", meta: "Add a route to generate a report." });
+    }
+    return;
+  }
+  const tbodyHtml = list
+    .map((r) => {
+      const c = transportRoutesReportRowCells(r);
+      return `
+          <tr>
+            <td>${escapeHtml(c.routeNum)}</td>
+            <td>${escapeHtml(c.trips)}</td>
+            <td>${escapeHtml(c.vehicle)}</td>
+            <td>${escapeHtml(c.driver)}</td>
+            <td>${escapeHtml(c.pickup)}</td>
+            <td>${escapeHtml(c.votersAssigned)}</td>
+            <td>${escapeHtml(c.status)}</td>
+            <td>${escapeHtml(c.rate)}</td>
+            <td>${escapeHtml(c.amount)}</td>
+            <td>${escapeHtml(c.remarks)}</td>
+          </tr>`;
+    })
+    .join("");
+  const printScript = autoPrint
+    ? `<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},400);});<\/script>`
+    : "";
+  const title = `Transport routes (${list.length})`;
+  const w = window.open("about:blank", "_blank");
+  if (!w) {
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "Popup blocked", meta: "Allow popups for this site." });
+    }
+    return;
+  }
+  try {
+    w.opener = null;
+  } catch (_) {}
+  w.document.open();
+  w.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(title)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 16px; color: #111; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; }
+          th, td { border: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
+          th { background: #f9fafb; }
+        </style>
+      </head>
+      <body>
+        <h1>Transportation routes</h1>
+        <p>${escapeHtml(new Date().toLocaleString("en-MV"))}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Route #</th><th>Trips</th><th>Vessel</th><th>Driver</th><th>Pickup</th>
+              <th>Voters</th><th>Status</th><th>Rate</th><th>Amount</th><th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody>${tbodyHtml}</tbody>
+        </table>
+        <p><button type="button" onclick="window.print()">Print</button> <button type="button" onclick="window.close()">Close</button></p>
+        ${printScript}
+      </body>
+      </html>
+    `);
+  w.document.close();
+  w.focus();
+}
+
+function downloadTransportRoutesReportCsv(routeSnapshots) {
+  const list = Array.isArray(routeSnapshots) ? routeSnapshots.filter(Boolean) : [];
+  if (!list.length) {
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "No routes", meta: "Add a route to export." });
+    }
+    return;
+  }
+  const headers = [
+    "Route #",
+    "Trips",
+    "Vessel / Flight no.",
+    "Driver / Pilot / Captain",
+    "Pickup time",
+    "Voters assigned",
+    "Status",
+    "Rate",
+    "Amount",
+    "Remarks",
+  ];
+  const lines = [headers.map(csvEscapeTransportCell).join(",")];
+  list.forEach((r) => {
+    const c = transportRoutesReportRowCells(r);
+    lines.push(
+      [
+        c.routeNum,
+        c.trips,
+        c.vehicle,
+        c.driver,
+        c.pickup,
+        c.votersAssigned,
+        c.status,
+        c.rate,
+        c.amount,
+        c.remarks,
+      ]
+        .map(csvEscapeTransportCell)
+        .join(",")
+    );
+  });
+  const csv = lines.join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `transport-routes-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function shareTransportRoutesReport(routeSnapshots) {
+  const list = Array.isArray(routeSnapshots) ? routeSnapshots.filter(Boolean) : [];
+  if (!list.length) {
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "No routes", meta: "Nothing to share." });
+    }
+    return;
+  }
+  const headerLine = [
+    "Route #",
+    "Trips",
+    "Vessel",
+    "Driver",
+    "Pickup",
+    "Voters",
+    "Status",
+    "Rate",
+    "Amount",
+    "Remarks",
+  ].join("\t");
+  const rowLines = [headerLine];
+  list.forEach((r) => {
+    const c = transportRoutesReportRowCells(r);
+    rowLines.push(
+      [
+        c.routeNum,
+        c.trips,
+        c.vehicle,
+        c.driver,
+        c.pickup,
+        c.votersAssigned,
+        c.status,
+        c.rate,
+        c.amount,
+        c.remarks,
+      ].join("\t")
+    );
+  });
+  const title = `Transport routes (${list.length})`;
+  const text = `${title}\n\n${rowLines.join("\n")}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text });
+      return;
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    if (typeof window.showToast === "function") window.showToast("Report copied to clipboard");
+  } catch (_) {}
+}
+
+function deleteTransportRoute(id) {
+  const idx = zeroDayTransportRoutes.findIndex((r) => String(r.id) === String(id));
+  if (idx === -1) return;
+  recordTransportRouteDeleted(id);
+  zeroDayTransportRoutes.splice(idx, 1);
+  saveTransportRoutes();
+  firebaseInitPromise
+    .then((api) => {
+      if (api.ready && api.deleteTransportRouteFs) return api.deleteTransportRouteFs(id);
+    })
+    .catch((err) => {
+      console.warn("[ZeroDay] deleteTransportRouteFs failed", id, err);
+    });
+  renderTransportRoutesTable();
+}
+
+function setTransportRouteStatus(routeId, status) {
+  const route = findTransportRouteById(routeId);
+  if (!route || !TRIP_STATUSES.includes(status)) return;
+  route.status = status;
+  saveTransportRoutes();
+  firebaseInitPromise.then((api) => {
+    if (api.ready && api.setTransportRouteFs) return api.setTransportRouteFs(route);
+  }).catch(() => {});
+  renderTransportRoutesTable();
+}
+
+function openTransportRouteStatusModal(routeId) {
+  const route = findTransportRouteById(routeId);
+  if (!route) return;
+  const body = document.createElement("div");
+  body.style.display = "flex";
+  body.style.flexWrap = "wrap";
+  body.style.gap = "8px";
+  TRIP_STATUSES.forEach((status) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = route.status === status ? "primary-button" : "ghost-button";
+    btn.textContent = status;
+    btn.addEventListener("click", () => {
+      setTransportRouteStatus(routeId, status);
+      closeModal();
+    });
+    body.appendChild(btn);
+  });
+  const label = formatTransportRouteTripsCell(route);
+  openModal({ title: `Set status: ${escapeHtml(label)}`, body });
+}
+
+function openTransportRouteVotersModal(route) {
+  openTripVotersModal(route, { mode: "route" });
+}
+
+function openRouteForm(existing) {
+  const isEdit = !!existing;
+  loadTrips();
+  const sortedTrips = [...zeroDayTrips].sort((a, b) => {
+    const ra = String(a.route || "").localeCompare(String(b.route || ""), "en");
+    if (ra !== 0) return ra;
+    return Number(a.id) - Number(b.id);
+  });
+  const nextDisplay = getSortedTransportRoutesForDisplay().length + (isEdit ? 0 : 1);
+
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Route number</label>
+        <input type="text" readonly class="input" value="${
+          isEdit ? String(getTransportRouteDisplayNumber(existing.id)) : String(nextDisplay)
+        }" aria-readonly="true" title="Numbers reorder when routes are deleted">
+        <p class="helper-text">Shown in the table by creation order. If you delete a route, numbers update automatically.</p>
+      </div>
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label>Trips on this route (select one or more)</label>
+        <div id="zdRouteTripsMulti" class="transport-route-trip-checkboxes" style="max-height: 200px; overflow: auto; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); padding: 10px; display: flex; flex-direction: column; gap: 8px;"></div>
+      </div>
+      <div class="form-group">
+        <label for="zdRouteDriver">Driver / Pilot / Captain</label>
+        <input id="zdRouteDriver" type="text" value="${escapeHtml(existing?.driver || "")}" placeholder="Name">
+      </div>
+      <div class="form-group">
+        <label for="zdRouteVehicle">Vessel name / Flight number</label>
+        <input id="zdRouteVehicle" type="text" value="${escapeHtml(existing?.vehicle || "")}" placeholder="e.g. MDR-301">
+      </div>
+      <div class="form-group">
+        <label for="zdRoutePickupTime">Pickup time</label>
+        <input id="zdRoutePickupTime" type="datetime-local" value="${
+          existing && existing.pickupTime
+            ? toDatetimeLocalValue(existing.pickupTime)
+            : new Date().toISOString().slice(0, 16)
+        }">
+      </div>
+      <div class="form-group">
+        <label for="zdRouteStatus">Status</label>
+        <select id="zdRouteStatus">
+          ${TRIP_STATUSES.map(
+            (s) =>
+              `<option value="${s}"${existing?.status === s ? " selected" : ""}>${s}</option>`
+          ).join("")}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="zdRouteRate">Rate</label>
+        <input id="zdRouteRate" type="text" value="${escapeHtml(existing?.rate || "")}" placeholder="—">
+      </div>
+      <div class="form-group">
+        <label for="zdRouteAmount">Amount</label>
+        <input id="zdRouteAmount" type="text" value="${escapeHtml(existing?.amount || "")}" placeholder="—">
+      </div>
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="zdRouteRemarks">Remarks</label>
+        <input id="zdRouteRemarks" type="text" value="${escapeHtml(existing?.remarks || "")}" placeholder="Optional notes">
+      </div>
+    </div>
+  `;
+
+  const tripBox = body.querySelector("#zdRouteTripsMulti");
+  const selectedSet = new Set((existing?.tripIds || []).map((x) => Number(x)));
+  sortedTrips.forEach((t) => {
+    const id = Number(t.id);
+    if (Number.isNaN(id)) return;
+    const label = document.createElement("label");
+    label.style.display = "flex";
+    label.style.alignItems = "center";
+    label.style.gap = "8px";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = String(id);
+    cb.dataset.zdRouteTripCb = "1";
+    cb.checked = selectedSet.has(id);
+    const typeLabel = getTripTypeLabel(t);
+    const routeName = (t.route || "").trim() || `Trip ${id}`;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(`${typeLabel}: ${routeName}`));
+    tripBox.appendChild(label);
+  });
+
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = isEdit ? "Save route" : "Add route";
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+
+  saveBtn.addEventListener("click", async () => {
+    const checkboxes = [...body.querySelectorAll("[data-zd-route-trip-cb]")];
+    const tripIds = checkboxes.filter((c) => c.checked).map((c) => Number(c.value)).filter((n) => !Number.isNaN(n));
+    if (!tripIds.length) {
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Select trips", meta: "Choose at least one trip for this route." });
+      }
+      return;
+    }
+    const driver = body.querySelector("#zdRouteDriver").value.trim();
+    const vehicle = body.querySelector("#zdRouteVehicle").value.trim();
+    const pickupRaw = body.querySelector("#zdRoutePickupTime").value;
+    const status = body.querySelector("#zdRouteStatus").value;
+    const remarks = body.querySelector("#zdRouteRemarks").value.trim();
+    const rate = body.querySelector("#zdRouteRate").value.trim();
+    const amount = body.querySelector("#zdRouteAmount").value.trim();
+    const pickupTime = pickupRaw ? new Date(pickupRaw).toISOString() : "";
+    if (isEdit) {
+      existing.tripIds = tripIds;
+      existing.driver = driver;
+      existing.vehicle = vehicle;
+      existing.pickupTime = pickupTime;
+      existing.status = status || "Scheduled";
+      existing.remarks = remarks;
+      existing.rate = rate;
+      existing.amount = amount;
+    } else {
+      const id = newTransportRouteId();
+      zeroDayTransportRoutes.push(
+        normalizeTransportRoute({
+          id,
+          tripIds,
+          createdAt: Date.now(),
+          driver,
+          vehicle,
+          pickupTime,
+          status: status || "Scheduled",
+          remarks,
+          rate,
+          amount,
+          onboardedVoterIds: [],
+        })
+      );
+    }
+    saveTransportRoutes();
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setTransportRouteFs) {
+        const r = isEdit
+          ? findTransportRouteById(existing.id)
+          : zeroDayTransportRoutes[zeroDayTransportRoutes.length - 1];
+        if (r) await api.setTransportRouteFs(r);
+      }
+    } catch (_) {}
+    renderTransportRoutesTable();
+    closeModal();
+  });
+
+  openModal({
+    title: isEdit ? "Edit route" : "Add route",
+    body,
+    footer,
+  });
+}
+
+function renderTransportRoutesTable() {
+  if (!zeroDayRoutesTableBody) return;
+  initTransportRoutesToolbarListeners();
+  syncTransportRoutesTableHeader();
+  const colSpan = getVisibleRouteColumnCount();
+
+  if (!zeroDayTransportRoutes.length) {
+    zeroDayRoutesTableBody.innerHTML = `
+      <tr>
+        <td colspan="${colSpan}" class="text-muted" style="text-align: center; padding: 24px;">No routes yet. Add a route and link one or more trips.</td>
+      </tr>
+    `;
+    updateTransportRoutesSortIndicators();
+    return;
+  }
+
+  const displayList = getFilteredSortedGroupedTransportRoutes();
+  const dataRows = displayList.filter((x) => x.type === "row");
+  if (!dataRows.length) {
+    zeroDayRoutesTableBody.innerHTML = `
+      <tr>
+        <td colspan="${colSpan}" class="text-muted" style="text-align: center; padding: 24px;">No routes match your search or filters.</td>
+      </tr>
+    `;
+    updateTransportRoutesSortIndicators();
+    return;
+  }
+
+  const sortedForDisplay = getSortedTransportRoutesForDisplay();
+  const displayNumById = new Map();
+  sortedForDisplay.forEach((r, i) => displayNumById.set(String(r.id), i + 1));
+
+  zeroDayRoutesTableBody.innerHTML = "";
+  for (const item of displayList) {
+    if (item.type === "group") {
+      const tr = document.createElement("tr");
+      tr.className = "pledges-toolbar__group-header";
+      tr.innerHTML = `<td colspan="${colSpan}">${escapeHtml(item.label)}</td>`;
+      zeroDayRoutesTableBody.appendChild(tr);
+      continue;
+    }
+    const route = item.route;
+    const tr = document.createElement("tr");
+    tr.dataset.routeId = String(route.id);
+    const dnum = displayNumById.get(String(route.id)) || 0;
+    tr.innerHTML = buildRouteDataCellsHtml(route, dnum) + buildRouteActionsCellHtml(route);
+    zeroDayRoutesTableBody.appendChild(tr);
+  }
+  updateTransportRoutesSortIndicators();
+}
+
+function bindTransportMainTabs() {
+  const tabs = document.querySelectorAll("[data-transport-main-tab]");
+  const panelTrips = document.getElementById("transport-panel-trips");
+  const panelRoutes = document.getElementById("transport-panel-routes");
+  if (!tabs.length || !panelTrips || !panelRoutes) return;
+  if (document.documentElement.dataset.transportMainTabsBound === "1") return;
+  document.documentElement.dataset.transportMainTabsBound = "1";
+
+  function activate(which) {
+    tabs.forEach((btn) => {
+      const w = btn.getAttribute("data-transport-main-tab");
+      const on = w === which;
+      btn.classList.toggle("transport-main-tabs__tab--active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    const showRoutes = which === "routes";
+    panelTrips.classList.toggle("transport-tab-panel--hidden", showRoutes);
+    panelTrips.hidden = showRoutes;
+    panelRoutes.classList.toggle("transport-tab-panel--hidden", !showRoutes);
+    panelRoutes.hidden = !showRoutes;
+    if (showRoutes) renderTransportRoutesTable();
+  }
+
+  tabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activate(btn.getAttribute("data-transport-main-tab") || "trips");
+    });
+  });
+}
+
 function openTransportColumnsModal() {
   let keys = [...transportVisibleColumnKeys];
   const body = document.createElement("div");
@@ -1604,10 +2799,91 @@ function openTransportColumnsModal() {
   openModal({ title: "Transportation columns", body, footer });
 }
 
+function openTransportRoutesColumnsModal() {
+  let keys = [...transportRouteVisibleColumnKeys];
+  const body = document.createElement("div");
+  body.className = "form-group";
+  const p = document.createElement("p");
+  p.className = "helper-text";
+  p.textContent = "Choose which columns appear in the transportation routes table.";
+  body.appendChild(p);
+  const div = document.createElement("div");
+  div.style.display = "flex";
+  div.style.flexDirection = "column";
+  div.style.gap = "8px";
+  ROUTE_TABLE_COLUMN_DEFS.forEach((opt) => {
+    const label = document.createElement("label");
+    label.style.display = "flex";
+    label.style.alignItems = "center";
+    label.style.gap = "8px";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = keys.includes(opt.key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) {
+        if (!keys.includes(opt.key)) keys.push(opt.key);
+      } else {
+        keys = keys.filter((k) => k !== opt.key);
+      }
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(opt.label));
+    div.appendChild(label);
+  });
+  body.appendChild(div);
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Apply";
+  saveBtn.addEventListener("click", () => {
+    if (keys.length === 0) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Columns",
+          meta: "Keep at least one column visible.",
+        });
+      }
+      return;
+    }
+    transportRouteVisibleColumnKeys = [...keys];
+    try {
+      localStorage.setItem(ROUTES_VISIBLE_COLS_KEY, JSON.stringify(transportRouteVisibleColumnKeys));
+    } catch (_) {}
+    closeModal();
+    renderTransportRoutesTable();
+  });
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+  openModal({ title: "Route table columns", body, footer });
+}
+
 function bindTransportColumnsMenuOnce() {
   if (document.documentElement.dataset.transportColumnsMenuBound === "1") return;
   document.documentElement.dataset.transportColumnsMenuBound = "1";
   document.addEventListener("click", (e) => {
+    const openRoutesBtn = e.target.closest("[data-transport-routes-columns-open]");
+    if (openRoutesBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      openTransportRoutesColumnsModal();
+      const wrap = openRoutesBtn.closest("[data-table-view-for]");
+      if (wrap) {
+        const menu = wrap.querySelector("[data-table-view-dropdown]");
+        const tb = wrap.querySelector(".table-view-menu-btn");
+        if (menu) menu.hidden = true;
+        if (tb) tb.setAttribute("aria-expanded", "false");
+      }
+      return;
+    }
     const openBtn = e.target.closest("[data-transport-columns-open]");
     if (!openBtn) return;
     e.preventDefault();
@@ -1637,6 +2913,7 @@ function renderZeroDayTripsTable() {
       </tr>
     `;
     updateTransportTripsSortIndicators();
+    renderTransportRoutesTable();
     return;
   }
 
@@ -1648,6 +2925,7 @@ function renderZeroDayTripsTable() {
       </tr>
     `;
     updateTransportTripsSortIndicators();
+    renderTransportRoutesTable();
     return;
   }
 
@@ -1660,6 +2938,7 @@ function renderZeroDayTripsTable() {
       </tr>
     `;
     updateTransportTripsSortIndicators();
+    renderTransportRoutesTable();
     return;
   }
 
@@ -1679,6 +2958,7 @@ function renderZeroDayTripsTable() {
     zeroDayTripsTableBody.appendChild(tr);
   }
   updateTransportTripsSortIndicators();
+  renderTransportRoutesTable();
 }
 
 function openTripForm(existing, defaultType) {
@@ -1848,8 +3128,17 @@ function openTripStatusModal(tripId) {
   openModal({ title: `Set status: ${escapeHtml(trip.route)}`, body });
 }
 
-function openTripVotersModal(trip) {
-  const title = `Assigned voters – ${trip.route || "Route"}`;
+function openTripVotersModal(tripOrRoute, opts = {}) {
+  const mode = opts && opts.mode === "route" ? "route" : "trip";
+  const entityId = tripOrRoute.id;
+  const getLiveEntity = () =>
+    mode === "route"
+      ? findTransportRouteById(entityId) || tripOrRoute
+      : findZeroDayTripById(entityId) || tripOrRoute;
+  const title =
+    mode === "route"
+      ? `Route passengers – ${formatTransportRouteTripsCell(getLiveEntity())}`
+      : `Assigned voters – ${tripOrRoute.route || "Route"}`;
   const body = document.createElement("div");
   body.className = "modal-body-inner modal-body-inner--with-maximize";
   let lastRenderedRows = [];
@@ -1979,6 +3268,12 @@ function openTripVotersModal(trip) {
   /** null = all ballot boxes included; Set = only these keys (subset filter). */
   let ballotMultiFilter = null;
   let prevBallotKeysSorted = [];
+  /** Map voter key → trip label(s); set each render when mode === "route" (share/print/search). */
+  let currentRouteTripLabelsByVoterKey = null;
+
+  function tripVotersModalVoterKey(v) {
+    return String(v.id || v.nationalId || "").trim();
+  }
 
   function hydrateTripFieldSelects(assigned) {
     const perm = distinctStringsWithEmpty(assigned.map((v) => v.permanentAddress));
@@ -2080,6 +3375,10 @@ function openTripVotersModal(trip) {
       const curLoc = (v.currentLocation || "").toLowerCase();
       const ballot = voterBallotBoxLabel(v).toLowerCase();
       const phone = (v.phone || "").toLowerCase();
+      const tripBlob =
+        currentRouteTripLabelsByVoterKey != null
+          ? String(currentRouteTripLabelsByVoterKey.get(tripVotersModalVoterKey(v)) || "").toLowerCase()
+          : "";
       return (
         name.includes(q) ||
         id.includes(q) ||
@@ -2087,13 +3386,14 @@ function openTripVotersModal(trip) {
         address.includes(q) ||
         curLoc.includes(q) ||
         ballot.includes(q) ||
-        phone.includes(q)
+        phone.includes(q) ||
+        tripBlob.includes(q)
       );
     });
   }
 
   function isVoterOnboardedForTrip(v) {
-    const tLive = findZeroDayTripById(trip.id);
+    const tLive = getLiveEntity();
     const set = new Set((tLive?.onboardedVoterIds || []).map(String));
     const id = String(v.id);
     const nid = String(v.nationalId || "").trim();
@@ -2101,9 +3401,24 @@ function openTripVotersModal(trip) {
   }
 
   function render() {
-    const tLive = findZeroDayTripById(trip.id) || trip;
-    const { list: assigned, byIdsCount, byRouteCount } = collectAssignedVotersForTrip(tLive);
-    const obCount = (tLive?.onboardedVoterIds || []).length;
+    const tLive = getLiveEntity();
+    let assigned;
+    let byIdsCount = 0;
+    let byRouteCount = 0;
+    if (mode === "route") {
+      const r = collectAssignedVotersForTransportRoute(tLive);
+      assigned = r.list;
+      byIdsCount = r.byIdsCount;
+      byRouteCount = r.byRouteCount;
+      currentRouteTripLabelsByVoterKey = r.tripLabelsByVoterKey;
+    } else {
+      currentRouteTripLabelsByVoterKey = null;
+      const r = collectAssignedVotersForTrip(tLive);
+      assigned = r.list;
+      byIdsCount = r.byIdsCount;
+      byRouteCount = r.byRouteCount;
+    }
+    const obCount = Array.isArray(tLive?.onboardedVoterIds) ? tLive.onboardedVoterIds.length : 0;
     hydrateTripFieldSelects(assigned);
     hydrateBallotFilterCheckboxes(assigned);
     const filterPledge = (body.querySelector("#zdTripVotersFilter") || {}).value || "all";
@@ -2114,7 +3429,12 @@ function openTripVotersModal(trip) {
     const locVal = (body.querySelector("#zdTripVotersCurrLoc") || {}).value || "all";
     let list = applySearchFilter(assigned, searchQuery);
     list = applyTripFieldFilters(list, permVal, locVal);
-    summary.textContent = `Showing ${list.length} of ${assigned.length} assigned (Trip assignment: ${byIdsCount}, By route: ${byRouteCount}) · On-board: ${obCount}`;
+    if (mode === "route") {
+      const nTrips = Array.isArray(tLive.tripIds) ? tLive.tripIds.length : 0;
+      summary.textContent = `Showing ${list.length} of ${assigned.length} assigned (union across ${nTrips} trip(s)) · On-board: ${obCount}`;
+    } else {
+      summary.textContent = `Showing ${list.length} of ${assigned.length} assigned (Trip assignment: ${byIdsCount}, By route: ${byRouteCount}) · On-board: ${obCount}`;
+    }
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
     lastRenderedRows = displayList.filter((x) => x.type === "row").map((x) => x.voter);
     const newTable = buildTripPassengersTable(displayList, {
@@ -2123,16 +3443,22 @@ function openTripVotersModal(trip) {
       isOnboarded: isVoterOnboardedForTrip,
       includeTripRemoveAction: true,
       tripPassengerMode: {
-        tripId: trip.id,
-        getTrip: () => findZeroDayTripById(trip.id) || trip,
+        tripId: entityId,
+        getTrip: () => getLiveEntity(),
       },
+      includeRouteTripColumn: mode === "route",
+      getRoutePassengerTripLabels:
+        mode === "route" && currentRouteTripLabelsByVoterKey
+          ? (v) =>
+              currentRouteTripLabelsByVoterKey.get(tripVotersModalVoterKey(v)) || "—"
+          : undefined,
     });
     tableWrap.innerHTML = "";
     tableWrap.appendChild(newTable.firstElementChild);
   }
 
   function getTripPassengerRemarkForExport(v) {
-    const tLive = findZeroDayTripById(trip.id) || trip;
+    const tLive = getLiveEntity();
     const vid = String(v.id);
     const m = tLive?.passengerRemarksByVoterId && typeof tLive.passengerRemarksByVoterId === "object"
       ? tLive.passengerRemarksByVoterId
@@ -2141,7 +3467,7 @@ function openTripVotersModal(trip) {
   }
 
   function getTripPreferredPickupForExport(v) {
-    const tLive = findZeroDayTripById(trip.id) || trip;
+    const tLive = getLiveEntity();
     const vid = String(v.id);
     const m =
       tLive?.passengerPreferredPickupByVoterId &&
@@ -2164,10 +3490,12 @@ function openTripVotersModal(trip) {
       }
       return;
     }
-    const routeLabel = String(trip.route || "Route");
+    const routeLabel =
+      mode === "route" ? formatTransportRouteTripsCell(getLiveEntity()) : String(tripOrRoute.route || "Route");
     const header = [
       "Seq",
       "Name",
+      ...(mode === "route" ? ["Trip"] : []),
       "ID Number",
       "Phone",
       "Permanent address",
@@ -2183,24 +3511,29 @@ function openTripVotersModal(trip) {
     lastRenderedRows.forEach((v) => {
       const voted = getVotedTimeMarked(v.id) ? "Voted" : "Not voted";
       const reached = isVoterOnboardedForTrip(v) ? "Yes" : "No";
-      lines.push(
-        [
-          sequenceAsImportedFromCsv(v),
-          v.fullName || "",
-          v.nationalId || v.id || "",
-          v.phone || "",
-          v.permanentAddress || "",
-          v.ballotBox || v.island || "",
-          getPledgeLabel(v.pledgeStatus),
-          getAgentForVoter(v.id),
-          voted,
-          getTripPreferredPickupForExport(v),
-          reached,
-          getTripPassengerRemarkForExport(v),
-        ].join("\t")
-      );
+      const tripCol =
+        mode === "route" && currentRouteTripLabelsByVoterKey
+          ? currentRouteTripLabelsByVoterKey.get(tripVotersModalVoterKey(v)) || "—"
+          : null;
+      const cells = [
+        sequenceAsImportedFromCsv(v),
+        v.fullName || "",
+        ...(tripCol != null ? [tripCol] : []),
+        v.nationalId || v.id || "",
+        v.phone || "",
+        v.permanentAddress || "",
+        v.ballotBox || v.island || "",
+        getPledgeLabel(v.pledgeStatus),
+        getAgentForVoter(v.id),
+        voted,
+        getTripPreferredPickupForExport(v),
+        reached,
+        getTripPassengerRemarkForExport(v),
+      ];
+      lines.push(cells.join("\t"));
     });
-    const reportTitle = `Assigned voters — ${routeLabel}`;
+    const reportTitle =
+      mode === "route" ? `Route passengers — ${routeLabel}` : `Assigned voters — ${routeLabel}`;
     const text = `${reportTitle} (${lastRenderedRows.length} voters)\n\n${lines.join("\n")}`;
     if (navigator.share) {
       navigator
@@ -2260,10 +3593,17 @@ function openTripVotersModal(trip) {
       .map((v) => {
         const voted = getVotedTimeMarked(v.id) ? "Voted" : "Not voted";
         const reached = isVoterOnboardedForTrip(v) ? "Yes" : "No";
+        const tripTd =
+          mode === "route" && currentRouteTripLabelsByVoterKey
+            ? `<td>${escapeHtml(
+                currentRouteTripLabelsByVoterKey.get(tripVotersModalVoterKey(v)) || "—"
+              )}</td>`
+            : "";
         return `
           <tr>
             <td>${escapeHtml(sequenceAsImportedFromCsv(v))}</td>
             <td>${escapeHtml(v.fullName || "")}</td>
+            ${tripTd}
             <td>${escapeHtml(v.nationalId || v.id || "")}</td>
             <td>${escapeHtml(v.phone || "")}</td>
             <td>${escapeHtml(v.permanentAddress || "")}</td>
@@ -2311,7 +3651,9 @@ function openTripVotersModal(trip) {
           .btn { border: 1px solid #d1d5db; background: #fff; color: #111; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
           .btn--primary { border-color: #2563eb; background: #2563eb; color: #fff; }
           .table-wrap { padding: 10px; overflow: auto; }
-          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: 1180px; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: ${
+            mode === "route" ? "1320px" : "1180px"
+          }; }
           th, td {
             border: 1px solid #e5e7eb;
             padding: 4px 5px;
@@ -2343,7 +3685,7 @@ function openTripVotersModal(trip) {
             <div>
               <h1 class="report-title">Assigned voters report</h1>
               <p class="report-meta">Route: ${escapeHtml(
-                trip.route || "Route"
+                mode === "route" ? formatTransportRouteTripsCell(getLiveEntity()) : tripOrRoute.route || "Route"
               )} | Total: ${rows.length} | Generated: ${escapeHtml(new Date().toLocaleString("en-MV"))}</p>
             </div>
             <div class="report-actions">
@@ -2357,6 +3699,7 @@ function openTripVotersModal(trip) {
                 <tr>
                   <th>Seq</th>
                   <th>Name</th>
+                  ${mode === "route" ? "<th>Trip</th>" : ""}
                   <th>ID Number</th>
                   <th>Phone</th>
                   <th>Permanent Address</th>
@@ -2390,7 +3733,11 @@ function openTripVotersModal(trip) {
     if (t.matches("input[type=checkbox][data-trip-reached-toggle]")) {
       const voterId = t.getAttribute("data-trip-reached-toggle");
       if (voterId == null || voterId === "") return;
-      toggleTripVoterOnboarded(trip.id, voterId).then(() => render());
+      const p =
+        mode === "route"
+          ? toggleRouteVoterOnboarded(entityId, voterId)
+          : toggleTripVoterOnboarded(entityId, voterId);
+      p.then(() => render());
       return;
     }
   });
@@ -2408,12 +3755,18 @@ function openTripVotersModal(trip) {
       }
       if (t.matches("[data-trip-preferred-pickup]")) {
         const vid = t.getAttribute("data-trip-preferred-pickup");
-        if (vid != null && vid !== "") persistTripPassengerPreferredPickup(trip.id, vid, t.value);
+        if (vid != null && vid !== "") {
+          if (mode === "route") persistRoutePassengerPreferredPickup(entityId, vid, t.value);
+          else persistTripPassengerPreferredPickup(entityId, vid, t.value);
+        }
         return;
       }
       if (t.matches("[data-trip-passenger-remarks]")) {
         const vid = t.getAttribute("data-trip-passenger-remarks");
-        if (vid != null && vid !== "") persistTripPassengerRemarks(trip.id, vid, t.value);
+        if (vid != null && vid !== "") {
+          if (mode === "route") persistRoutePassengerRemarks(entityId, vid, t.value);
+          else persistTripPassengerRemarks(entityId, vid, t.value);
+        }
       }
     },
     true
@@ -2425,7 +3778,11 @@ function openTripVotersModal(trip) {
       const voterId = removeBtn.getAttribute("data-trip-remove-voter");
       if (voterId == null || voterId === "") return;
       e.preventDefault();
-      removeAssignedVoterFromTrip(trip.id, voterId).then(() => render());
+      const p =
+        mode === "route"
+          ? removeAssignedVoterFromTransportRoute(entityId, voterId)
+          : removeAssignedVoterFromTrip(entityId, voterId);
+      p.then(() => render());
     }
   });
 
@@ -3199,18 +4556,22 @@ function buildTripPassengersTable(displayList, options = {}) {
   const usePledgePills = !!options.usePledgePills;
   const includeTripRemoveAction = !!options.includeTripRemoveAction;
   const isOnboarded = typeof options.isOnboarded === "function" ? options.isOnboarded : () => false;
+  const getRouteTripLbl =
+    typeof options.getRoutePassengerTripLabels === "function"
+      ? options.getRoutePassengerTripLabels
+      : null;
+  const includeRouteTripColumn = !!options.includeRouteTripColumn && getRouteTripLbl;
 
-  const columns = [
-    "Seq",
-    "Image",
-    "Name",
+  const columns = ["Seq", "Image", "Name"];
+  if (includeRouteTripColumn) columns.push("Trip");
+  columns.push(
     "ID Number",
     "Permanent Address",
     "Mobile",
     "Ballot box",
     "Pledge",
-    "Agent",
-  ];
+    "Agent"
+  );
   if (includeVotedStatus) columns.push("Voted status");
   columns.push("Preferred pickup", "Confirm reached");
   if (includeTripRemoveAction) columns.push("Actions");
@@ -3230,7 +4591,9 @@ function buildTripPassengersTable(displayList, options = {}) {
           ? `<th class="data-table-col--seq">${escapeHtml(c)}</th>`
           : c === "Name"
             ? `<th class="data-table-col--name">${escapeHtml(c)}</th>`
-            : `<th>${escapeHtml(c)}</th>`
+            : c === "Trip"
+              ? `<th class="data-table-col--trip-assignment">${escapeHtml(c)}</th>`
+              : `<th>${escapeHtml(c)}</th>`
       )
       .join("") +
     "</tr>";
@@ -3303,6 +4666,13 @@ function buildTripPassengersTable(displayList, options = {}) {
         sequenceAsImportedFromCsv(v),
         imageCell,
         v.fullName != null ? v.fullName : "",
+      ];
+      if (includeRouteTripColumn) {
+        row.push({
+          html: `<span class="trip-passenger-trip-cell">${escapeHtml(String(getRouteTripLbl(v)))}</span>`,
+        });
+      }
+      row.push(
         v.nationalId != null ? v.nationalId : (v.id != null ? v.id : ""),
         v.permanentAddress != null ? v.permanentAddress : "",
         {
@@ -3314,8 +4684,8 @@ function buildTripPassengersTable(displayList, options = {}) {
         usePledgePills
           ? { html: `<span class="${escapeHtml(pledgeClass)}">${escapeHtml(pledgeLabel)}</span>` }
           : pledgeLabel,
-        agent,
-      ];
+        agent
+      );
       if (includeVotedStatus) row.push({ html: votedCell });
       row.push({
         html: `<input type="datetime-local" class="input input--trip-cell" data-trip-preferred-pickup="${escapeHtml(
@@ -4498,11 +5868,15 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   loadVotedEntries();
   loadMonitors();
   loadTrips();
+  loadTransportRoutes();
   initTransportVisibleColumns();
+  initTransportRoutesVisibleColumns();
   bindTransportColumnsMenuOnce();
   initZeroDayTabs();
   bindTransportMenu();
+  bindTransportMainTabs();
   renderZeroDayTripsTable();
+  renderTransportRoutesTable();
   renderZeroDayVoteTable();
   renderMonitorsTable();
   bindZeroDayToolbar();
@@ -4539,6 +5913,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         zeroDayTrips = mergeTransportTripLists(localBefore, remote.map(normalizeTrip));
         saveTrips();
         renderZeroDayTripsTable();
+        renderTransportRoutesTable();
         try {
           await flushTransportTripsToFirestore();
         } catch (e) {
@@ -4553,12 +5928,49 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         zeroDayTrips = mergeTransportTripLists(zeroDayTrips, remote);
         saveTrips();
         renderZeroDayTripsTable();
+        renderTransportRoutesTable();
+      });
+    }
+    if (api.getAllTransportRoutesFs) {
+      api
+        .getAllTransportRoutesFs()
+        .then(async (remote) => {
+          if (!Array.isArray(remote)) return;
+          const localBefore = zeroDayTransportRoutes.slice();
+          zeroDayTransportRoutes = mergeTransportRouteLists(
+            localBefore,
+            remote.map(normalizeTransportRoute)
+          );
+          saveTransportRoutes();
+          renderTransportRoutesTable();
+          try {
+            await flushTransportRoutesToFirestore();
+          } catch (e) {
+            console.warn("[ZeroDay] flush transport routes after initial merge", e);
+          }
+        })
+        .catch(() => {});
+    }
+    if (api.onTransportRoutesSnapshotFs) {
+      transportRoutesUnsubscribe = api.onTransportRoutesSnapshotFs((items) => {
+        if (!Array.isArray(items)) return;
+        zeroDayTransportRoutes = mergeTransportRouteLists(
+          zeroDayTransportRoutes,
+          items.map(normalizeTransportRoute)
+        );
+        saveTransportRoutes();
+        renderTransportRoutesTable();
       });
     }
   }).catch(() => {});
 
   if (zeroDayAddTripButton) {
     zeroDayAddTripButton.addEventListener("click", () => openTripForm(null));
+  }
+
+  const zeroDayAddRouteButton = document.getElementById("zeroDayAddRouteButton");
+  if (zeroDayAddRouteButton) {
+    zeroDayAddRouteButton.addEventListener("click", () => openRouteForm(null));
   }
 
   if (zeroDayAddMonitorButton) {
@@ -4647,6 +6059,17 @@ export function initZeroDayModule(votersContextParam, options = {}) {
     transportPanel.addEventListener(
       "blur",
       (e) => {
+        const inpRoute = e.target.closest("[data-route-meta-field]");
+        if (inpRoute && transportPanel.contains(inpRoute)) {
+          const rid = inpRoute.getAttribute("data-route-id");
+          const field = inpRoute.getAttribute("data-route-meta-field");
+          if (rid != null && rid !== "" && field && ROUTE_TABLE_EDITABLE_FIELDS.has(field)) {
+            const raw =
+              field === "pickupTime" ? inpRoute.value : String(inpRoute.value || "").trim();
+            persistRouteMetaField(rid, field, raw);
+          }
+          return;
+        }
         const inp = e.target.closest("[data-trip-meta-field]");
         if (!inp || !transportPanel.contains(inp)) return;
         const tid = inp.getAttribute("data-trip-id");
@@ -4659,6 +6082,28 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       true
     );
     transportPanel.addEventListener("click", (e) => {
+      const rStatus = e.target.closest("[data-route-status]");
+      const rVoters = e.target.closest("[data-view-route-voters]");
+      const rEdit = e.target.closest("[data-edit-route]");
+      const rDel = e.target.closest("[data-delete-route]");
+      if (rStatus) {
+        openTransportRouteStatusModal(rStatus.getAttribute("data-route-status"));
+        return;
+      }
+      if (rVoters) {
+        const route = findTransportRouteById(rVoters.getAttribute("data-view-route-voters"));
+        if (route) openTransportRouteVotersModal(route);
+        return;
+      }
+      if (rEdit) {
+        const route = findTransportRouteById(rEdit.getAttribute("data-edit-route"));
+        if (route) openRouteForm(route);
+        return;
+      }
+      if (rDel) {
+        deleteTransportRoute(rDel.getAttribute("data-delete-route"));
+        return;
+      }
       const statusBtn = e.target.closest("[data-trip-status]");
       const viewBtn = e.target.closest("[data-view-trip-voters]");
       const editBtn = e.target.closest("[data-edit-trip]");
@@ -4717,6 +6162,46 @@ export function initZeroDayModule(votersContextParam, options = {}) {
     });
   }
 
+  const zeroDayTransportRoutesExcel = document.getElementById("zeroDayTransportRoutesExcel");
+  const zeroDayTransportRoutesPrint = document.getElementById("zeroDayTransportRoutesPrint");
+  const zeroDayTransportRoutesShare = document.getElementById("zeroDayTransportRoutesShare");
+  if (zeroDayTransportRoutesExcel) {
+    zeroDayTransportRoutesExcel.addEventListener("click", () => {
+      const snaps = getAllVisibleRouteSnapshots();
+      if (snaps.length) downloadTransportRoutesReportCsv(snaps);
+      else if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "No routes",
+          meta: "Add a route or clear search and filters.",
+        });
+      }
+    });
+  }
+  if (zeroDayTransportRoutesPrint) {
+    zeroDayTransportRoutesPrint.addEventListener("click", () => {
+      const snaps = getAllVisibleRouteSnapshots();
+      if (snaps.length) openTransportRoutesReportWindow(snaps, false);
+      else if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "No routes",
+          meta: "Add a route or clear search and filters.",
+        });
+      }
+    });
+  }
+  if (zeroDayTransportRoutesShare) {
+    zeroDayTransportRoutesShare.addEventListener("click", () => {
+      const snaps = getAllVisibleRouteSnapshots();
+      if (snaps.length) void shareTransportRoutesReport(snaps);
+      else if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "No routes",
+          meta: "Add a route or clear search and filters.",
+        });
+      }
+    });
+  }
+
   if (zeroDayMarkVotedButton) {
     zeroDayMarkVotedButton.addEventListener("click", openMarkVotedModal);
   }
@@ -4728,6 +6213,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 
   document.addEventListener("voters-updated", () => {
     renderZeroDayVoteTable();
+    renderZeroDayTripsTable();
   });
 
   const zeroDaySyncVotedBtn = document.getElementById("zeroDaySyncVotedBtn");
