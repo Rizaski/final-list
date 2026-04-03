@@ -95,7 +95,9 @@ service cloud.firestore {
     // Transportation route groupings (links multiple trips + route-level fields)
     match /transportRoutes/{routeId} {
       allow read: if signedIn();
-      allow write: if signedIn() && sizeOk();
+      allow create, update: if signedIn() && sizeOk();
+      // Deletes have request.resource == null; keep explicit so removal always works for signed-in users.
+      allow delete: if signedIn();
     }
 
     // Shared list view (candidate opens by link; doc id = share token)

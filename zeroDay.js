@@ -420,6 +420,8 @@ function normalizeTransportRoute(r) {
     onboardedVoterIds: Array.isArray(r.onboardedVoterIds) ? r.onboardedVoterIds.map((x) => String(x)) : [],
     passengerPreferredPickupByVoterId: sanitizeTripStringMap(r.passengerPreferredPickupByVoterId),
     passengerRemarksByVoterId: sanitizeTripStringMap(r.passengerRemarksByVoterId),
+    /** Client-only: true until first successful Firestore write; avoids re-adding routes deleted on server. */
+    pendingFirestorePush: r.pendingFirestorePush === true,
   };
 }
 
@@ -447,6 +449,7 @@ function mergeTwoTransportRoutes(remote, local) {
       L.passengerPreferredPickupByVoterId
     ),
     passengerRemarksByVoterId: mergeTripPassengerMaps(R.passengerRemarksByVoterId, L.passengerRemarksByVoterId),
+    pendingFirestorePush: false,
   });
 }
 
@@ -464,6 +467,8 @@ function mergeTransportRouteLists(localList, remoteList) {
   });
   localById.forEach((L, id) => {
     if (remoteIds.has(id) || deletedTransportRouteIds.has(id)) return;
+    // Routes that were synced can disappear from remote when another client deletes them.
+    if (!L.pendingFirestorePush) return;
     result.push(L);
   });
   result.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -523,6 +528,13 @@ function saveTransportRoutes() {
   try {
     localStorage.setItem(ROUTES_STORAGE_KEY, JSON.stringify(zeroDayTransportRoutes));
   } catch (_) {}
+}
+
+function markTransportRouteFirestoreSynced(routeId) {
+  const r = findTransportRouteById(routeId);
+  if (!r) return;
+  r.pendingFirestorePush = false;
+  saveTransportRoutes();
 }
 
 function newTransportRouteId() {
@@ -608,6 +620,9 @@ export async function flushTransportRoutesToFirestore() {
   if (failed.length) {
     console.warn("[ZeroDay] flushTransportRoutesToFirestore: some routes failed", failed.length);
   }
+  results.forEach((res, i) => {
+    if (res.status === "fulfilled" && routes[i]) markTransportRouteFirestoreSynced(routes[i].id);
+  });
 }
 
 /** One-shot pull of transport routes from Firestore. */
@@ -728,7 +743,10 @@ async function persistRouteMetaField(routeId, field, value) {
   saveTransportRoutes();
   try {
     const api = await firebaseInitPromise;
-    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+    if (api.ready && api.setTransportRouteFs) {
+      await api.setTransportRouteFs(r);
+      markTransportRouteFirestoreSynced(routeId);
+    }
   } catch (err) {
     console.warn("[ZeroDay] persistRouteMetaField Firestore sync failed", routeId, field, err);
   }
@@ -745,7 +763,10 @@ async function persistRoutePassengerPreferredPickup(routeId, voterId, value) {
   saveTransportRoutes();
   try {
     const api = await firebaseInitPromise;
-    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+    if (api.ready && api.setTransportRouteFs) {
+      await api.setTransportRouteFs(r);
+      markTransportRouteFirestoreSynced(routeId);
+    }
   } catch (err) {
     console.warn("[ZeroDay] persistRoutePassengerPreferredPickup Firestore sync failed", routeId, voterId, err);
   }
@@ -763,7 +784,10 @@ async function persistRoutePassengerRemarks(routeId, voterId, value) {
   saveTransportRoutes();
   try {
     const api = await firebaseInitPromise;
-    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+    if (api.ready && api.setTransportRouteFs) {
+      await api.setTransportRouteFs(r);
+      markTransportRouteFirestoreSynced(routeId);
+    }
   } catch (err) {
     console.warn("[ZeroDay] persistRoutePassengerRemarks Firestore sync failed", routeId, voterId, err);
   }
@@ -782,7 +806,10 @@ async function toggleRouteVoterOnboarded(routeId, voterIdStr) {
   saveTransportRoutes();
   try {
     const api = await firebaseInitPromise;
-    if (api.ready && api.setTransportRouteFs) await api.setTransportRouteFs(r);
+    if (api.ready && api.setTransportRouteFs) {
+      await api.setTransportRouteFs(r);
+      markTransportRouteFirestoreSynced(routeId);
+    }
   } catch (err) {
     console.warn("[ZeroDay] toggleRouteVoterOnboarded Firestore sync failed", routeId, err);
   }
@@ -2380,6 +2407,7 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             background: var(--color-bg);
             font-size: 13px;
             line-height: 1.45;
+            overflow-x: auto;
           }
           .transport-routes-report-header {
             margin-bottom: 16px;
@@ -2453,12 +2481,12 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
           }
           table {
             width: 100%;
-            table-layout: fixed;
+            min-width: 640px;
+            table-layout: auto;
             border-collapse: collapse;
             font-size: 12px;
             background: var(--color-surface);
             border-radius: 8px;
-            overflow: hidden;
             box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
           }
           th, td {
@@ -2476,56 +2504,71 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             color: #334155;
           }
           .transport-routes-report-route-num {
-            width: 64px;
+            width: 2.75rem;
+            max-width: 3rem;
             white-space: nowrap;
             font-weight: 500;
+            padding: 8px 6px;
           }
           .transport-routes-report-vehicle {
-            width: 10%;
+            max-width: 7rem;
+            width: 7rem;
             white-space: normal;
             word-wrap: break-word;
             overflow-wrap: anywhere;
+            font-size: 11px;
+            line-height: 1.35;
+            padding: 8px 6px;
           }
           .transport-routes-report-driver {
-            width: 10%;
+            max-width: 7rem;
+            width: 7rem;
             white-space: normal;
             word-wrap: break-word;
             overflow-wrap: anywhere;
+            font-size: 11px;
+            line-height: 1.35;
+            padding: 8px 6px;
           }
           .transport-routes-report-start {
-            width: 11%;
+            width: 7rem;
+            max-width: 7.5rem;
             white-space: nowrap;
             font-size: 11px;
+            padding: 8px 6px;
           }
           .transport-routes-report-trips {
-            width: 40%;
-            min-width: 0;
+            min-width: 42%;
+            width: auto;
             line-height: 1.45;
             vertical-align: top;
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
           }
           .transport-routes-report-trip-line {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 100%;
+            white-space: normal;
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
             line-height: 1.45;
           }
           .transport-routes-report-trip-line + .transport-routes-report-trip-line {
-            margin-top: 5px;
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid var(--color-border-subtle);
           }
           .transport-routes-report-trip-line--empty {
             white-space: normal;
           }
           .transport-routes-report-remarks {
-            width: 12%;
-            max-width: 140px;
-            min-width: 0;
+            max-width: 8.5rem;
+            width: 8.5rem;
             font-size: 11px;
             line-height: 1.35;
             white-space: normal;
             word-wrap: break-word;
             overflow-wrap: anywhere;
             vertical-align: top;
+            padding: 8px 6px;
           }
           .transport-routes-report-actions {
             margin-top: 20px;
@@ -2566,8 +2609,8 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             font-size: 12px;
           }
           @media print {
-            body { background: #fff; padding: 12px; }
-            table { box-shadow: none; border-radius: 0; }
+            body { background: #fff; padding: 12px; overflow-x: visible; }
+            table { box-shadow: none; border-radius: 0; min-width: 0; width: 100%; font-size: 10px; }
             .transport-routes-report-actions { display: none !important; }
             .transport-routes-report-filters { display: none !important; }
             .transport-routes-report-screen-only { display: none !important; }
@@ -2674,20 +2717,38 @@ async function shareTransportRoutesReport(routeSnapshots) {
   } catch (_) {}
 }
 
-function deleteTransportRoute(id) {
+async function deleteTransportRoute(id) {
   const idx = zeroDayTransportRoutes.findIndex((r) => String(r.id) === String(id));
   if (idx === -1) return;
+  const removed = normalizeTransportRoute(zeroDayTransportRoutes[idx]);
   recordTransportRouteDeleted(id);
   zeroDayTransportRoutes.splice(idx, 1);
   saveTransportRoutes();
-  firebaseInitPromise
-    .then((api) => {
-      if (api.ready && api.deleteTransportRouteFs) return api.deleteTransportRouteFs(id);
-    })
-    .catch((err) => {
-      console.warn("[ZeroDay] deleteTransportRouteFs failed", id, err);
-    });
   renderTransportRoutesTable();
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || typeof api.deleteTransportRouteFs !== "function") {
+      throw new Error("Firebase is not ready.");
+    }
+    await api.deleteTransportRouteFs(id);
+  } catch (err) {
+    console.warn("[ZeroDay] deleteTransportRouteFs failed", id, err);
+    const sid = String(id ?? "").trim();
+    if (sid) deletedTransportRouteIds.delete(sid);
+    saveDeletedTransportRouteIds();
+    zeroDayTransportRoutes.splice(idx, 0, removed);
+    zeroDayTransportRoutes.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    saveTransportRoutes();
+    renderTransportRoutesTable();
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Could not delete route",
+        meta:
+          (err && err.message) ||
+          "Check your connection and deploy the latest Firestore rules. The route was restored.",
+      });
+    }
+  }
 }
 
 function setTransportRouteStatus(routeId, status) {
@@ -2695,9 +2756,14 @@ function setTransportRouteStatus(routeId, status) {
   if (!route || !TRIP_STATUSES.includes(status)) return;
   route.status = status;
   saveTransportRoutes();
-  firebaseInitPromise.then((api) => {
-    if (api.ready && api.setTransportRouteFs) return api.setTransportRouteFs(route);
-  }).catch(() => {});
+  firebaseInitPromise
+    .then(async (api) => {
+      if (api.ready && api.setTransportRouteFs) {
+        await api.setTransportRouteFs(route);
+        markTransportRouteFirestoreSynced(routeId);
+      }
+    })
+    .catch(() => {});
   renderTransportRoutesTable();
 }
 
@@ -2968,6 +3034,7 @@ function openRouteForm(existing) {
           rate,
           amount,
           onboardedVoterIds: [],
+          pendingFirestorePush: true,
         })
       );
     }
@@ -2978,7 +3045,10 @@ function openRouteForm(existing) {
         const r = isEdit
           ? findTransportRouteById(existing.id)
           : zeroDayTransportRoutes[zeroDayTransportRoutes.length - 1];
-        if (r) await api.setTransportRouteFs(r);
+        if (r) {
+          await api.setTransportRouteFs(r);
+          markTransportRouteFirestoreSynced(r.id);
+        }
       }
     } catch (_) {}
     renderTransportRoutesTable();
