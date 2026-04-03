@@ -3775,15 +3775,77 @@ html.ballot-box-html {
 .vote-box-card__actions {
   margin-top: 4px;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+  overflow-x: auto;
 }
 .vote-box-card__session-btns {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-right: auto;
+  flex-shrink: 0;
+}
+
+.vote-box-card__view-btns {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.vote-box-card__view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  padding: 0;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease,
+    transform 0.12s ease;
+}
+
+.vote-box-card__view-icon {
+  display: block;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.12));
+}
+
+.vote-box-card__view-btn--voted {
+  background: linear-gradient(180deg, #ecfdf5 0%, #d1fae5 100%);
+  border-color: #34d399;
+  color: inherit;
+}
+
+.vote-box-card__view-btn--voted:hover:not(:disabled) {
+  background: linear-gradient(180deg, #d1fae5 0%, #a7f3d0 100%);
+  border-color: #10b981;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.28);
+}
+
+.vote-box-card__view-btn--not-yet {
+  background: linear-gradient(180deg, #fffbeb 0%, #ffedd5 100%);
+  border-color: #fbbf24;
+  color: inherit;
+}
+
+.vote-box-card__view-btn--not-yet:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffedd5 0%, #fed7aa 100%);
+  border-color: #f97316;
+  box-shadow: 0 2px 8px rgba(249, 115, 22, 0.3);
+}
+
+.vote-box-card__view-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.vote-box-card__actions button.vote-box-card__view-btn.ghost-button {
+  border-radius: 8px;
 }
 
 .field-group--inline {

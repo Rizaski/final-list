@@ -50,6 +50,10 @@ const MONITOR_BALLOT_SESSION_PREFIX = "monitor_ballot_session_";
 
 const ADMIN_BALLOT_SESSION_OPEN_SVG = `<svg class="monitor-admin-session-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none"/></svg>`;
 const ADMIN_BALLOT_SESSION_CLOSE_SVG = `<svg class="monitor-admin-session-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+/** Ballot box card: list who has voted (check in circle). */
+const VOTE_BOX_VIEW_VOTED_SVG = `<svg class="vote-box-card__view-icon vote-box-card__view-icon--voted" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#22c55e" stroke="#15803d" stroke-width="1.15"/><path d="M9 12l2 2 4-4" fill="none" stroke="#ffffff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+/** Ballot box card: list not yet voted (clock in circle). */
+const VOTE_BOX_VIEW_NOT_YET_SVG = `<svg class="vote-box-card__view-icon vote-box-card__view-icon--not-yet" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#fb923c" stroke="#c2410c" stroke-width="1.15"/><path d="M12 7v5l3 2" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 let zeroDayTrips = [];
 let transportTripsUnsubscribe = null;
@@ -4135,12 +4139,14 @@ function renderZeroDayVoteTable() {
               boxKey
             )}" title="Close vote marking" aria-label="Close vote marking">${ADMIN_BALLOT_SESSION_CLOSE_SVG}</button>
           </div>
-          <button type="button" class="ghost-button ghost-button--small" data-view-voted="${escapeHtml(
-            box.box
-          )}">View voted</button>
-          <button type="button" class="ghost-button ghost-button--small" data-view-not-yet="${escapeHtml(
-            box.box
-          )}">View not yet</button>
+          <div class="vote-box-card__view-btns" role="group" aria-label="View voter lists">
+            <button type="button" class="ghost-button ghost-button--small vote-box-card__view-btn vote-box-card__view-btn--voted" data-view-voted="${escapeHtml(
+              box.box
+            )}" title="View voted" aria-label="View voted">${VOTE_BOX_VIEW_VOTED_SVG}</button>
+            <button type="button" class="ghost-button ghost-button--small vote-box-card__view-btn vote-box-card__view-btn--not-yet" data-view-not-yet="${escapeHtml(
+              box.box
+            )}" title="View not yet" aria-label="View not yet">${VOTE_BOX_VIEW_NOT_YET_SVG}</button>
+          </div>
         </div>
       `;
       zeroDayVoteCardsContainer.appendChild(card);
