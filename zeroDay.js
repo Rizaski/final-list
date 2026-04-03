@@ -566,6 +566,21 @@ function getTransportRouteTripLines(route) {
     });
 }
 
+/** One line per trip for route reports (Excel / print / share): name + pickup only, no trip type. */
+function getTransportRouteTripsReportLines(route) {
+  const ids = Array.isArray(route.tripIds) ? route.tripIds : [];
+  if (!ids.length) return [];
+  return ids
+    .map((tid) => findZeroDayTripById(tid))
+    .filter(Boolean)
+    .map((t) => {
+      const name = (t.route || "").trim() || `Trip ${t.id}`;
+      const p = formatDateTime(t.pickupTime);
+      const pickupPart = p && p !== "–" ? p : "—";
+      return `${name} · Pickup: ${pickupPart}`;
+    });
+}
+
 function formatTransportRouteTripsCell(route) {
   const lines = getTransportRouteTripLines(route);
   return lines.length ? lines.join("; ") : "—";
@@ -2242,17 +2257,16 @@ function getAllVisibleRouteSnapshots() {
 
 function transportRoutesReportRowCells(r) {
   const displayNum = getTransportRouteDisplayNumber(r.id);
+  const tripLines = getTransportRouteTripsReportLines(r);
+  const tripsText = tripLines.length ? tripLines.join("\n") : "—";
+  const tripsHtml = tripLines.length ? tripLines.map((line) => escapeHtml(line)).join("<br>") : escapeHtml("—");
+  const remarks = String(r.remarks || "").trim();
   return {
     routeNum: String(displayNum || ""),
-    trips: formatTransportRouteTripsCell(r),
-    vehicle: r.vehicle || "",
-    driver: r.driver || "",
-    pickup: formatDateTime(r.pickupTime) || "",
-    votersAssigned: String(getRouteAssignedVoterCount(r)),
-    status: r.status || "",
-    rate: r.rate || "",
-    amount: r.amount || "",
-    remarks: r.remarks || "",
+    tripsText,
+    tripsHtml,
+    remarks,
+    remarksDisplay: remarks || "—",
   };
 }
 
@@ -2269,16 +2283,9 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
       const c = transportRoutesReportRowCells(r);
       return `
           <tr>
-            <td>${escapeHtml(c.routeNum)}</td>
-            <td>${escapeHtml(c.trips)}</td>
-            <td>${escapeHtml(c.vehicle)}</td>
-            <td>${escapeHtml(c.driver)}</td>
-            <td>${escapeHtml(c.pickup)}</td>
-            <td>${escapeHtml(c.votersAssigned)}</td>
-            <td>${escapeHtml(c.status)}</td>
-            <td>${escapeHtml(c.rate)}</td>
-            <td>${escapeHtml(c.amount)}</td>
-            <td>${escapeHtml(c.remarks)}</td>
+            <td class="transport-routes-report-route-num">${escapeHtml(c.routeNum)}</td>
+            <td class="transport-routes-report-trips">${c.tripsHtml}</td>
+            <td class="transport-routes-report-remarks">${escapeHtml(c.remarksDisplay)}</td>
           </tr>`;
     })
     .join("");
@@ -2302,27 +2309,148 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
       <html>
       <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>${escapeHtml(title)}</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
         <style>
-          body { font-family: Arial, sans-serif; margin: 16px; color: #111; }
-          table { width: 100%; border-collapse: collapse; font-size: 11px; }
-          th, td { border: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
-          th { background: #f9fafb; }
+          :root {
+            --color-text: #1f2937;
+            --color-text-muted: #6b7280;
+            --color-bg: #f5f7fb;
+            --color-surface: #ffffff;
+            --color-border-subtle: #e0e5f0;
+            --color-border-strong: #c4ccdd;
+            --color-primary: #009c9c;
+            --color-accent: #007a7a;
+          }
+          body {
+            font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 0;
+            padding: 20px 22px 28px;
+            color: var(--color-text);
+            background: var(--color-bg);
+            font-size: 13px;
+            line-height: 1.45;
+          }
+          .transport-routes-report-header {
+            margin-bottom: 16px;
+          }
+          .transport-routes-report-header h1 {
+            font-size: 1.35rem;
+            font-weight: 600;
+            margin: 0 0 6px;
+            color: #0f766e;
+            letter-spacing: -0.02em;
+          }
+          .transport-routes-report-header p {
+            margin: 0;
+            font-size: 12px;
+            color: var(--color-text-muted);
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            background: var(--color-surface);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+          }
+          th, td {
+            border: 1px solid var(--color-border-subtle);
+            padding: 8px 10px;
+            text-align: left;
+            vertical-align: top;
+          }
+          th {
+            background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #334155;
+          }
+          .transport-routes-report-route-num {
+            width: 72px;
+            white-space: nowrap;
+            font-weight: 500;
+          }
+          .transport-routes-report-trips {
+            white-space: normal;
+            line-height: 1.5;
+            min-width: 200px;
+            width: 32%;
+          }
+          .transport-routes-report-remarks {
+            min-width: 320px;
+            width: 48%;
+            max-width: none;
+            white-space: normal;
+            word-wrap: break-word;
+            line-height: 1.5;
+          }
+          .transport-routes-report-actions {
+            margin-top: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+          }
+          .primary-button,
+          .ghost-button {
+            border-radius: 999px;
+            padding: 8px 16px;
+            border: 1px solid transparent;
+            font-size: 13px;
+            font-family: inherit;
+            font-weight: 500;
+            cursor: pointer;
+          }
+          .primary-button {
+            background: linear-gradient(135deg, #1d4ed8, #0f766e);
+            color: #fff;
+            box-shadow: 0 10px 20px rgba(37, 99, 235, 0.28);
+          }
+          .primary-button:hover {
+            filter: brightness(1.03);
+          }
+          .ghost-button {
+            background-color: transparent;
+            border-color: var(--color-border-subtle);
+            color: var(--color-text);
+          }
+          .ghost-button:hover {
+            background: rgba(0, 156, 156, 0.06);
+            border-color: var(--color-primary);
+          }
+          @media print {
+            body { background: #fff; padding: 12px; }
+            table { box-shadow: none; border-radius: 0; }
+            .transport-routes-report-actions { display: none !important; }
+          }
         </style>
       </head>
       <body>
-        <h1>Transportation routes</h1>
-        <p>${escapeHtml(new Date().toLocaleString("en-MV"))}</p>
+        <header class="transport-routes-report-header">
+          <h1>Transportation routes</h1>
+          <p>${escapeHtml(new Date().toLocaleString("en-MV"))}</p>
+        </header>
         <table>
           <thead>
             <tr>
-              <th>Route #</th><th>Trips</th><th>Vessel</th><th>Driver</th><th>Pickup</th>
-              <th>Voters</th><th>Status</th><th>Rate</th><th>Amount</th><th>Remarks</th>
+              <th scope="col">Route #</th>
+              <th scope="col">Trips</th>
+              <th scope="col">Remarks</th>
             </tr>
           </thead>
           <tbody>${tbodyHtml}</tbody>
         </table>
-        <p><button type="button" onclick="window.print()">Print</button> <button type="button" onclick="window.close()">Close</button></p>
+        <div class="transport-routes-report-actions">
+          <button type="button" class="primary-button" onclick="window.print()">Print</button>
+          <button type="button" class="ghost-button" onclick="window.close()">Close</button>
+        </div>
         ${printScript}
       </body>
       </html>
@@ -2339,37 +2467,11 @@ function downloadTransportRoutesReportCsv(routeSnapshots) {
     }
     return;
   }
-  const headers = [
-    "Route #",
-    "Trips",
-    "Vessel / Flight no.",
-    "Driver / Pilot / Captain",
-    "Pickup time",
-    "Voters assigned",
-    "Status",
-    "Rate",
-    "Amount",
-    "Remarks",
-  ];
+  const headers = ["Route #", "Trips", "Remarks"];
   const lines = [headers.map(csvEscapeTransportCell).join(",")];
   list.forEach((r) => {
     const c = transportRoutesReportRowCells(r);
-    lines.push(
-      [
-        c.routeNum,
-        c.trips,
-        c.vehicle,
-        c.driver,
-        c.pickup,
-        c.votersAssigned,
-        c.status,
-        c.rate,
-        c.amount,
-        c.remarks,
-      ]
-        .map(csvEscapeTransportCell)
-        .join(",")
-    );
+    lines.push([c.routeNum, c.tripsText, c.remarks].map(csvEscapeTransportCell).join(","));
   });
   const csv = lines.join("\r\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
@@ -2388,35 +2490,11 @@ async function shareTransportRoutesReport(routeSnapshots) {
     }
     return;
   }
-  const headerLine = [
-    "Route #",
-    "Trips",
-    "Vessel",
-    "Driver",
-    "Pickup",
-    "Voters",
-    "Status",
-    "Rate",
-    "Amount",
-    "Remarks",
-  ].join("\t");
+  const headerLine = ["Route #", "Trips", "Remarks"].join("\t");
   const rowLines = [headerLine];
   list.forEach((r) => {
     const c = transportRoutesReportRowCells(r);
-    rowLines.push(
-      [
-        c.routeNum,
-        c.trips,
-        c.vehicle,
-        c.driver,
-        c.pickup,
-        c.votersAssigned,
-        c.status,
-        c.rate,
-        c.amount,
-        c.remarks,
-      ].join("\t")
-    );
+    rowLines.push([c.routeNum, c.tripsText, c.remarks].join("\t"));
   });
   const title = `Transport routes (${list.length})`;
   const text = `${title}\n\n${rowLines.join("\n")}`;
