@@ -6332,6 +6332,58 @@ textarea.voter-detail-referendum-notes:focus {
   vertical-align: top;
 }
 
+/* Zero Day → Add/Edit route modal: trip picker search + type filters */
+.transport-route-trip-picker__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-bottom: 4px;
+}
+
+.transport-route-trip-picker__search {
+  flex: 1 1 200px;
+  min-width: 160px;
+  max-width: 100%;
+}
+
+.transport-route-trip-picker__filters {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.transport-route-trip-picker__filter-label {
+  margin-right: 2px;
+}
+
+.transport-route-trip-picker__hint {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.transport-route-trip-picker__empty {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
+.zd-route-trip-picker-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.zd-route-trip-picker-row__title {
+  font-weight: 500;
+}
+
+.zd-route-trip-picker-row__sub {
+  display: block;
+  font-size: 12px;
+}
+
 /* Zero Day → View voters (trip): on-board status + action */
 .trip-voter-onboard-cell {
   display: flex;

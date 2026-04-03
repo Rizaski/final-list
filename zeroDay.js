@@ -2487,6 +2487,21 @@ function openTransportRouteVotersModal(route) {
   openTripVotersModal(route, { mode: "route" });
 }
 
+/** Lowercase haystack for route-modal trip search (type, route, vehicle, driver, pickup, id). */
+function haystackForRouteTripPickerTrip(t) {
+  return [
+    getTripTypeLabel(t),
+    t.route,
+    t.vehicle,
+    t.driver,
+    formatDateTime(t.pickupTime),
+    String(t.id),
+    t.tripType,
+  ]
+    .map((x) => String(x || "").toLowerCase())
+    .join(" ");
+}
+
 function openRouteForm(existing) {
   const isEdit = !!existing;
   loadTrips();
@@ -2508,8 +2523,21 @@ function openRouteForm(existing) {
         <p class="helper-text">Shown in the table by creation order. If you delete a route, numbers update automatically.</p>
       </div>
       <div class="form-group" style="grid-column: 1 / -1;">
-        <label>Trips on this route (select one or more)</label>
-        <div id="zdRouteTripsMulti" class="transport-route-trip-checkboxes" style="max-height: 200px; overflow: auto; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); padding: 10px; display: flex; flex-direction: column; gap: 8px;"></div>
+        <label for="zdRouteTripsSearch">Trips on this route (select one or more)</label>
+        <div class="transport-route-trip-picker">
+          <div class="transport-route-trip-picker__toolbar">
+            <input type="search" id="zdRouteTripsSearch" class="input transport-route-trip-picker__search" placeholder="Search by route, type, pickup, vehicle, driver, ID…" autocomplete="off" spellcheck="false" aria-label="Search trips to add to route">
+            <div class="pill-toggle-group transport-route-trip-picker__filters" role="group" aria-label="Filter by transport type">
+              <span class="detail-item-label transport-route-trip-picker__filter-label">Type</span>
+              <button type="button" class="pill-toggle pill-toggle--active" data-zd-route-trips-filter="all">All</button>
+              <button type="button" class="pill-toggle" data-zd-route-trips-filter="flight">Flight</button>
+              <button type="button" class="pill-toggle" data-zd-route-trips-filter="speedboat">Speed boat</button>
+            </div>
+          </div>
+          <p id="zdRouteTripsPickerHint" class="helper-text transport-route-trip-picker__hint"></p>
+          <div id="zdRouteTripsMulti" class="transport-route-trip-checkboxes" style="max-height: 200px; overflow: auto; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); padding: 10px; display: flex; flex-direction: column; gap: 8px;"></div>
+          <p id="zdRouteTripsPickerEmpty" class="helper-text text-muted transport-route-trip-picker__empty" hidden>No trips match your search or filters.</p>
+        </div>
       </div>
       <div class="form-group">
         <label for="zdRouteDriver">Driver / Pilot / Captain</label>
@@ -2552,13 +2580,25 @@ function openRouteForm(existing) {
   `;
 
   const tripBox = body.querySelector("#zdRouteTripsMulti");
+  const searchInput = body.querySelector("#zdRouteTripsSearch");
+  const hintEl = body.querySelector("#zdRouteTripsPickerHint");
+  const emptyEl = body.querySelector("#zdRouteTripsPickerEmpty");
+  const tripById = new Map();
+  sortedTrips.forEach((t) => {
+    const id = Number(t.id);
+    if (!Number.isNaN(id)) tripById.set(id, t);
+  });
+
   const selectedSet = new Set((existing?.tripIds || []).map((x) => Number(x)));
   sortedTrips.forEach((t) => {
     const id = Number(t.id);
     if (Number.isNaN(id)) return;
     const label = document.createElement("label");
+    label.className = "zd-route-trip-picker-row";
+    label.setAttribute("data-zd-route-trip-row", "1");
+    label.setAttribute("data-zd-trip-id", String(id));
     label.style.display = "flex";
-    label.style.alignItems = "center";
+    label.style.alignItems = "flex-start";
     label.style.gap = "8px";
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -2567,9 +2607,70 @@ function openRouteForm(existing) {
     cb.checked = selectedSet.has(id);
     const typeLabel = getTripTypeLabel(t);
     const routeName = (t.route || "").trim() || `Trip ${id}`;
+    const pickupLine = formatDateTime(t.pickupTime);
+    const metaBits = [t.vehicle, t.driver].filter((x) => String(x || "").trim()).join(" · ");
     label.appendChild(cb);
-    label.appendChild(document.createTextNode(`${typeLabel}: ${routeName}`));
+    const textWrap = document.createElement("span");
+    textWrap.className = "zd-route-trip-picker-row__text";
+    const titleLine = document.createElement("span");
+    titleLine.className = "zd-route-trip-picker-row__title";
+    titleLine.textContent = `${typeLabel}: ${routeName}`;
+    textWrap.appendChild(titleLine);
+    if (pickupLine || metaBits) {
+      const sub = document.createElement("span");
+      sub.className = "zd-route-trip-picker-row__sub text-muted";
+      sub.textContent = [pickupLine, metaBits].filter(Boolean).join(" · ");
+      textWrap.appendChild(sub);
+    }
+    label.appendChild(textWrap);
     tripBox.appendChild(label);
+  });
+
+  let typeFilter = "all";
+  const applyRouteTripPickerFilter = () => {
+    const q = String(searchInput?.value || "").trim().toLowerCase();
+    const rows = tripBox.querySelectorAll("[data-zd-route-trip-row]");
+    let shown = 0;
+    rows.forEach((row) => {
+      const id = Number(row.getAttribute("data-zd-trip-id"));
+      const trip = tripById.get(id);
+      if (!trip) {
+        row.style.display = "none";
+        return;
+      }
+      const tt = trip.tripType || "flight";
+      const typeOk = typeFilter === "all" || tt === typeFilter;
+      const searchOk = !q || haystackForRouteTripPickerTrip(trip).includes(q);
+      const visible = typeOk && searchOk;
+      row.style.display = visible ? "flex" : "none";
+      if (visible) shown += 1;
+    });
+    const total = rows.length;
+    if (hintEl) {
+      if (total === 0) {
+        hintEl.textContent = "No trips yet. Add trips in the Trips tab, then link them here.";
+      } else {
+        hintEl.textContent =
+          shown === total
+            ? `${total} trip${total === 1 ? "" : "s"}`
+            : `Showing ${shown} of ${total} trips`;
+      }
+    }
+    if (emptyEl) {
+      emptyEl.hidden = !(total > 0 && shown === 0);
+    }
+  };
+
+  applyRouteTripPickerFilter();
+  searchInput?.addEventListener("input", applyRouteTripPickerFilter);
+  body.querySelectorAll("[data-zd-route-trips-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      typeFilter = btn.getAttribute("data-zd-route-trips-filter") || "all";
+      body.querySelectorAll("[data-zd-route-trips-filter]").forEach((b) =>
+        b.classList.toggle("pill-toggle--active", b === btn)
+      );
+      applyRouteTripPickerFilter();
+    });
   });
 
   const footer = document.createElement("div");
