@@ -6215,6 +6215,16 @@ textarea.voter-detail-referendum-notes:focus {
   border-left: 1px solid var(--color-border-subtle);
 }
 
+#zeroDayTripsTable .transport-trips-table__meta-cell--vehicle .input--trip-table-meta,
+#zeroDayTripsTable .transport-trips-table__meta-cell--driver .input--trip-table-meta {
+  max-width: 168px;
+}
+
+#zeroDayTripsTable .transport-trips-table__meta-cell--pickup .input--trip-pickup-local {
+  max-width: 12rem;
+  min-width: 0;
+}
+
 #zeroDayTripsTable .input--trip-table-meta {
   display: block;
   width: 100%;

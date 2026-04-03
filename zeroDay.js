@@ -25,7 +25,22 @@ export const TRIP_TYPES = [
   { value: "speedboat", label: "Speed boat" },
 ];
 export const TRIP_STATUSES = ["Scheduled", "In progress", "Completed"];
-const ZERO_DAY_TRIPS_TABLE_COL_COUNT = 11;
+const TRIPS_VISIBLE_COLS_KEY = "zero-day-trips-visible-columns";
+/** Column definitions for Transportation Management table (order = default column order). */
+const TRIP_TABLE_COLUMN_DEFS = [
+  { key: "type", label: "Type", sortKey: "type" },
+  { key: "route", label: "Trip / Route", sortKey: "route" },
+  { key: "vehicle", label: "Vessel / Flight no.", sortKey: "vehicle" },
+  { key: "driver", label: "Driver / Pilot / Captain", sortKey: "driver" },
+  { key: "pickup", label: "Pickup time", sortKey: "pickup" },
+  { key: "voters", label: "Voters assigned", sortKey: "voters" },
+  { key: "status", label: "Status", sortKey: "status" },
+  { key: "rate", label: "Rate", sortKey: "rate" },
+  { key: "amount", label: "Amount", sortKey: "amount" },
+  { key: "remarks", label: "Remarks", sortKey: "remarks" },
+];
+const TRIP_COLUMN_DEFAULT_KEYS = TRIP_TABLE_COLUMN_DEFS.map((c) => c.key);
+let transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_KEYS.slice();
 const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
 const VOTED_STORAGE_KEY = "zero-day-voted";
@@ -314,13 +329,23 @@ function mergeTripRowInputs(tripId) {
   const t = findZeroDayTripById(tripId);
   if (!t) return null;
   const row = zeroDayTripsTableBody?.querySelector(`tr[data-trip-id="${tripId}"]`);
+  const vehicleInp = row?.querySelector('[data-trip-meta-field="vehicle"]');
+  const driverInp = row?.querySelector('[data-trip-meta-field="driver"]');
+  const pickupInp = row?.querySelector('[data-trip-meta-field="pickupTime"]');
   const rateInp = row?.querySelector('[data-trip-meta-field="rate"]');
   const amountInp = row?.querySelector('[data-trip-meta-field="amount"]');
   const remarksInp = row?.querySelector('[data-trip-meta-field="remarks"]');
+  const vehicle = vehicleInp ? String(vehicleInp.value || "").trim() : String(t.vehicle || "");
+  const driver = driverInp ? String(driverInp.value || "").trim() : String(t.driver || "");
+  let pickupTime = t.pickupTime;
+  if (pickupInp) {
+    const iso = fromDatetimeLocalToIso(pickupInp.value);
+    pickupTime = iso !== "" ? iso : t.pickupTime;
+  }
   const rate = rateInp ? String(rateInp.value || "").trim() : String(t.rate || "");
   const amount = amountInp ? String(amountInp.value || "").trim() : String(t.amount || "");
   const remarks = remarksInp ? String(remarksInp.value || "").trim() : String(t.remarks || "");
-  return { ...t, rate, amount, remarks };
+  return { ...t, vehicle, driver, pickupTime, rate, amount, remarks };
 }
 
 function getAllVisibleTripSnapshots() {
@@ -329,10 +354,25 @@ function getAllVisibleTripSnapshots() {
     .filter(Boolean);
 }
 
+const TRIP_TABLE_EDITABLE_FIELDS = new Set([
+  "vehicle",
+  "driver",
+  "pickupTime",
+  "rate",
+  "amount",
+  "remarks",
+]);
+
 async function persistTripMetaField(tripId, field, value) {
   const t = findZeroDayTripById(tripId);
-  if (!t || (field !== "rate" && field !== "amount" && field !== "remarks")) return;
-  t[field] = value;
+  if (!t || !TRIP_TABLE_EDITABLE_FIELDS.has(field)) return;
+  if (field === "vehicle" || field === "driver") {
+    t[field] = String(value || "").trim();
+  } else if (field === "pickupTime") {
+    t.pickupTime = fromDatetimeLocalToIso(value) || "";
+  } else if (field === "rate" || field === "amount" || field === "remarks") {
+    t[field] = String(value || "").trim();
+  }
   saveTrips();
   try {
     const api = await firebaseInitPromise;
@@ -1221,14 +1261,188 @@ function getTripAssignedVoterCount(trip) {
   return dedup.size;
 }
 
+function initTransportVisibleColumns() {
+  try {
+    const raw = localStorage.getItem(TRIPS_VISIBLE_COLS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) {
+        const valid = new Set(TRIP_COLUMN_DEFAULT_KEYS);
+        transportVisibleColumnKeys = parsed.filter((k) => valid.has(k));
+        if (transportVisibleColumnKeys.length === 0) transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_KEYS.slice();
+        return;
+      }
+    }
+  } catch (_) {}
+  transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_KEYS.slice();
+}
+
+function getTransportVisibleColumnDefs() {
+  const keys = new Set(transportVisibleColumnKeys);
+  return TRIP_TABLE_COLUMN_DEFS.filter((c) => keys.has(c.key));
+}
+
+function getVisibleTripColumnCount() {
+  return getTransportVisibleColumnDefs().length + 1;
+}
+
+function syncTransportTableHeader() {
+  const theadRow = document.getElementById("zeroDayTripsTableHeadRow");
+  if (!theadRow) return;
+  const defs = getTransportVisibleColumnDefs();
+  const ths = defs.map((col) => {
+    const sortable = col.sortKey
+      ? ` class="th-sortable" data-sort-key="${escapeHtml(col.sortKey)}"`
+      : "";
+    const ind = col.sortKey ? `<span class="sort-indicator"></span>` : "";
+    return `<th scope="col"${sortable}>${escapeHtml(col.label)}${ind}</th>`;
+  });
+  ths.push(`<th scope="col"><span class="sr-only">Actions</span></th>`);
+  theadRow.innerHTML = ths.join("");
+}
+
+function buildTripDataCellsHtml(trip) {
+  const defs = getTransportVisibleColumnDefs();
+  const typeLabel = getTripTypeLabel(trip);
+  const count = getTripAssignedVoterCount(trip);
+  const statusClass = tripStatusBadgeClass(trip.status);
+  const tid = trip.id;
+  return defs
+    .map((col) => {
+      switch (col.key) {
+        case "type":
+          return `<td><span class="badge badge--unknown">${escapeHtml(typeLabel)}</span></td>`;
+        case "route":
+          return `<td>${escapeHtml(trip.route)}</td>`;
+        case "vehicle":
+          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--vehicle"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="vehicle" data-trip-id="${tid}" value="${escapeHtml(trip.vehicle || "")}" placeholder="—" aria-label="Vessel or flight number" title="Vessel / flight no."></td>`;
+        case "driver":
+          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--driver"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="driver" data-trip-id="${tid}" value="${escapeHtml(trip.driver || "")}" placeholder="—" aria-label="Driver, pilot, or captain" title="Driver / captain"></td>`;
+        case "pickup":
+          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--pickup"><input type="datetime-local" class="input input--trip-table-meta input--trip-pickup-local" data-trip-meta-field="pickupTime" data-trip-id="${tid}" value="${escapeHtml(toDatetimeLocalValue(trip.pickupTime))}" aria-label="Pickup time" title="Pickup time"></td>`;
+        case "voters":
+          return `<td>${count}</td>`;
+        case "status":
+          return `<td><span class="${escapeHtml(statusClass)}">${escapeHtml(trip.status)}</span></td>`;
+        case "rate":
+          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="rate" data-trip-id="${tid}" value="${escapeHtml(trip.rate || "")}" placeholder="—" aria-label="Route rate" title="Rate for this route"></td>`;
+        case "amount":
+          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="amount" data-trip-id="${tid}" value="${escapeHtml(trip.amount || "")}" placeholder="—" aria-label="Route amount" title="Amount for this route"></td>`;
+        case "remarks":
+          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks"><input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-trip-meta-field="remarks" data-trip-id="${tid}" value="${escapeHtml(trip.remarks || "")}" placeholder="Notes / remarks" aria-label="Route remarks" title="Remarks for this route"></td>`;
+        default:
+          return "<td></td>";
+      }
+    })
+    .join("");
+}
+
+function buildTripActionsCellHtml(trip) {
+  return `<td class="transport-trips-table__actions">
+        <button type="button" class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
+        <button type="button" class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">Voters</button>
+        <button type="button" class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
+        <button type="button" class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
+      </td>`;
+}
+
+function openTransportColumnsModal() {
+  let keys = [...transportVisibleColumnKeys];
+  const body = document.createElement("div");
+  body.className = "form-group";
+  const p = document.createElement("p");
+  p.className = "helper-text";
+  p.textContent = "Choose which columns appear in the transportation table.";
+  body.appendChild(p);
+  const div = document.createElement("div");
+  div.style.display = "flex";
+  div.style.flexDirection = "column";
+  div.style.gap = "8px";
+  TRIP_TABLE_COLUMN_DEFS.forEach((opt) => {
+    const label = document.createElement("label");
+    label.style.display = "flex";
+    label.style.alignItems = "center";
+    label.style.gap = "8px";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = keys.includes(opt.key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) {
+        if (!keys.includes(opt.key)) keys.push(opt.key);
+      } else {
+        keys = keys.filter((k) => k !== opt.key);
+      }
+    });
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(opt.label));
+    div.appendChild(label);
+  });
+  body.appendChild(div);
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.gap = "8px";
+  footer.style.justifyContent = "flex-end";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Apply";
+  saveBtn.addEventListener("click", () => {
+    if (keys.length === 0) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Columns",
+          meta: "Keep at least one column visible.",
+        });
+      }
+      return;
+    }
+    transportVisibleColumnKeys = [...keys];
+    try {
+      localStorage.setItem(TRIPS_VISIBLE_COLS_KEY, JSON.stringify(transportVisibleColumnKeys));
+    } catch (_) {}
+    closeModal();
+    renderZeroDayTripsTable();
+  });
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+  openModal({ title: "Transportation columns", body, footer });
+}
+
+function bindTransportColumnsMenuOnce() {
+  if (document.documentElement.dataset.transportColumnsMenuBound === "1") return;
+  document.documentElement.dataset.transportColumnsMenuBound = "1";
+  document.addEventListener("click", (e) => {
+    const openBtn = e.target.closest("[data-transport-columns-open]");
+    if (!openBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openTransportColumnsModal();
+    const wrap = openBtn.closest("[data-table-view-for]");
+    if (wrap) {
+      const menu = wrap.querySelector("[data-table-view-dropdown]");
+      const tb = wrap.querySelector(".table-view-menu-btn");
+      if (menu) menu.hidden = true;
+      if (tb) tb.setAttribute("aria-expanded", "false");
+    }
+  });
+}
+
 function renderZeroDayTripsTable() {
   if (!zeroDayTripsTableBody) return;
   initTransportTripsToolbarListeners();
+  syncTransportTableHeader();
+
+  const colSpan = getVisibleTripColumnCount();
 
   if (!zeroDayTrips.length) {
     zeroDayTripsTableBody.innerHTML = `
       <tr>
-        <td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
+        <td colspan="${colSpan}" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
       </tr>
     `;
     updateTransportTripsSortIndicators();
@@ -1239,7 +1453,7 @@ function renderZeroDayTripsTable() {
   if (!afterType.length) {
     zeroDayTripsTableBody.innerHTML = `
       <tr>
-        <td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
+        <td colspan="${colSpan}" class="text-muted" style="text-align: center; padding: 24px;">${getEmptyTransportMessage()}</td>
       </tr>
     `;
     updateTransportTripsSortIndicators();
@@ -1251,7 +1465,7 @@ function renderZeroDayTripsTable() {
   if (!dataRows.length) {
     zeroDayTripsTableBody.innerHTML = `
       <tr>
-        <td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}" class="text-muted" style="text-align: center; padding: 24px;">No trips match your search or filters.</td>
+        <td colspan="${colSpan}" class="text-muted" style="text-align: center; padding: 24px;">No trips match your search or filters.</td>
       </tr>
     `;
     updateTransportTripsSortIndicators();
@@ -1263,40 +1477,14 @@ function renderZeroDayTripsTable() {
     if (item.type === "group") {
       const tr = document.createElement("tr");
       tr.className = "pledges-toolbar__group-header";
-      tr.innerHTML = `<td colspan="${ZERO_DAY_TRIPS_TABLE_COL_COUNT}">${escapeHtml(item.label)}</td>`;
+      tr.innerHTML = `<td colspan="${colSpan}">${escapeHtml(item.label)}</td>`;
       zeroDayTripsTableBody.appendChild(tr);
       continue;
     }
     const trip = item.trip;
-    const typeLabel = getTripTypeLabel(trip);
-    const count = getTripAssignedVoterCount(trip);
-    const statusClass = tripStatusBadgeClass(trip.status);
     const tr = document.createElement("tr");
     tr.dataset.tripId = String(trip.id);
-    tr.innerHTML = `
-      <td><span class="badge badge--unknown">${escapeHtml(typeLabel)}</span></td>
-      <td>${escapeHtml(trip.route)}</td>
-      <td>${escapeHtml(trip.vehicle)}</td>
-      <td>${escapeHtml(trip.driver)}</td>
-      <td>${formatDateTime(trip.pickupTime)}</td>
-      <td>${count}</td>
-      <td><span class="${escapeHtml(statusClass)}">${escapeHtml(trip.status)}</span></td>
-      <td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate">
-        <input type="text" class="input input--trip-table-meta" data-trip-meta-field="rate" data-trip-id="${trip.id}" value="${escapeHtml(trip.rate || "")}" placeholder="—" aria-label="Route rate" title="Rate for this route">
-      </td>
-      <td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount">
-        <input type="text" class="input input--trip-table-meta" data-trip-meta-field="amount" data-trip-id="${trip.id}" value="${escapeHtml(trip.amount || "")}" placeholder="—" aria-label="Route amount" title="Amount for this route">
-      </td>
-      <td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks">
-        <input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-trip-meta-field="remarks" data-trip-id="${trip.id}" value="${escapeHtml(trip.remarks || "")}" placeholder="Notes / remarks" aria-label="Route remarks" title="Remarks for this route">
-      </td>
-      <td class="transport-trips-table__actions">
-        <button type="button" class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
-        <button type="button" class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">Voters</button>
-        <button type="button" class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
-        <button type="button" class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
-      </td>
-    `;
+    tr.innerHTML = buildTripDataCellsHtml(trip) + buildTripActionsCellHtml(trip);
     zeroDayTripsTableBody.appendChild(tr);
   }
   updateTransportTripsSortIndicators();
@@ -4112,6 +4300,8 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   loadVotedEntries();
   loadMonitors();
   loadTrips();
+  initTransportVisibleColumns();
+  bindTransportColumnsMenuOnce();
   initZeroDayTabs();
   bindTransportMenu();
   renderZeroDayTripsTable();
@@ -4255,8 +4445,10 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         if (!inp || !transportPanel.contains(inp)) return;
         const tid = inp.getAttribute("data-trip-id");
         const field = inp.getAttribute("data-trip-meta-field");
-        if (tid == null || tid === "" || (field !== "rate" && field !== "amount" && field !== "remarks")) return;
-        persistTripMetaField(tid, field, inp.value.trim());
+        if (tid == null || tid === "" || !field || !TRIP_TABLE_EDITABLE_FIELDS.has(field)) return;
+        const raw =
+          field === "pickupTime" ? inp.value : String(inp.value || "").trim();
+        persistTripMetaField(tid, field, raw);
       },
       true
     );

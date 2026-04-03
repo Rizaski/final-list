@@ -1115,6 +1115,8 @@
                     <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="compact">Compact</button>
                     <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="default">Default</button>
                     <button type="button" class="dropdown-menu__item table-view-dropdown__option" role="menuitem" data-table-view-density="comfortable">Comfortable</button>
+                    <div class="dropdown-menu__divider" role="separator" aria-hidden="true"></div>
+                    <button type="button" class="dropdown-menu__item" role="menuitem" data-transport-columns-open>Columns…</button>
                   </div>
                 </div>
                 <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
@@ -1175,18 +1177,8 @@
               <div class="table-wrapper table-wrapper--sticky-header">
                 <table class="data-table" id="zeroDayTripsTable" role="table" aria-label="Transportation trips">
                   <thead>
-                    <tr>
-                      <th scope="col" class="th-sortable" data-sort-key="type">Type<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="route">Trip / Route<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="vehicle">Vessel / Flight no.<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="driver">Driver / Pilot / Captain<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="pickup">Pickup time<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="voters">Voters assigned<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="status">Status<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="rate">Rate<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="amount">Amount<span class="sort-indicator"></span></th>
-                      <th scope="col" class="th-sortable" data-sort-key="remarks">Remarks<span class="sort-indicator"></span></th>
-                      <th scope="col"><span class="sr-only">Actions</span></th>
+                    <tr id="zeroDayTripsTableHeadRow">
+                      <!-- Column headers built by zeroDay.js (visibility + sort) -->
                     </tr>
                   </thead>
                   <tbody>
