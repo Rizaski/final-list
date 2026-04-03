@@ -2261,8 +2261,18 @@ function transportRoutesReportRowCells(r) {
   const tripsText = tripLines.length ? tripLines.join("\n") : "—";
   const tripsHtml = tripLines.length ? tripLines.map((line) => escapeHtml(line)).join("<br>") : escapeHtml("—");
   const remarks = String(r.remarks || "").trim();
+  const vehicle = String(r.vehicle || "").trim();
+  const driver = String(r.driver || "").trim();
+  const startTimeRaw = formatDateTime(r.pickupTime);
+  const startTime = startTimeRaw && startTimeRaw !== "–" ? startTimeRaw : "";
   return {
     routeNum: String(displayNum || ""),
+    vehicle,
+    vehicleDisplay: vehicle || "—",
+    driver,
+    driverDisplay: driver || "—",
+    startTime,
+    startTimeDisplay: startTime || "—",
     tripsText,
     tripsHtml,
     remarks,
@@ -2284,6 +2294,9 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
       return `
           <tr>
             <td class="transport-routes-report-route-num">${escapeHtml(c.routeNum)}</td>
+            <td class="transport-routes-report-vehicle">${escapeHtml(c.vehicleDisplay)}</td>
+            <td class="transport-routes-report-driver">${escapeHtml(c.driverDisplay)}</td>
+            <td class="transport-routes-report-start">${escapeHtml(c.startTimeDisplay)}</td>
             <td class="transport-routes-report-trips">${c.tripsHtml}</td>
             <td class="transport-routes-report-remarks">${escapeHtml(c.remarksDisplay)}</td>
           </tr>`;
@@ -2368,24 +2381,41 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
             font-weight: 600;
             font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
+            text-transform: none;
+            letter-spacing: 0.02em;
             color: #334155;
           }
           .transport-routes-report-route-num {
-            width: 72px;
+            width: 64px;
             white-space: nowrap;
             font-weight: 500;
+          }
+          .transport-routes-report-vehicle {
+            min-width: 100px;
+            width: 12%;
+            white-space: normal;
+            word-wrap: break-word;
+          }
+          .transport-routes-report-driver {
+            min-width: 100px;
+            width: 12%;
+            white-space: normal;
+            word-wrap: break-word;
+          }
+          .transport-routes-report-start {
+            width: 120px;
+            white-space: nowrap;
+            font-size: 11px;
           }
           .transport-routes-report-trips {
             white-space: normal;
             line-height: 1.5;
-            min-width: 200px;
-            width: 32%;
+            min-width: 180px;
+            width: 22%;
           }
           .transport-routes-report-remarks {
-            min-width: 320px;
-            width: 48%;
+            min-width: 200px;
+            width: auto;
             max-width: none;
             white-space: normal;
             word-wrap: break-word;
@@ -2441,6 +2471,9 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
           <thead>
             <tr>
               <th scope="col">Route #</th>
+              <th scope="col">Vessel/Flight no.</th>
+              <th scope="col">Driver/Captain</th>
+              <th scope="col">Start time</th>
               <th scope="col">Trips</th>
               <th scope="col">Remarks</th>
             </tr>
@@ -2467,11 +2500,13 @@ function downloadTransportRoutesReportCsv(routeSnapshots) {
     }
     return;
   }
-  const headers = ["Route #", "Trips", "Remarks"];
+  const headers = ["Route #", "Vessel/Flight no.", "Driver/Captain", "Start time", "Trips", "Remarks"];
   const lines = [headers.map(csvEscapeTransportCell).join(",")];
   list.forEach((r) => {
     const c = transportRoutesReportRowCells(r);
-    lines.push([c.routeNum, c.tripsText, c.remarks].map(csvEscapeTransportCell).join(","));
+    lines.push(
+      [c.routeNum, c.vehicle, c.driver, c.startTime || "—", c.tripsText, c.remarks].map(csvEscapeTransportCell).join(",")
+    );
   });
   const csv = lines.join("\r\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
@@ -2490,11 +2525,13 @@ async function shareTransportRoutesReport(routeSnapshots) {
     }
     return;
   }
-  const headerLine = ["Route #", "Trips", "Remarks"].join("\t");
+  const headerLine = ["Route #", "Vessel/Flight no.", "Driver/Captain", "Start time", "Trips", "Remarks"].join("\t");
   const rowLines = [headerLine];
   list.forEach((r) => {
     const c = transportRoutesReportRowCells(r);
-    rowLines.push([c.routeNum, c.tripsText, c.remarks].join("\t"));
+    rowLines.push(
+      [c.routeNum, c.vehicle, c.driver, c.startTime || "—", c.tripsText, c.remarks].join("\t")
+    );
   });
   const title = `Transport routes (${list.length})`;
   const text = `${title}\n\n${rowLines.join("\n")}`;
