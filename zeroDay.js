@@ -5838,6 +5838,7 @@ function openBoxVoterListModal(boxKey, kind) {
       return;
     }
     const printRows = [...rows].sort(compareVotersByBallotSequenceThenName);
+    const reportOmitPhotos = isZeroDayAggregateBallotKey(boxKey);
     const reportTitle = kind === "voted" ? "Voted report" : "Not yet voted report";
     const subtitle =
       kind === "voted"
@@ -5848,9 +5849,11 @@ function openBoxVoterListModal(boxKey, kind) {
       .map((v) => {
         const agent = getAgentForVoter(v.id);
         const abs = zdAbsolutePhotoUrl(v);
-        const photoTd = abs
-          ? `<td class="col-photo"><img src="${escapeHtml(abs)}" alt="" /></td>`
-          : `<td class="col-photo">—</td>`;
+        const photoTd = reportOmitPhotos
+          ? ""
+          : abs
+            ? `<td class="col-photo"><img src="${escapeHtml(abs)}" alt="" /></td>`
+            : `<td class="col-photo">—</td>`;
         const timeCell =
           kind === "voted"
             ? escapeHtml(formatDateTime(v._timeMarked) || "")
@@ -5904,7 +5907,7 @@ function openBoxVoterListModal(boxKey, kind) {
           .btn { border: 1px solid #d1d5db; background: #fff; color: #111; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
           .btn--primary { border-color: #2563eb; background: #2563eb; color: #fff; }
           .table-wrap { padding: 10px; overflow: auto; }
-          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: 1020px; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; min-width: ${reportOmitPhotos ? "920px" : "1020px"}; }
           th, td {
             border: 1px solid #e5e7eb;
             padding: 4px 5px;
@@ -5961,7 +5964,7 @@ function openBoxVoterListModal(boxKey, kind) {
               <thead>
                 <tr>
                   <th class="col-seq">Seq</th>
-                  <th class="col-photo">Photo</th>
+                  ${reportOmitPhotos ? "" : "<th class=\"col-photo\">Photo</th>"}
                   <th class="col-name">Name</th>
                   <th class="col-id">ID Number</th>
                   <th class="col-phone">Phone</th>
