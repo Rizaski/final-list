@@ -6754,7 +6754,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   const standaloneBallotPage = options.standaloneBallotPage === true;
   let monitor = options.remoteMonitor;
   let assignedVoters = [];
-  /** Mutable array from ballot-box.html, or null when using shared `zeroDayVotedEntries` (admin / embedded). */
+  /** Firestore-backed list for this monitor session; ballot-box passes its array via options. */
   let remoteVotedEntriesRef = options.remoteVotedEntries != null ? options.remoteVotedEntries : null;
 
   if (isBallotBoxOnly) {
@@ -6883,6 +6883,13 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     monitorViewEl.classList.add("monitor-view--standalone-ballot");
   }
 
+  // Any URL with a monitor token must use a dedicated voted list + Firestore snapshot so every device
+  // sees marks from all booths; do not rely on shared localStorage-only zeroDayVotedEntries here.
+  if (remoteVotedEntriesRef == null && token) {
+    remoteVotedEntriesRef = [];
+  }
+  const persistMarksToZeroDayLocalStorage = !isRemote && remoteVotedEntriesRef == null;
+
   let ballotSessionStatus = "open";
   let ballotSessionPauseReason = "";
   let ballotSessionPausedAt = "";
@@ -6905,13 +6912,19 @@ export function initMonitorView(token, votersContextParam, options = {}) {
   }
   firebaseInitPromise
     .then((api) => {
-      if (!token || remoteVotedEntriesRef == null || !api?.onVotedSnapshotForMonitor) return;
-      remoteVotedSnapshotUnsub = api.onVotedSnapshotForMonitor(token, (entries) => {
+      if (!token || !remoteVotedEntriesRef || !api?.onVotedSnapshotForMonitor) return;
+      function applyVotedEntriesFromServer(entries) {
         remoteVotedEntriesRef.length = 0;
         remoteVotedEntriesRef.push(...entries);
         renderMonitorViewHeader();
         updateMonitorSearchUi();
-      });
+        const v = getCurrentDisplayedVoter();
+        if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
+      }
+      if (api.getVotedForMonitor) {
+        void api.getVotedForMonitor(token).then(applyVotedEntriesFromServer).catch(() => {});
+      }
+      remoteVotedSnapshotUnsub = api.onVotedSnapshotForMonitor(token, applyVotedEntriesFromServer);
     })
     .catch(() => {});
 
@@ -7573,7 +7586,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         if (api.deleteVotedForMonitor) await api.deleteVotedForMonitor(token, voterId);
       } catch (_) {}
     }
-    if (!isRemote) saveVotedEntries();
+    if (persistMarksToZeroDayLocalStorage) saveVotedEntries();
     if (isRemote && options.onRefreshVoted) await options.onRefreshVoted().catch(() => {});
     renderMonitorViewHeader();
     const v = findAssignedVoterForMark(voterId);
@@ -7781,7 +7794,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
         .catch(() => {});
     }
 
-    if (!isRemote) saveVotedEntries();
+    if (persistMarksToZeroDayLocalStorage) saveVotedEntries();
     renderMonitorViewHeader();
     if (v && monitorViewResult && !standaloneBallotPage) renderMonitorViewResult(v);
     const toastVoter =
@@ -7801,6 +7814,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
 
     // Refresh card grid on the admin page for immediate feedback.
     renderZeroDayVoteTable();
+    notifyVotedEntriesUpdated();
   }
 
   function renderMonitorNotFound(query) {
