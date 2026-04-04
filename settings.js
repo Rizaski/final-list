@@ -8,6 +8,7 @@ import {
   syncLocalVotersToFirebase,
   AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY,
   importCandidatePledgeAgentFromCsvRows,
+  getEffectiveVotedAtForVoter,
 } from "./voters.js";
 import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
 import { firebaseInitPromise } from "./firebase.js";
@@ -1706,7 +1707,10 @@ async function openAgentAssignedVotersModal(agent) {
         case "pledge":
           return String(va.pledgeStatus || "").localeCompare(String(vb.pledgeStatus || ""), "en");
         case "voted":
-          return String(vb.votedAt || "").localeCompare(String(va.votedAt || ""), "en");
+          return String(getEffectiveVotedAtForVoter(vb) || "").localeCompare(
+            String(getEffectiveVotedAtForVoter(va) || ""),
+            "en"
+          );
         case "sequence":
         default: {
           const c = compareBallotSequence(va.sequence, vb.sequence);
@@ -1797,7 +1801,7 @@ async function openAgentAssignedVotersModal(agent) {
             <td>${escapeHtml(v.metStatus || "—")}</td>
             <td>${escapeHtml(v.persuadable || "—")}</td>
             <td>${escapeHtml(v.pledgedAt || "—")}</td>
-            <td class="voted-status-cell">${escapeHtml(v.votedAt || "—")}</td>
+            <td class="voted-status-cell">${escapeHtml(getEffectiveVotedAtForVoter(v) || "—")}</td>
             <td>${escapeHtml(row.assignmentScope || "—")}</td>
             <td>${escapeHtml(v.notes || v.callComments || "—")}</td>
           </tr>
@@ -1872,7 +1876,7 @@ async function openAgentAssignedVotersModal(agent) {
         v.metStatus || "",
         v.persuadable || "",
         v.pledgedAt || "",
-        v.votedAt || "",
+        getEffectiveVotedAtForVoter(v) || "",
         row.assignmentScope || "",
         v.notes || v.callComments || "",
       ];
@@ -1914,7 +1918,7 @@ async function openAgentAssignedVotersModal(agent) {
             <td>${escapeHtml(v.permanentAddress || "")}</td>
             <td>${escapeHtml(reportBallotBoxLabel(v))}</td>
             <td>${escapeHtml(v.pledgeStatus || "undecided")}</td>
-            <td>${escapeHtml(v.votedAt || "")}</td>
+            <td>${escapeHtml(getEffectiveVotedAtForVoter(v) || "")}</td>
             <td>${escapeHtml(row.assignmentScope || "")}</td>
           </tr>
         `;

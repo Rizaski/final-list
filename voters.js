@@ -832,6 +832,17 @@ export function getVoterImageSrc(voter) {
   return VOTER_IMAGES_BASE + id + ".jpg";
 }
 
+/**
+ * ISO time when this voter was marked voted: Firestore `votedAt` if set, else Zero Day monitor marks
+ * (ballot-box links often only write monitors/.../voted, not the voter doc, when no staff user is signed in).
+ */
+export function getEffectiveVotedAtForVoter(voter) {
+  if (!voter || voter.id == null) return "";
+  const doc = voter.votedAt || voter.votedTimeMarked;
+  const fromMarks = getVotedTimeMarked(voter.id);
+  return String(doc || fromMarks || "").trim();
+}
+
 function supportBadgeClass(status) {
   switch (status) {
     case "supporting":
