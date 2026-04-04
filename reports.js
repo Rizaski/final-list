@@ -186,6 +186,38 @@ function renderPledgePie(container, { yesPct, noPct, undecidedPct, yesCount = 0,
   }
 }
 
+/** Horizontal bars for general pledge overview (same counts / % of all voters as the pie). */
+function renderPledgeOverviewBars(container, { yesCount, noCount, undecidedCount, totalVoters }) {
+  if (!container) return;
+  const tv = typeof totalVoters === "number" ? totalVoters : yesCount + noCount + undecidedCount;
+  if (tv === 0) {
+    container.innerHTML =
+      '<div class="helper-text">No pledge data yet. Import voters or update pledges to see distribution.</div>';
+    return;
+  }
+  const yesPct = (yesCount / tv) * 100;
+  const noPct = (noCount / tv) * 100;
+  const undecidedPct = (undecidedCount / tv) * 100;
+  const rows = [
+    { label: "Yes", count: yesCount, pct: yesPct, fillClass: "chart-bar__fill--pledge-yes" },
+    { label: "No", count: noCount, pct: noPct, fillClass: "chart-bar__fill--pledge-no" },
+    { label: "Undecided", count: undecidedCount, pct: undecidedPct, fillClass: "chart-bar__fill--pledge-undecided" },
+  ];
+  container.innerHTML = "";
+  rows.forEach((row) => {
+    const el = document.createElement("div");
+    el.className = "chart-bar";
+    el.innerHTML = `
+      <div class="chart-bar__label">${escapeHtml(row.label)}</div>
+      <div class="chart-bar__track">
+        <div class="chart-bar__fill ${row.fillClass}" style="width:${Math.min(100, row.pct).toFixed(1)}%"></div>
+      </div>
+      <div class="chart-bar__value">${row.count.toLocaleString("en-MV")} (${row.pct.toFixed(1)}%)</div>
+    `;
+    container.appendChild(el);
+  });
+}
+
 function buildDetailTable(columns, rows) {
   const wrap = document.createElement("div");
   wrap.className = "table-wrapper";
@@ -400,6 +432,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   const pledgeChart = document.getElementById("reportsPledgeChart");
   const referendumChart = document.getElementById("reportsReferendumChart");
   const registrationChart = document.getElementById("reportsRegistrationChart");
+  const pledgeOverviewBars = document.getElementById("reportsPledgeOverviewBars");
   const boxPledgeChart = document.getElementById("reportsBoxPledgeChart");
   const winOMeterEl = document.getElementById("reportsWinOMeter");
   const candidateSummaryEl = document.getElementById("reportsCandidatePledgeSummary");
@@ -558,6 +591,12 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     const undecidedPct =
       totalVoters === 0 ? 0 : (undecidedCount / totalVoters) * 100;
     renderPledgePie(registrationChart, { yesPct, noPct, undecidedPct, yesCount, noCount, undecidedCount });
+    renderPledgeOverviewBars(pledgeOverviewBars, {
+      yesCount,
+      noCount,
+      undecidedCount,
+      totalVoters,
+    });
 
     // Candidate-level vote result: among pledged voters, how many have voted (per candidate)
     const candidates = getCandidates();

@@ -1477,6 +1477,45 @@ body.sidebar-collapsed .nav-item {
   background: linear-gradient(90deg, #1d4ed8, #22c55e);
 }
 
+.chart-bar__fill--pledge-yes {
+  background: var(--color-pledged);
+}
+
+.chart-bar__fill--pledge-no {
+  background: var(--color-not-pledged);
+}
+
+.chart-bar__fill--pledge-undecided {
+  background: var(--color-undecided);
+}
+
+/* Reports → pledge distribution: pie + overview bars */
+.pledge-distribution-card__body {
+  padding-top: 8px;
+}
+
+.pledge-distribution__charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .pledge-distribution__charts {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pledge-distribution__chart-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .chart-bar__value {
   text-align: right;
   white-space: nowrap;

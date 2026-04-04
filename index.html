@@ -1361,12 +1361,26 @@
 
             <section class="card">
               <header class="card-header card-header--split">
-                <h2>Pledge distribution (pie)</h2>
+                <div>
+                  <h2>Pledge distribution</h2>
+                  <p class="card-subtitle">General overview — all voters (Yes, No, Undecided)</p>
+                </div>
                 <button type="button" class="ghost-button ghost-button--small" data-report-details="pledge-pie">View details</button>
               </header>
-              <div class="card-body">
-                <div id="reportsRegistrationChart" class="chart-row">
-                  <!-- Pledge voters: Yes / No / Undecided pie -->
+              <div class="card-body pledge-distribution-card__body">
+                <div class="pledge-distribution__charts">
+                  <div class="pledge-distribution__pie-wrap">
+                    <h3 class="pledge-distribution__chart-title">Share</h3>
+                    <div id="reportsRegistrationChart" class="chart-row">
+                      <!-- Yes / No / Undecided pie -->
+                    </div>
+                  </div>
+                  <div class="pledge-distribution__bars-wrap">
+                    <h3 class="pledge-distribution__chart-title">Totals</h3>
+                    <div id="reportsPledgeOverviewBars" class="chart-row">
+                      <!-- Bar chart: same overview counts -->
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
