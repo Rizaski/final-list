@@ -1377,6 +1377,88 @@ function saveVotedEntries() {
   } catch (_) {}
 }
 
+/**
+ * Ballot-box monitor docs live at monitors/{token} with list denied, so staff browsers cannot discover
+ * tokens from Firestore. We mirror active share tokens on campaign/config.monitorShareTokens so every
+ * signed-in client can poll + listen to the same voted/* subcollections.
+ */
+async function collectMonitorShareTokensForSync(api) {
+  const tokenSet = new Set();
+  loadMonitors();
+  for (const m of zeroDayMonitors) {
+    const tok = m && m.shareToken;
+    if (tok) tokenSet.add(String(tok).trim());
+  }
+  if (api && typeof api.getFirestoreCampaignConfig === "function") {
+    try {
+      const config = await api.getFirestoreCampaignConfig();
+      const extra = config && config.monitorShareTokens;
+      if (Array.isArray(extra)) {
+        for (const t of extra) {
+          const s = String(t || "").trim();
+          if (s) tokenSet.add(s);
+        }
+      }
+    } catch (_) {}
+  }
+  return tokenSet;
+}
+
+async function addMonitorShareTokenToCampaignConfig(token) {
+  const t = String(token || "").trim();
+  if (!t) return;
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getFirestoreCampaignConfig || !api.setFirestoreCampaignConfig) return;
+    const config = (await api.getFirestoreCampaignConfig()) || {};
+    const existing = Array.isArray(config.monitorShareTokens)
+      ? config.monitorShareTokens.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    if (existing.includes(t)) return;
+    await api.setFirestoreCampaignConfig({
+      ...config,
+      monitorShareTokens: [...existing, t],
+    });
+  } catch (_) {}
+}
+
+async function removeMonitorShareTokenFromCampaignConfig(token) {
+  const t = String(token || "").trim();
+  if (!t) return;
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getFirestoreCampaignConfig || !api.setFirestoreCampaignConfig) return;
+    const config = (await api.getFirestoreCampaignConfig()) || {};
+    const existing = Array.isArray(config.monitorShareTokens)
+      ? config.monitorShareTokens.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    const next = existing.filter((x) => x !== t);
+    await api.setFirestoreCampaignConfig({ ...config, monitorShareTokens: next });
+  } catch (_) {}
+}
+
+async function publishAllLocalMonitorTokensToCampaignConfig() {
+  loadMonitors();
+  const tokens = zeroDayMonitors
+    .map((m) => m && m.shareToken)
+    .filter((t) => typeof t === "string" && t.trim())
+    .map((t) => t.trim());
+  if (!tokens.length) return;
+  try {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getFirestoreCampaignConfig || !api.setFirestoreCampaignConfig) return;
+    const config = (await api.getFirestoreCampaignConfig()) || {};
+    const existing = Array.isArray(config.monitorShareTokens)
+      ? config.monitorShareTokens.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    const set = new Set([...existing, ...tokens]);
+    await api.setFirestoreCampaignConfig({
+      ...config,
+      monitorShareTokens: Array.from(set),
+    });
+  } catch (_) {}
+}
+
 /** Notify other modules (e.g. Voters list) that voted entries changed so they can refresh. */
 function notifyVotedEntriesUpdated() {
   try {
@@ -1389,11 +1471,9 @@ export async function syncVotedFromFirestore() {
   try {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.getVotedForMonitor) return;
-    loadMonitors();
+    const tokenSet = await collectMonitorShareTokensForSync(api);
     const fromMonitors = new Map();
-    for (const m of zeroDayMonitors) {
-      const token = m.shareToken;
-      if (!token) continue;
+    for (const token of tokenSet) {
       const entries = await api.getVotedForMonitor(token);
       for (const { voterId, timeMarked } of entries) {
         const key = String(voterId);
@@ -1464,18 +1544,23 @@ function subscribeVotedRealtime() {
   votedRealtimeUnsubscribes.forEach((fn) => { try { fn(); } catch (_) {} });
   votedRealtimeUnsubscribes = [];
   loadMonitors();
-  firebaseInitPromise.then((api) => {
-    if (!api.ready || !api.onVotedSnapshotForMonitor) return;
-    for (const m of zeroDayMonitors) {
-      const token = m.shareToken;
-      if (!token) continue;
-      const unsub = api.onVotedSnapshotForMonitor(token, (entries) => {
-        votedByMonitor[token] = entries;
-        mergeRealtimeVotedIntoLocal();
-      });
-      votedRealtimeUnsubscribes.push(unsub);
-    }
-  }).catch(() => {});
+  firebaseInitPromise
+    .then(async (api) => {
+      if (!api.ready || !api.onVotedSnapshotForMonitor) return;
+      const tokenSet = await collectMonitorShareTokensForSync(api);
+      for (const k of Object.keys(votedByMonitor)) {
+        if (!tokenSet.has(k)) delete votedByMonitor[k];
+      }
+      mergeRealtimeVotedIntoLocal();
+      for (const token of tokenSet) {
+        const unsub = api.onVotedSnapshotForMonitor(token, (entries) => {
+          votedByMonitor[token] = entries;
+          mergeRealtimeVotedIntoLocal();
+        });
+        votedRealtimeUnsubscribes.push(unsub);
+      }
+    })
+    .catch(() => {});
 }
 /** Returns set of voter IDs that have been marked as voted (for reports). */
 export function getVotedVoterIds() {
@@ -1515,12 +1600,7 @@ export async function clearVotedForVoter(voterId) {
       );
     }
     if (api.ready && api.deleteVotedForMonitor) {
-      loadMonitors();
-      const tokenSet = new Set(
-        zeroDayMonitors
-          .map((m) => m && m.shareToken)
-          .filter((t) => typeof t === "string" && t.trim() !== "")
-      );
+      const tokenSet = await collectMonitorShareTokensForSync(api);
       await Promise.all(
         Array.from(tokenSet).map((token) =>
           api.deleteVotedForMonitor(token, voterId)
@@ -1596,7 +1676,7 @@ function initZeroDayTabs() {
     if (tabKey === "vote") {
       firebaseInitPromise.then(async (api) => {
         if (!api.ready || !api.getVotedForMonitor) return;
-        loadMonitors();
+        await publishAllLocalMonitorTokensToCampaignConfig();
         await syncVotedFromFirestore();
         zeroDayVoteCurrentPage = 1;
         renderZeroDayVoteTable();
@@ -4746,6 +4826,7 @@ async function syncMonitorToFirestore(monitor) {
       monitoringEnabled,
       createdAt: monitor.createdAt || new Date().toISOString(),
     });
+    await addMonitorShareTokenToCampaignConfig(monitor.shareToken);
   } catch (_) {}
 }
 
@@ -4782,6 +4863,7 @@ function deleteMonitorLink(monitorId) {
     firebaseInitPromise
       .then((api) => api.deleteMonitorDoc && api.deleteMonitorDoc(token))
       .catch(() => {});
+    void removeMonitorShareTokenFromCampaignConfig(token);
     renderMonitorsTable();
     subscribeVotedRealtime();
     if (window.appNotifications) {
@@ -6639,9 +6721,9 @@ export function initZeroDayModule(votersContextParam, options = {}) {
     try {
       const api = await firebaseInitPromise;
       if (!api.ready || !api.setMonitorDoc) return;
-      loadMonitors();
-      for (const m of zeroDayMonitors) {
-        if (m.shareToken) await api.setMonitorDoc(m.shareToken, { monitoringEnabled: !!enabled });
+      const tokenSet = await collectMonitorShareTokensForSync(api);
+      for (const tok of tokenSet) {
+        await api.setMonitorDoc(tok, { monitoringEnabled: !!enabled });
       }
     } catch (_) {}
   }
@@ -6670,6 +6752,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 
   firebaseInitPromise.then(async (api) => {
     if (!api.ready || !api.getVotedForMonitor) return;
+    await publishAllLocalMonitorTokensToCampaignConfig();
     await syncVotedFromFirestore();
     zeroDayVoteCurrentPage = 1;
     renderZeroDayVoteTable();
