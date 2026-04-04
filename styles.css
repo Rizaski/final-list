@@ -6323,6 +6323,15 @@ textarea.voter-detail-referendum-notes:focus {
   margin-top: 2px;
 }
 
+.transport-route-trip-line--one-row {
+  display: block;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .data-table-col--trip-assignment,
 .trip-passenger-trip-cell {
   max-width: 220px;
@@ -6391,6 +6400,16 @@ textarea.voter-detail-referendum-notes:focus {
   align-items: center;
   gap: 8px;
   max-width: 220px;
+}
+
+/* Zero Day → Transportation routes: Pax (assigned voter count) */
+#zeroDayRoutesTable .transport-route-pax-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 10px 12px;
+  vertical-align: middle;
 }
 
 /* Zero Day → Transportation routes table (same cell treatment as trips) */

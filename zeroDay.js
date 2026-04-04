@@ -59,7 +59,12 @@ const ROUTE_TABLE_COLUMN_DEFS = [
   { key: "vehicle", label: "Vessel / Flight no.", sortKey: "vehicle" },
   { key: "driver", label: "Driver / Pilot / Captain", sortKey: "driver" },
   { key: "pickup", label: "Pickup time", sortKey: "pickup" },
-  { key: "voters", label: "Voters assigned", sortKey: "voters" },
+  {
+    key: "voters",
+    label: "Pax",
+    sortKey: "voters",
+    headerTitle: "Assigned voters (passengers) on linked trips for this route",
+  },
   { key: "status", label: "Status", sortKey: "status" },
   { key: "rate", label: "Rate", sortKey: "rate" },
   { key: "amount", label: "Amount", sortKey: "amount" },
@@ -575,22 +580,27 @@ function getRouteLinkedTripsSortedByPickup(route) {
   });
 }
 
-/** Title + pickup line for one trip (routes table cell uses both lines). */
-function getTransportRouteTripLineParts(trip) {
+/** One line per trip: type, trip name, and pickup time (routes table + search text). */
+function formatTransportRouteTripOneLine(trip) {
   const typeLabel = getTripTypeLabel(trip);
   const name = (trip.route || "").trim() || `Trip ${trip.id}`;
-  const pickupDisplay = formatDateTime(trip.pickupTime) || "—";
-  return { title: `${typeLabel}: ${name}`, pickupLabel: `Pickup: ${pickupDisplay}` };
+  const pt = formatDateTime(trip.pickupTime);
+  const pickupPart = pt && pt !== "–" ? pt : "—";
+  return `${typeLabel}: ${name} · Pickup: ${pickupPart}`;
 }
 
 /** One string per linked trip (search / CSV / summaries; includes pickup). Order: pickup time ascending. */
 function getTransportRouteTripLines(route) {
   const trips = getRouteLinkedTripsSortedByPickup(route);
   if (!trips.length) return [];
-  return trips.map((t) => {
-    const p = getTransportRouteTripLineParts(t);
-    return `${p.title} · ${p.pickupLabel}`;
-  });
+  return trips.map((t) => formatTransportRouteTripOneLine(t));
+}
+
+/** HTML for routes table Trips cell: one block per trip, name + pickup on a single line. */
+function formatTransportRouteTripTableLineHtml(trip) {
+  return `<div class="transport-route-trip-line transport-route-trip-line--one-row">${escapeHtml(
+    formatTransportRouteTripOneLine(trip)
+  )}</div>`;
 }
 
 /** One line per trip for route reports (Excel / print / share): name + pickup only, no trip type. Order: pickup ascending. */
@@ -1994,7 +2004,11 @@ function syncTransportRoutesTableHeader() {
       ? ` class="th-sortable" data-sort-key="${escapeHtml(col.sortKey)}"`
       : "";
     const ind = col.sortKey ? `<span class="sort-indicator"></span>` : "";
-    return `<th scope="col"${sortable}>${escapeHtml(col.label)}${ind}</th>`;
+    const titleAttr =
+      col.headerTitle != null && String(col.headerTitle).trim()
+        ? ` title="${escapeHtml(String(col.headerTitle))}"`
+        : "";
+    return `<th scope="col"${sortable}${titleAttr}>${escapeHtml(col.label)}${ind}</th>`;
   });
   ths.push(`<th scope="col"><span class="sr-only">Actions</span></th>`);
   theadRow.innerHTML = ths.join("");
@@ -2217,16 +2231,7 @@ function buildRouteDataCellsHtml(route, displayNum) {
       case "trips": {
         const trips = getRouteLinkedTripsSortedByPickup(route);
         const inner =
-          trips.length === 0
-            ? "—"
-            : trips
-                .map((t) => {
-                  const p = getTransportRouteTripLineParts(t);
-                  return `<div class="transport-route-trip-line"><div class="transport-route-trip-line__title">${escapeHtml(
-                    p.title
-                  )}</div><div class="transport-route-trip-line__pickup">${escapeHtml(p.pickupLabel)}</div></div>`;
-                })
-                .join("");
+          trips.length === 0 ? "—" : trips.map((t) => formatTransportRouteTripTableLineHtml(t)).join("");
         return `<td class="transport-route-trips-cell">${inner}</td>`;
       }
       case "vehicle":
@@ -2236,7 +2241,9 @@ function buildRouteDataCellsHtml(route, displayNum) {
       case "pickup":
         return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--pickup"><input type="datetime-local" class="input input--trip-table-meta input--trip-pickup-local" data-route-meta-field="pickupTime" data-route-id="${rid}" value="${escapeHtml(toDatetimeLocalValue(route.pickupTime))}" aria-label="Pickup time"></td>`;
       case "voters":
-        return `<td>${count}</td>`;
+        return `<td class="transport-route-pax-cell" title="Assigned voters on this route">${escapeHtml(
+          String(count)
+        )}</td>`;
       case "status":
         return `<td><span class="${escapeHtml(statusClass)}">${escapeHtml(route.status)}</span></td>`;
       case "rate":
@@ -2292,6 +2299,7 @@ function getAllVisibleRouteSnapshots() {
 
 function transportRoutesReportRowCells(r) {
   const displayNum = getTransportRouteDisplayNumber(r.id);
+  const pax = getRouteAssignedVoterCount(r);
   const tripLines = getTransportRouteTripsReportLines(r);
   const tripsText = tripLines.length ? tripLines.join("\n") : "—";
   const tripsHtml = tripLines.length
@@ -2310,6 +2318,7 @@ function transportRoutesReportRowCells(r) {
     driverDisplay: driver || "—",
     startTime,
     startTimeDisplay: startTime || "—",
+    pax: String(pax),
     tripsText,
     tripsHtml,
     remarks,
@@ -2356,6 +2365,7 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             <td class="transport-routes-report-vehicle">${escapeHtml(c.vehicleDisplay)}</td>
             <td class="transport-routes-report-driver">${escapeHtml(c.driverDisplay)}</td>
             <td class="transport-routes-report-start">${escapeHtml(c.startTimeDisplay)}</td>
+            <td class="transport-routes-report-pax">${escapeHtml(c.pax)}</td>
             <td class="transport-routes-report-trips">${c.tripsHtml}</td>
             <td class="transport-routes-report-remarks">${escapeHtml(c.remarksDisplay)}</td>
           </tr>`;
@@ -2481,7 +2491,7 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
           }
           table {
             width: 100%;
-            min-width: 640px;
+            min-width: 760px;
             table-layout: auto;
             border-collapse: collapse;
             font-size: 12px;
@@ -2511,8 +2521,8 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             padding: 8px 6px;
           }
           .transport-routes-report-vehicle {
-            max-width: 7rem;
-            width: 7rem;
+            max-width: 6rem;
+            width: 6rem;
             white-space: normal;
             word-wrap: break-word;
             overflow-wrap: anywhere;
@@ -2521,8 +2531,8 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             padding: 8px 6px;
           }
           .transport-routes-report-driver {
-            max-width: 7rem;
-            width: 7rem;
+            max-width: 6rem;
+            width: 6rem;
             white-space: normal;
             word-wrap: break-word;
             overflow-wrap: anywhere;
@@ -2531,15 +2541,26 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             padding: 8px 6px;
           }
           .transport-routes-report-start {
-            width: 7rem;
-            max-width: 7.5rem;
+            width: 6.5rem;
+            max-width: 7rem;
             white-space: nowrap;
             font-size: 11px;
             padding: 8px 6px;
           }
+          .transport-routes-report-pax {
+            width: 2.75rem;
+            max-width: 3.25rem;
+            white-space: nowrap;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+            font-size: 11px;
+            padding: 8px 6px;
+            vertical-align: top;
+          }
           .transport-routes-report-trips {
-            min-width: 42%;
-            width: auto;
+            min-width: 200px;
+            width: 30%;
             line-height: 1.45;
             vertical-align: top;
             word-wrap: break-word;
@@ -2560,15 +2581,16 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
             white-space: normal;
           }
           .transport-routes-report-remarks {
-            max-width: 8.5rem;
-            width: 8.5rem;
+            min-width: 16rem;
+            width: 38%;
+            max-width: none;
             font-size: 11px;
-            line-height: 1.35;
+            line-height: 1.4;
             white-space: normal;
             word-wrap: break-word;
             overflow-wrap: anywhere;
             vertical-align: top;
-            padding: 8px 6px;
+            padding: 8px 8px;
           }
           .transport-routes-report-actions {
             margin-top: 20px;
@@ -2641,6 +2663,7 @@ function openTransportRoutesReportWindow(routeSnapshots, autoPrint) {
               <th scope="col">Vessel/Flight no.</th>
               <th scope="col">Driver/Captain</th>
               <th scope="col">Start time</th>
+              <th scope="col" class="transport-routes-report-pax" title="Assigned voters (passengers) on linked trips">Pax</th>
               <th scope="col">Trips</th>
               <th scope="col">Remarks</th>
             </tr>
@@ -2668,12 +2691,12 @@ function downloadTransportRoutesReportCsv(routeSnapshots) {
     }
     return;
   }
-  const headers = ["Route #", "Vessel/Flight no.", "Driver/Captain", "Start time", "Trips", "Remarks"];
+  const headers = ["Route #", "Vessel/Flight no.", "Driver/Captain", "Start time", "Pax", "Trips", "Remarks"];
   const lines = [headers.map(csvEscapeTransportCell).join(",")];
   list.forEach((r) => {
     const c = transportRoutesReportRowCells(r);
     lines.push(
-      [c.routeNum, c.vehicle, c.driver, c.startTime || "—", c.tripsText, c.remarks].map(csvEscapeTransportCell).join(",")
+      [c.routeNum, c.vehicle, c.driver, c.startTime || "—", c.pax, c.tripsText, c.remarks].map(csvEscapeTransportCell).join(",")
     );
   });
   const csv = lines.join("\r\n");
@@ -2693,12 +2716,12 @@ async function shareTransportRoutesReport(routeSnapshots) {
     }
     return;
   }
-  const headerLine = ["Route #", "Vessel/Flight no.", "Driver/Captain", "Start time", "Trips", "Remarks"].join("\t");
+  const headerLine = ["Route #", "Vessel/Flight no.", "Driver/Captain", "Start time", "Pax", "Trips", "Remarks"].join("\t");
   const rowLines = [headerLine];
   list.forEach((r) => {
     const c = transportRoutesReportRowCells(r);
     rowLines.push(
-      [c.routeNum, c.vehicle, c.driver, c.startTime || "—", c.tripsText, c.remarks].join("\t")
+      [c.routeNum, c.vehicle, c.driver, c.startTime || "—", c.pax, c.tripsText, c.remarks].join("\t")
     );
   });
   const title = `Transport routes (${list.length})`;
