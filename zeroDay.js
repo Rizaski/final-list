@@ -4363,32 +4363,17 @@ function getUniqueBallotBoxes() {
   return Array.from(set).sort();
 }
 
-/** Resolve share URL and short access code for a monitor (same as copy payload). */
+/** Resolve secret ballot-box link for a monitor (ballot-box.html?monitor=TOKEN). */
 function getMonitorShareUrls(monitor) {
   const path = window.location.pathname || "/";
   const dir = path.endsWith("/") ? path : path.replace(/[^/]+$/, "") || "/";
   const ballotBoxUrl = window.location.origin + dir + "ballot-box.html";
   const monitorUrl = `${ballotBoxUrl}?monitor=${encodeURIComponent(monitor.shareToken)}`;
-  const accessCode = (monitor.shareToken || "").split("-")[1] || monitor.shareToken;
-  return { monitorUrl, accessCode, ballotBoxUrl };
+  return { monitorUrl, ballotBoxUrl };
 }
 
-/** SVG icons for monitor share UI (copy code vs copy list URL). */
-function monitorShareIconCopy() {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-}
 function monitorShareIconLink() {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 1 0-7l.7-.7a5 5 0 0 1 7 7l-.2.2"/><path d="M14 11a5 5 0 0 1 0 7l-.7.7a5 5 0 0 1-7-7l.2-.2"/></svg>`;
-}
-
-function copyMonitorAccessCodeOnly(monitorId) {
-  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
-  if (!monitor) return;
-  const { accessCode } = getMonitorShareUrls(monitor);
-  navigator.clipboard.writeText(accessCode).then(() => {
-    if (typeof window.showToast === "function") window.showToast("Code copied to clipboard");
-    else alert("Code copied to clipboard.");
-  }).catch(() => alert("Could not copy code: " + accessCode));
 }
 
 function copyMonitorListUrlOnly(monitorId) {
@@ -4396,21 +4381,9 @@ function copyMonitorListUrlOnly(monitorId) {
   if (!monitor) return;
   const { monitorUrl: url } = getMonitorShareUrls(monitor);
   navigator.clipboard.writeText(url).then(() => {
-    if (typeof window.showToast === "function") window.showToast("List link copied to clipboard");
-    else alert("List link copied to clipboard.");
+    if (typeof window.showToast === "function") window.showToast("Ballot box link copied to clipboard");
+    else alert("Ballot box link copied to clipboard.");
   }).catch(() => alert("Could not copy link: " + url));
-}
-
-/** Copy full URL + code (legacy / bulk share). */
-function copyMonitorLink(monitorId) {
-  const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
-  if (!monitor) return;
-  const { monitorUrl: url, accessCode } = getMonitorShareUrls(monitor);
-  const payload = `${url}\nCode: ${accessCode}`;
-  navigator.clipboard.writeText(payload).then(() => {
-    if (typeof window.showToast === "function") window.showToast("Link and code copied to clipboard");
-    else alert("Link and code copied to clipboard.");
-  }).catch(() => alert("Could not copy. Link: " + url + " (Code: " + accessCode + ")"));
 }
 
 function tearDownMonitorBallotSessionListeners() {
@@ -4525,7 +4498,6 @@ function renderMonitorsTable() {
   }
   zeroDayMonitors.forEach((m) => {
     const voterCount = (m.voterIds || []).length;
-    const { accessCode } = getMonitorShareUrls(m);
     const mid = String(m.id);
     const tr = document.createElement("tr");
     tr.dataset.monitorId = mid;
@@ -4536,10 +4508,8 @@ function renderMonitorsTable() {
       <td>${voterCount}</td>
       <td>
         <div class="monitor-share-cell">
-          <code class="monitor-link-preview">${escapeHtml(accessCode)}</code>
-          <span class="monitor-share-cell__icons" role="group" aria-label="Copy code or list link">
-            <button type="button" class="vote-box-card__copy-btn monitor-share-cell__icon-btn" data-copy-monitor-code="${mid}" title="Copy code" aria-label="Copy code">${monitorShareIconCopy()}</button>
-            <button type="button" class="vote-box-card__copy-btn monitor-share-cell__icon-btn" data-copy-monitor-link="${mid}" title="Copy list link" aria-label="Copy list link">${monitorShareIconLink()}</button>
+          <span class="monitor-share-cell__icons" role="group" aria-label="Copy ballot box link">
+            <button type="button" class="vote-box-card__copy-btn monitor-share-cell__icon-btn" data-copy-monitor-link="${mid}" title="Copy ballot box link" aria-label="Copy ballot box link">${monitorShareIconLink()}</button>
           </span>
         </div>
       </td>
@@ -4575,7 +4545,7 @@ function renderMonitorsTable() {
 function openMonitorViewModal(monitor) {
   if (!monitor) return;
   const voterCount = (monitor.voterIds || []).length;
-  const { monitorUrl, accessCode } = getMonitorShareUrls(monitor);
+  const { monitorUrl } = getMonitorShareUrls(monitor);
 
   const body = document.createElement("div");
   body.className = "form-grid";
@@ -4597,22 +4567,14 @@ function openMonitorViewModal(monitor) {
       <div class="detail-item-value">${voterCount}</div>
     </div>
     <div class="form-group" style="grid-column: 1 / -1;">
-      <label class="detail-item-label">Code</label>
-      <div class="monitor-modal-share-row">
-        <code class="monitor-modal-share-row__code">${escapeHtml(accessCode)}</code>
-        <button type="button" class="vote-box-card__copy-btn" id="monitorModalCopyCode" title="Copy code" aria-label="Copy code">${monitorShareIconCopy()}</button>
-      </div>
-    </div>
-    <div class="form-group" style="grid-column: 1 / -1;">
-      <label for="monitorViewUrlField" class="detail-item-label">List link</label>
+      <label for="monitorViewUrlField" class="detail-item-label">Ballot box link</label>
       <div class="monitor-modal-share-row">
         <input type="text" id="monitorViewUrlField" class="input monitor-modal-share-row__input" readonly value="${escapeHtml(monitorUrl)}">
-        <button type="button" class="vote-box-card__copy-btn" id="monitorModalCopyLink" title="Copy list link" aria-label="Copy list link">${monitorShareIconLink()}</button>
+        <button type="button" class="vote-box-card__copy-btn" id="monitorModalCopyLink" title="Copy ballot box link" aria-label="Copy ballot box link">${monitorShareIconLink()}</button>
       </div>
     </div>
   `;
 
-  body.querySelector("#monitorModalCopyCode")?.addEventListener("click", () => copyMonitorAccessCodeOnly(monitor.id));
   body.querySelector("#monitorModalCopyLink")?.addEventListener("click", () => copyMonitorListUrlOnly(monitor.id));
 
   const footer = document.createElement("div");
@@ -4665,7 +4627,7 @@ function openAddMonitorForm(existing) {
     </div>
     ${
       !isEdit
-        ? `<p class="helper-text" style="grid-column: 1 / -1;">After adding, use <strong>Assign</strong> to add all voters from this ballot box to the monitor’s list. Then use the <strong>Code</strong> and <strong>list link</strong> copy buttons to share.</p>`
+        ? `<p class="helper-text" style="grid-column: 1 / -1;">After adding, use <strong>Assign</strong> to add all voters from this ballot box to the monitor’s list. Then copy the <strong>ballot box link</strong> from Vote Marking or Manage Monitors to share with the booth.</p>`
         : ""
     }
     ${
@@ -6079,10 +6041,6 @@ function renderZeroDayVoteTable() {
             : "vote-box-card__badge--none";
       const monitorForBox = zeroDayMonitors.find((m) => (m.ballotBox || "").trim() === boxKey);
       const mid = monitorForBox ? String(monitorForBox.id) : "";
-      const codeDisplay = monitorForBox ? getMonitorShareUrls(monitorForBox).accessCode : "";
-      const codeCopyAttr = mid
-        ? `data-copy-monitor-code="${mid}"`
-        : `data-copy-monitor-code-for-box="${escapeHtml(boxKey)}"`;
       const linkCopyAttr = mid
         ? `data-copy-monitor-link="${mid}"`
         : `data-copy-monitor-link-for-box="${escapeHtml(boxKey)}"`;
@@ -6094,10 +6052,8 @@ function renderZeroDayVoteTable() {
             </div>
             <div class="vote-box-card__meta">${escapeHtml(box.island || "")}</div>
             <div class="vote-box-card__code-row">
-              <span class="vote-box-card__code-label">Code</span>
-              <code class="vote-box-card__code-value">${escapeHtml(codeDisplay || "—")}</code>
-              <button type="button" class="vote-box-card__copy-btn" ${codeCopyAttr} title="Copy code" aria-label="Copy code">${monitorShareIconCopy()}</button>
-              <button type="button" class="vote-box-card__copy-btn" ${linkCopyAttr} title="Copy list link" aria-label="Copy list link">${monitorShareIconLink()}</button>
+              <span class="vote-box-card__code-label">Ballot box link</span>
+              <button type="button" class="vote-box-card__copy-btn" ${linkCopyAttr} title="Copy ballot box link" aria-label="Copy ballot box link">${monitorShareIconLink()}</button>
             </div>
           </div>
           <span class="vote-box-card__badge ${badgeClass}">${percentage}% voted</span>
@@ -6431,7 +6387,6 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 
       const viewBtn = e.target.closest("[data-view-monitor]");
       const assignBtn = e.target.closest("[data-assign-voters]");
-      const copyCodeBtn = e.target.closest("[data-copy-monitor-code]");
       const copyLinkBtn = e.target.closest("[data-copy-monitor-link]");
       const editBtn = e.target.closest("[data-edit-monitor]");
       const deleteBtn = e.target.closest("[data-delete-monitor]");
@@ -6469,9 +6424,6 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         closeAllMonitorRowMenus(monitorsPanel);
         const id = Number(assignBtn.getAttribute("data-assign-voters"));
         assignVotersFromBallotBox(id);
-      } else if (copyCodeBtn) {
-        const id = Number(copyCodeBtn.getAttribute("data-copy-monitor-code"));
-        copyMonitorAccessCodeOnly(id);
       } else if (copyLinkBtn) {
         const id = Number(copyLinkBtn.getAttribute("data-copy-monitor-link"));
         copyMonitorListUrlOnly(id);
@@ -6735,7 +6687,6 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 
   if (zeroDayVoteCardsContainer) {
     zeroDayVoteCardsContainer.addEventListener("click", (e) => {
-      const copyCodeBtn = e.target.closest("[data-copy-monitor-code], [data-copy-monitor-code-for-box]");
       const copyLinkBtn = e.target.closest("[data-copy-monitor-link], [data-copy-monitor-link-for-box]");
       const viewVotedBtn = e.target.closest("[data-view-voted]");
       const viewNotYetBtn = e.target.closest("[data-view-not-yet]");
@@ -6766,17 +6717,6 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         return;
       }
 
-      if (copyCodeBtn) {
-        const idAttr = copyCodeBtn.getAttribute("data-copy-monitor-code");
-        const boxAttr = copyCodeBtn.getAttribute("data-copy-monitor-code-for-box");
-        if (idAttr) {
-          copyMonitorAccessCodeOnly(Number(idAttr));
-        } else if (boxAttr) {
-          const m = getOrEnsureMonitorForBallotBox(boxAttr);
-          copyMonitorAccessCodeOnly(m.id);
-        }
-        return;
-      }
       if (copyLinkBtn) {
         const idAttr = copyLinkBtn.getAttribute("data-copy-monitor-link");
         const boxAttr = copyLinkBtn.getAttribute("data-copy-monitor-link-for-box");
@@ -6803,14 +6743,7 @@ export function initZeroDayModule(votersContextParam, options = {}) {
 }
 
 const MONITOR_VIEW_PAGE_SIZE = 15;
-const MONITOR_UNLOCK_STORAGE_PREFIX = "monitorUnlocked_";
 let monitorViewCurrentPage = 1;
-
-function getMonitorAccessCode(monitor) {
-  const token = (monitor && monitor.shareToken) || "";
-  const part = token.split("-")[1];
-  return part || token;
-}
 
 export function initMonitorView(token, votersContextParam, options = {}) {
   const isRemote = options.remoteMonitor != null;
@@ -6900,7 +6833,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     const messages = {
       no_token: {
         title: "No ballot box link",
-        hint: "Open the ballot box using the full link shared by your Campaign Manager (it should include the access code).",
+        hint: "Open vote marking using the secret link your Campaign Manager sent you (it includes a unique token in the address).",
       },
       offline: {
         title: "Cannot reach campaign data",
@@ -6908,11 +6841,11 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       },
       not_found: {
         title: "Link not found",
-        hint: "No ballot box link was found in the campaign database for this address. Ask your Campaign Manager to open Zero Day → Manage Monitors in the main app while online, create/refresh the monitor for this ballot box, then share the new link and access code with you.",
+        hint: "No ballot box was found in the campaign database for this link. Ask your Campaign Manager to open Zero Day → Manage Monitors in the main app while online, create or refresh the monitor for this ballot box, then share the new link with you.",
       },
       default: {
         title: "Invalid or expired link",
-        hint: "This ballot box link is not valid or has expired. Ask your Campaign Manager for a new link and access code.",
+        hint: "This ballot box link is not valid or has expired. Ask your Campaign Manager for a new link.",
       },
     };
     const text = messages[invalidReason] || messages.default;
@@ -7676,8 +7609,6 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     return;
   }
 
-  monitorViewEl.setAttribute("data-state", "gate");
-
   function searchVoters(query) {
     const q = (query || "").trim();
     if (!q) return [];
@@ -8176,38 +8107,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
 
   monitorViewEl.hidden = false;
 
-  const gateForm = document.getElementById("monitorViewGateForm");
-  const gateInput = document.getElementById("monitorViewAccessCode");
-  const gateError = document.getElementById("monitorViewGateError");
-  const expectedCode = (getMonitorAccessCode(monitor) || "").trim();
-
-  if (gateForm && gateInput) {
-    gateForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const entered = (gateInput.value || "").trim();
-      if (gateError) {
-        gateError.hidden = true;
-        gateError.textContent = "";
-      }
-      if (!entered) {
-        if (gateError) {
-          gateError.hidden = false;
-          gateError.textContent = "Please enter the access code.";
-        }
-        return;
-      }
-      if (entered.toLowerCase() !== expectedCode.toLowerCase()) {
-        if (gateError) {
-          gateError.hidden = false;
-          gateError.textContent = "Incorrect access code. Please ask your Campaign Manager for the code.";
-        }
-        return;
-      }
-      showMonitorContent();
-    });
-  }
-
-  // Same ballot session doc as ballot-box.html — admins and monitors see one shared Open / Paused / Closed state.
-  void initBallotSessionSubscription();
+  void (async () => {
+    await showMonitorContent();
+  })();
 }

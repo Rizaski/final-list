@@ -49,42 +49,10 @@
     <div id="monitor-view" class="monitor-view" data-state="gate">
       <div id="monitor-view-gate" class="monitor-view-gate ballot-box-gate-outer">
         <div class="monitor-view-gate__card ballot-box-gate-card">
-          <div class="ballot-box-gate-layout">
-            <div class="ballot-box-gate-aside">
-              <p class="ballot-box-gate__eyebrow">Authorized monitor access</p>
-              <h2 class="monitor-view-gate__title ballot-box-gate-title">Sign in to the ballot workspace</h2>
-              <p class="monitor-view-gate__hint ballot-box-gate-lead">Use the access code from your Campaign Manager. This link is for official vote marking only—treat it like a ballot key.</p>
-              <div class="ballot-box-gate-features">
-                <div class="ballot-box-gate-feature">
-                  <span class="ballot-box-gate-feature__icon" aria-hidden="true">✓</span>
-                  <span>Session control (open · pause); closing is set from Zero Day by your manager</span>
-                </div>
-                <div class="ballot-box-gate-feature">
-                  <span class="ballot-box-gate-feature__icon" aria-hidden="true">✓</span>
-                  <span>Search by ID, sequence, or name</span>
-                </div>
-                <div class="ballot-box-gate-feature">
-                  <span class="ballot-box-gate-feature__icon" aria-hidden="true">✓</span>
-                  <span>Mark voted, history, and undo window</span> 
-                </div>
-              </div>
-            </div>
-            <div class="ballot-box-gate-main">
-              <p class="ballot-box-gate-main__label">Quick start</p>
-              <ol class="ballot-box-gate-steps" aria-label="Steps after sign-in">
-                <li>Search the voter</li>
-                <li>Verify details on screen</li>
-                <li>Mark voted when correct</li>
-              </ol>
-              <form id="monitorViewGateForm" class="monitor-view-gate__form ballot-box-gate-form" autocomplete="off" method="dialog" action="javascript:void(0)">
-                <label for="monitorViewAccessCode" class="ballot-box-label">Access code</label>
-                <p id="monitorGateBallotSession" class="monitor-view-gate__session-status ballot-box-gate__session" role="status" hidden></p>
-                <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input ballot-box-gate-input" placeholder="Enter code" autocomplete="off" inputmode="numeric" maxlength="20">
-                <p id="monitorViewGateError" class="monitor-view-gate__error" role="alert" hidden></p>
-                <button type="submit" class="primary-button monitor-view-gate__submit ballot-box-gate-submit">Enter workspace</button>
-              </form>
-            </div>
-          </div>
+          <p class="ballot-box-gate__eyebrow">Authorized monitor access</p>
+          <h2 class="monitor-view-gate__title ballot-box-gate-title">Opening your workspace</h2>
+          <p class="monitor-view-gate__hint ballot-box-gate-lead">This page opens vote marking from your secret link only. Treat the link like a ballot key—do not share it publicly.</p>
+          <p id="monitorGateBallotSession" class="monitor-view-gate__session-status ballot-box-gate__session" role="status" hidden></p>
         </div>
       </div>
       <div id="monitor-view-content" class="monitor-view__content ballot-box-workspace" aria-hidden="true" style="display: none;">

@@ -91,21 +91,9 @@
     </div>
   </div>
 
-   <!-- Monitor-only view (shown when URL has ?monitor=TOKEN) -->
-  <div id="monitor-view" class="monitor-view" data-state="gate" hidden>
-    <div id="monitor-view-gate" class="monitor-view-gate">
-      <div class="monitor-view-gate__card">
-        <h2 class="monitor-view-gate__title">Ballot box access</h2>
-        <p class="monitor-view-gate__hint">Enter the access code shared by your Campaign Manager to view the voter list.</p>
-        <p id="monitorGateBallotSession" class="monitor-view-gate__session-status" role="status" hidden></p>
-        <form id="monitorViewGateForm" class="monitor-view-gate__form" autocomplete="off" method="dialog" action="javascript:void(0)">
-          <label for="monitorViewAccessCode" class="sr-only">Code</label>
-          <input type="text" id="monitorViewAccessCode" class="monitor-view-gate__input" placeholder="Code" autocomplete="off" inputmode="numeric" maxlength="20">
-          <p id="monitorViewGateError" class="monitor-view-gate__error" role="alert" hidden></p>
-          <button type="submit" class="primary-button monitor-view-gate__submit">Continue</button>
-        </form>
-      </div>
-    </div>
+   <!-- Monitor-only view (shown when URL has ?monitor=TOKEN); entry is link-only — no access code. -->
+  <div id="monitor-view" class="monitor-view" data-state="list" hidden>
+    <div id="monitor-view-gate" class="monitor-view-gate" hidden aria-hidden="true"></div>
     <div id="monitor-view-content" class="monitor-view__content" aria-hidden="true" hidden>
     <div class="monitor-view__header monitor-view__header--search-only">
       <h1 id="monitorViewTitle">Ballot box</h1>
@@ -1061,7 +1049,7 @@
                           <th scope="col" class="data-table-col--name">Monitor</th>
                           <th scope="col">Mobile</th>
                           <th scope="col">Voters</th>
-                          <th scope="col">Code</th>
+                          <th scope="col">Link</th>
                           <th scope="col" class="monitor-session-col">Status</th>
                           <th scope="col" class="monitor-admin-session-col">Marking</th>
                           <th scope="col" class="zero-day-monitors-actions-col">Actions</th>
