@@ -115,6 +115,26 @@ let monitorRowMenuDocClose = null;
 let zeroDaySyncInProgress = false;
 let zeroDaySyncIntervalId = null;
 const ZERO_DAY_SYNC_INTERVAL_MS = 5000;
+/** Synthetic ballot box key: campaign-wide “not yet voted” list + shared vote-marking link. */
+const ZERO_DAY_ALL_BOXES_KEY = "__ZD_ALL_BALLOT_BOXES__";
+const ZERO_DAY_ALL_BOXES_DISPLAY = "All ballot boxes (not yet voted)";
+
+function isZeroDayAggregateBallotKey(boxKey) {
+  return String(boxKey || "").trim() === ZERO_DAY_ALL_BOXES_KEY;
+}
+
+function voteMarkingScopeTitle(monitor) {
+  if (!monitor) return "Ballot box";
+  if (isZeroDayAggregateBallotKey(monitor.ballotBox)) {
+    return String(monitor.name || "").trim() || ZERO_DAY_ALL_BOXES_DISPLAY;
+  }
+  return String(monitor.ballotBox || "Ballot box").trim() || "Ballot box";
+}
+
+function zeroDayBallotBoxCellLabel(boxKey) {
+  const k = String(boxKey || "").trim();
+  return isZeroDayAggregateBallotKey(k) ? ZERO_DAY_ALL_BOXES_DISPLAY : k || "—";
+}
 
 /** Returns array of unique transport route names from Zero Day trips. */
 export function getAvailableTransportRoutes() {
@@ -4582,7 +4602,7 @@ function renderMonitorsTable() {
     const tr = document.createElement("tr");
     tr.dataset.monitorId = mid;
     tr.innerHTML = `
-      <td>${escapeHtml(m.ballotBox || "—")}</td>
+      <td>${escapeHtml(zeroDayBallotBoxCellLabel(m.ballotBox))}</td>
       <td class="data-table-col--name">${escapeHtml(m.name || "—")}</td>
       <td>${escapeHtml(m.mobile || "—")}</td>
       <td>${voterCount}</td>
@@ -4632,7 +4652,7 @@ function openMonitorViewModal(monitor) {
   body.innerHTML = `
     <div class="form-group">
       <div class="detail-item-label">Ballot box</div>
-      <div class="detail-item-value">${escapeHtml(monitor.ballotBox || "—")}</div>
+      <div class="detail-item-value">${escapeHtml(zeroDayBallotBoxCellLabel(monitor.ballotBox))}</div>
     </div>
     <div class="form-group">
       <div class="detail-item-label">Monitor name</div>
@@ -4833,6 +4853,15 @@ async function syncMonitorToFirestore(monitor) {
 function assignVotersFromBallotBox(monitorId) {
   const monitor = zeroDayMonitors.find((m) => m.id === monitorId);
   if (!monitor || !votersContext) return;
+  if (isZeroDayAggregateBallotKey(monitor.ballotBox)) {
+    ensureAggregateVoteMarkingMonitor();
+    renderMonitorsTable();
+    subscribeVotedRealtime();
+    if (typeof window.showToast === "function") {
+      window.showToast("Refreshed list: all voters not yet marked voted.");
+    }
+    return;
+  }
   const voters = votersContext.getAllVoters();
   const ids = voters.filter((v) => (v.ballotBox || "").trim() === monitor.ballotBox).map((v) => v.id);
   monitor.voterIds = [...new Set(ids)];
@@ -4901,11 +4930,53 @@ function getVoteBoxSummaries() {
   if (filter === "not-voted") list = list.filter((b) => b.voted === 0 && b.total > 0);
 
   if (query) {
-    list = list.filter(
-      (b) =>
-        b.box.toLowerCase().includes(query) ||
-        (b.island || "").toLowerCase().includes(query)
-    );
+    const q = query.toLowerCase().trim();
+    list = list.filter((b) => {
+      if (b.box.toLowerCase().includes(q) || (b.island || "").toLowerCase().includes(q))
+        return true;
+      return voters.some((v) => {
+        const vk = (v.ballotBox || v.island || "Unassigned").trim();
+        if (vk !== b.box) return false;
+        return (v.permanentAddress || "").toLowerCase().includes(q);
+      });
+    });
+  }
+
+  if (voters.length > 0) {
+    let aggVoted = 0;
+    voters.forEach((v) => {
+      if (votedSet.has(String(v.id)) || (v.votedAt && String(v.votedAt).trim() !== "")) aggVoted++;
+    });
+    const agg = {
+      box: ZERO_DAY_ALL_BOXES_KEY,
+      total: voters.length,
+      voted: aggVoted,
+      island: "",
+      isAggregate: true,
+    };
+    const qNorm = query.replace(/\s+/g, " ").trim();
+    const qLower = qNorm.toLowerCase();
+    const anyNotYetAddressMatch =
+      !!qLower &&
+      voters.some((v) => {
+        const isVoted =
+          votedSet.has(String(v.id)) || (v.votedAt && String(v.votedAt).trim() !== "");
+        if (isVoted) return false;
+        return (v.permanentAddress || "").toLowerCase().includes(qLower);
+      });
+    const showAgg =
+      !qNorm ||
+      ZERO_DAY_ALL_BOXES_DISPLAY.toLowerCase().includes(qLower) ||
+      /\bnot\s*yet\b/i.test(qNorm) ||
+      qNorm === "all" ||
+      qNorm === "campaign" ||
+      qNorm === "overview" ||
+      anyNotYetAddressMatch;
+    let includeAgg = false;
+    if (filter === "all") includeAgg = true;
+    else if (filter === "voted") includeAgg = agg.voted === agg.total && agg.total > 0;
+    else if (filter === "not-voted") includeAgg = agg.voted < agg.total;
+    if (includeAgg && showAgg) list.unshift(agg);
   }
 
   return list;
@@ -4915,9 +4986,10 @@ function getVoteBoxSummaries() {
 function getVotersByBoxSplitByVoted(boxKey) {
   const voters = votersContext ? votersContext.getAllVoters() : [];
   const key = (boxKey || "").trim();
-  const boxVoters = voters.filter(
-    (v) => (v.ballotBox || v.island || "Unassigned").trim() === key
-  );
+  const boxVoters =
+    key === ZERO_DAY_ALL_BOXES_KEY
+      ? voters.slice()
+      : voters.filter((v) => (v.ballotBox || v.island || "Unassigned").trim() === key);
   const votedSet = new Map(
     zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked || ""])
   );
@@ -4937,6 +5009,39 @@ function getVotersByBoxSplitByVoted(boxKey) {
   voted.sort(compareVotersByBallotSequenceThenName);
   notYet.sort(compareVotersByBallotSequenceThenName);
   return { voted, notYet };
+}
+
+/** Keeps aggregate monitor voterIds in sync with everyone not yet marked voted (for ballot-box link). */
+function ensureAggregateVoteMarkingMonitor() {
+  loadMonitors();
+  if (!votersContext || typeof votersContext.getAllVoters !== "function") return;
+  const all = votersContext.getAllVoters();
+  if (!all.length) return;
+  const { notYet } = getVotersByBoxSplitByVoted(ZERO_DAY_ALL_BOXES_KEY);
+  const voterIds = [...new Set(notYet.map((v) => v.id))];
+  let monitor = zeroDayMonitors.find((m) => isZeroDayAggregateBallotKey(m.ballotBox));
+  if (!monitor) {
+    const nextId = zeroDayMonitors.reduce((max, m) => Math.max(max, m.id), 0) + 1;
+    monitor = {
+      id: nextId,
+      name: ZERO_DAY_ALL_BOXES_DISPLAY,
+      mobile: "",
+      ballotBox: ZERO_DAY_ALL_BOXES_KEY,
+      voterIds,
+      shareToken: generateShareToken(),
+      sequenceOffset: 0,
+    };
+    zeroDayMonitors.push(monitor);
+  } else {
+    const prev = [...new Set((monitor.voterIds || []).map(String))].sort().join(",");
+    const next = [...new Set(voterIds.map(String))].sort().join(",");
+    const hadName = !!String(monitor.name || "").trim();
+    monitor.voterIds = voterIds;
+    if (!hadName) monitor.name = ZERO_DAY_ALL_BOXES_DISPLAY;
+    if (prev === next && hadName) return;
+  }
+  saveMonitors();
+  void syncMonitorToFirestore(monitor);
 }
 
 function getPledgeLabel(status) {
@@ -5009,6 +5114,7 @@ function getModalListFilteredSortedGrouped(voters, filterPledge, sortBy, groupBy
     if (groupBy === "pledge") return v.pledgeStatus || "undecided";
     if (groupBy === "agent") return getAgentForVoter(v.id) || "(No agent)";
     if (groupBy === "ballot") return voterBallotBoxLabel(v);
+    if (groupBy === "address") return String(v.permanentAddress || "").trim() || "(No address)";
     return "";
   };
   const displayList = [];
@@ -5244,7 +5350,7 @@ function buildTableFromDisplayList(displayList, options = {}) {
   const wrap = document.createElement("div");
   wrap.className = "table-wrapper";
   const table = document.createElement("table");
-  table.className = "data-table";
+  table.className = "data-table zd-vote-modal-voters-table";
   const thead = document.createElement("thead");
   thead.innerHTML =
     "<tr>" +
@@ -5371,9 +5477,10 @@ function buildTableFromDisplayList(displayList, options = {}) {
 
 function openBoxVoterListModal(boxKey, kind) {
   const includeTimeVoted = kind === "voted";
-  // Title will be kept generic; counts are reflected in the table itself.
+  const displayBox =
+    isZeroDayAggregateBallotKey(boxKey) ? ZERO_DAY_ALL_BOXES_DISPLAY : boxKey;
   const title =
-    kind === "voted" ? `Voted – ${boxKey}` : `Not yet voted – ${boxKey}`;
+    kind === "voted" ? `Voted – ${displayBox}` : `Not yet voted – ${displayBox}`;
 
   const body = document.createElement("div");
   body.className = "modal-body-inner modal-body-inner--with-maximize";
@@ -5414,6 +5521,7 @@ function openBoxVoterListModal(boxKey, kind) {
           <option value="none">None</option>
           <option value="pledge">Pledge status</option>
           <option value="agent">Agent</option>
+          <option value="address">Permanent address</option>
         </select>
       </div>
       ${
@@ -6042,10 +6150,16 @@ function openBoxVoterListModal(boxKey, kind) {
 function getOrEnsureMonitorForBallotBox(ballotBox) {
   const boxKey = (ballotBox || "").trim();
   const allVoters = votersContext ? votersContext.getAllVoters() : [];
-  const ids = allVoters
-    .filter((v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey)
-    .map((v) => v.id);
-  const voterIds = [...new Set(ids)];
+  let voterIds;
+  if (boxKey === ZERO_DAY_ALL_BOXES_KEY) {
+    const { notYet } = getVotersByBoxSplitByVoted(ZERO_DAY_ALL_BOXES_KEY);
+    voterIds = [...new Set(notYet.map((v) => v.id))];
+  } else {
+    const ids = allVoters
+      .filter((v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey)
+      .map((v) => v.id);
+    voterIds = [...new Set(ids)];
+  }
 
   let monitor = zeroDayMonitors.find((m) => (m.ballotBox || "").trim() === boxKey);
   if (!monitor) {
@@ -6053,7 +6167,7 @@ function getOrEnsureMonitorForBallotBox(ballotBox) {
       zeroDayMonitors.reduce((max, m) => Math.max(max, m.id), 0) + 1;
     monitor = {
       id: nextId,
-      name: "",
+      name: boxKey === ZERO_DAY_ALL_BOXES_KEY ? ZERO_DAY_ALL_BOXES_DISPLAY : "",
       mobile: "",
       ballotBox: boxKey,
       voterIds,
@@ -6063,6 +6177,9 @@ function getOrEnsureMonitorForBallotBox(ballotBox) {
     zeroDayMonitors.push(monitor);
   } else {
     monitor.voterIds = voterIds;
+    if (boxKey === ZERO_DAY_ALL_BOXES_KEY && !String(monitor.name || "").trim()) {
+      monitor.name = ZERO_DAY_ALL_BOXES_DISPLAY;
+    }
   }
   saveMonitors();
   syncMonitorToFirestore(monitor);
@@ -6098,12 +6215,18 @@ function renderZeroDayVoteTable() {
   } else {
     pageBoxes.forEach((box) => {
       const card = document.createElement("div");
-      card.className = "vote-box-card";
+      card.className = "vote-box-card" + (box.isAggregate ? " vote-box-card--aggregate" : "");
       const boxKey = (box.box || "").trim();
+      const displayTitle = box.isAggregate ? ZERO_DAY_ALL_BOXES_DISPLAY : box.box;
+      const metaLine = box.isAggregate
+        ? "Campaign-wide — everyone not yet marked voted"
+        : box.island || "";
       const boxVoters = votersContext
-        ? votersContext
-            .getAllVoters()
-            .filter((v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey)
+        ? box.isAggregate
+          ? votersContext.getAllVoters()
+          : votersContext
+              .getAllVoters()
+              .filter((v) => (v.ballotBox || v.island || "Unassigned").trim() === boxKey)
         : [];
       const percentage =
         box.total === 0 ? 0 : Math.round((box.voted / box.total) * 100);
@@ -6130,9 +6253,9 @@ function renderZeroDayVoteTable() {
         <div class="vote-box-card__header">
           <div>
             <div class="vote-box-card__title-wrap">
-              <span class="vote-box-card__title">${escapeHtml(box.box)}</span>
+              <span class="vote-box-card__title">${escapeHtml(displayTitle)}</span>
             </div>
-            <div class="vote-box-card__meta">${escapeHtml(box.island || "")}</div>
+            <div class="vote-box-card__meta">${escapeHtml(metaLine)}</div>
             <div class="vote-box-card__code-row">
               <span class="vote-box-card__code-label">Ballot box link</span>
               <button type="button" class="vote-box-card__copy-btn" ${linkCopyAttr} title="Copy ballot box link" aria-label="Copy ballot box link">${monitorShareIconLink()}</button>
@@ -6175,10 +6298,10 @@ function renderZeroDayVoteTable() {
           </div>
           <div class="vote-box-card__view-btns" role="group" aria-label="View voter lists">
             <button type="button" class="ghost-button ghost-button--small vote-box-card__view-btn vote-box-card__view-btn--voted" data-view-voted="${escapeHtml(
-              box.box
+              boxKey
             )}" title="View voted" aria-label="View voted">${VOTE_BOX_VIEW_VOTED_SVG}</button>
             <button type="button" class="ghost-button ghost-button--small vote-box-card__view-btn vote-box-card__view-btn--not-yet" data-view-not-yet="${escapeHtml(
-              box.box
+              boxKey
             )}" title="View not yet" aria-label="View not yet">${VOTE_BOX_VIEW_NOT_YET_SVG}</button>
           </div>
         </div>
@@ -6208,6 +6331,8 @@ function renderZeroDayVoteTable() {
       });
     });
   }
+
+  ensureAggregateVoteMarkingMonitor();
 }
 
 function openMarkVotedModal() {
@@ -7775,7 +7900,7 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       "monitor-view__header-main" +
       (standaloneBallotPage ? " monitor-view__header-main--standalone" : "");
     const subtitleText = "Search by name, ID, or ballot-box sequence (as shown).";
-    const titleEscaped = escapeHtml(monitor.ballotBox || "Ballot box");
+    const titleEscaped = escapeHtml(voteMarkingScopeTitle(monitor));
     const subtitleEscaped = escapeHtml(subtitleText);
 
     if (standaloneBallotPage) {

@@ -3648,6 +3648,10 @@ html.ballot-box-html {
   transform: translateY(-1px);
 }
 
+.vote-box-card--aggregate {
+  border-left: 4px solid var(--color-primary, #0d9488);
+}
+
 .vote-box-card__header {
   display: flex;
   justify-content: space-between;
@@ -4181,6 +4185,19 @@ textarea.voter-detail-referendum-notes:focus {
 #listWorkspaceTable .avatar-img:hover,
 #reportPledgedTable .avatar-img:hover,
 #eventParticipantsTable .avatar-img:hover {
+  transform: scale(2.4);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.45);
+  z-index: 2;
+}
+
+/* Zero Day vote marking: View voted / View not yet modal — same photo zoom as Voters list */
+.zd-vote-modal-voters-table .avatar-cell {
+  position: relative;
+}
+.zd-vote-modal-voters-table .avatar-img {
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.zd-vote-modal-voters-table .avatar-img:hover {
   transform: scale(2.4);
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.45);
   z-index: 2;
