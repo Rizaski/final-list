@@ -358,16 +358,27 @@ function renderCandidatesTable() {
   pageCandidates.forEach((c) => {
     const tr = document.createElement("tr");
     tr.dataset.candidateId = String(c.id);
+    const initials = (c.name || "")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || "")
+      .join("") || "?";
+    const photoSrc = String(c.photoUrl || "").trim();
+    const photoCell = photoSrc
+      ? `<div class="avatar-cell avatar-cell--settings-agent"><img class="avatar-img" src="${escapeHtml(photoSrc)}" alt="" onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(initials)}</div></div>`
+      : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
     tr.innerHTML = `
-      <td>${c.name}</td>
-      <td>${c.candidateNumber ?? ""}</td>
-      <td>${c.position ?? ""}</td>
-      <td>${c.electionType}</td>
-      <td>${c.constituency}</td>
+      <td>${photoCell}</td>
+      <td>${escapeHtml(c.name || "")}</td>
+      <td>${escapeHtml(c.candidateNumber ?? "")}</td>
+      <td>${escapeHtml(c.position ?? "")}</td>
+      <td>${escapeHtml(c.electionType || "")}</td>
+      <td>${escapeHtml(c.constituency || "")}</td>
       <td style="text-align:right;">
         <div class="settings-agents-crud" role="group" aria-label="Candidate actions">
-          <button type="button" class="ghost-button ghost-button--small" data-candidate-pledged-voters="${c.id}" title="Pledged voters list">Voters</button>
-          <button type="button" class="ghost-button ghost-button--small" data-edit-candidate="${c.id}">Edit</button>
+          <button type="button" class="ghost-button ghost-button--small" data-candidate-pledged-voters="${escapeHtml(c.id)}" title="Pledged voters list">Voters</button>
+          <button type="button" class="ghost-button ghost-button--small" data-edit-candidate="${escapeHtml(c.id)}">Edit</button>
         </div>
       </td>
     `;
