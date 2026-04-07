@@ -8,6 +8,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function archiveDocFieldCountOk() {
+      return request.resource == null || request.resource.data.size() <= 500;
+    }
+
     // Limit write payload size for creates/updates. Deletes have request.resource == null — must not read .data or delete is denied.
     function sizeOk() {
       return request.resource == null || request.resource.data.size() <= 400;
@@ -113,6 +117,8 @@ service cloud.firestore {
     match /pledgedReportShares/{token} {
       allow read: if true;
       allow create, update: if signedIn() && pledgedShareSizeOk();
+      // Campaign archive wipe deletes these docs — was missing and caused PERMISSION_DENIED on wipe.
+      allow delete: if signedIn();
     }
 
     // Event participants share (Events → Participants list; doc id = token)
@@ -122,6 +128,17 @@ service cloud.firestore {
       match /rows/{rowId} {
         // Anyone with the share link can add/edit/delete participant rows.
         allow read, write: if true;
+      }
+    }
+
+    // Archived campaign snapshots (Settings → Campaign archive). Same bar as voters/agents: any signed-in user.
+    // The UI only offers archive to admins; rules do not duplicate admin checks (avoids JWT/email/campaignUsers drift).
+    match /campaignArchives/{archiveId} {
+      allow read: if signedIn();
+      allow create, update, delete: if signedIn() && archiveDocFieldCountOk();
+      match /{document=**} {
+        allow read: if signedIn();
+        allow create, update, delete: if signedIn() && sizeOk();
       }
     }
 

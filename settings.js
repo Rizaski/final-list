@@ -18,9 +18,12 @@ import {
   formatAgentNameHint,
   parseViewerFromStorage,
 } from "./agents-context.js";
+import { getMonitorTokensForArchive, clearLocalCampaignWorkspaceCache } from "./archive-helpers.js";
 
 /** Set by initSettingsTabs; used to switch tab when viewer role changes. */
 let switchSettingsTabFn = null;
+/** Archive UI listeners bound once; visibility/list refresh on each call. */
+let campaignArchiveListenersBound = false;
 
 /**
  * Show admin-only or candidate-only settings tabs and activate the default tab.
@@ -43,6 +46,7 @@ export function applySettingsTabsVisibility() {
       : "Configure system parameters, candidates, data, security, and users.";
   }
   switchSettingsTabFn(isCandidate ? "candidate-csv" : "campaign");
+  initCampaignArchiveUI();
 }
 import { compareBallotSequence, sequenceAsImportedFromCsv } from "./sequence-utils.js";
 
@@ -437,6 +441,85 @@ function escapeHtml(str) {
   if (str == null) return "";
   const s = String(str);
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Same columns as Settings → Data → Bulk Voter Upload subtitle (import template). */
+function csvEscapeBulkVoterTemplate(val) {
+  const s = String(val == null ? "" : val);
+  if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+/**
+ * @param {object[]} voters — live or archived snapshot rows (`fullName` or `name`, `sequence` or `ballotSequence`).
+ * @returns {string} CSV text with UTF-8 BOM added by caller if needed.
+ */
+function buildBulkVoterUploadTemplateCsv(voters) {
+  const headers = [
+    "Sequence",
+    "Ballot Box",
+    "ID Number",
+    "Name",
+    "Permanent Address",
+    "Date of Birth",
+    "Age",
+    "Pledge",
+    "Gender",
+    "Island",
+    "Current Location",
+    "Phone",
+    "Call Comments",
+  ];
+  const sequenceCell = (v) => {
+    if (!v || typeof v !== "object") return "";
+    const raw =
+      v.sequence != null && v.sequence !== ""
+        ? v.sequence
+        : v.ballotSequence != null && v.ballotSequence !== ""
+          ? v.ballotSequence
+          : "";
+    return sequenceAsImportedFromCsv({ sequence: raw });
+  };
+  const lines = [headers.map(csvEscapeBulkVoterTemplate).join(",")];
+  (Array.isArray(voters) ? voters : []).forEach((v) => {
+    if (!v) return;
+    const row = [
+      sequenceCell(v),
+      v.ballotBox || "",
+      v.nationalId || "",
+      v.fullName || v.name || "",
+      v.permanentAddress || "",
+      v.dateOfBirth || "",
+      v.age ?? "",
+      v.pledgeStatus || "",
+      v.gender || "",
+      v.island || "",
+      v.currentLocation || "",
+      v.phone || "",
+      v.notes || v.callComments || "",
+    ];
+    lines.push(row.map(csvEscapeBulkVoterTemplate).join(","));
+  });
+  return lines.join("\r\n");
+}
+
+function triggerDownloadCsv(filename, csvText) {
+  const blob = new Blob(["\uFEFF" + csvText], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function sanitizeFilenameSegment(s) {
+  return String(s || "")
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "archive";
 }
 
 function getIslandsFromVotersStorage() {
@@ -2527,6 +2610,1020 @@ function initSecurityTab() {
   }
 }
 
+function initCampaignArchiveUI() {
+  const card = document.getElementById("settingsCampaignArchiveCard");
+  const openBtn = document.getElementById("settingsCampaignArchiveOpen");
+  const tbody = document.getElementById("settingsCampaignArchiveTableBody");
+  const table = document.getElementById("settingsCampaignArchiveTable");
+  const emptyEl = document.getElementById("settingsCampaignArchiveListEmpty");
+  const viewer = parseViewerFromStorage();
+  if (!card || !openBtn || !tbody || !table || !emptyEl) return;
+  if (!viewer.isAdmin) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const refreshArchiveList = async () => {
+    tbody.innerHTML = "";
+    try {
+      const api = await firebaseInitPromise;
+      if (!api.ready || !api.listCampaignArchivesFs) {
+        emptyEl.textContent = "Could not load archives.";
+        emptyEl.hidden = false;
+        table.hidden = true;
+        return;
+      }
+      const rows = await api.listCampaignArchivesFs();
+      if (!rows.length) {
+        emptyEl.textContent = "No archives yet.";
+        emptyEl.hidden = false;
+        table.hidden = true;
+        return;
+      }
+      emptyEl.hidden = true;
+      table.hidden = false;
+      rows.forEach((r) => {
+        const tr = document.createElement("tr");
+        const stats = r.stats || {};
+        const when = r.archivedAt ? String(r.archivedAt).replace("T", " ").slice(0, 19) : "—";
+        tr.innerHTML = `
+          <td class="data-table-col--name">${escapeHtml(String(r.label || r.campaignNameSnapshot || "—"))}</td>
+          <td>${escapeHtml(when)}</td>
+          <td>${escapeHtml(String(stats.voters != null ? stats.voters : "—"))}</td>
+          <td style="text-align:right; white-space:nowrap;">
+            <button type="button" class="ghost-button ghost-button--small" data-archive-view-full="${escapeHtml(String(r.id))}">View archive</button>
+            <button type="button" class="ghost-button ghost-button--small" data-archive-download-voters-csv="${escapeHtml(String(r.id))}" data-archive-label="${escapeHtml(String(r.label || r.campaignNameSnapshot || ""))}" title="Same columns as Bulk Voter Upload (Settings → Data)">Download voters CSV</button>
+            <button type="button" class="ghost-button ghost-button--small" data-archive-delete="${escapeHtml(String(r.id))}">Delete</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      emptyEl.textContent = "Could not load archives.";
+      emptyEl.hidden = false;
+      table.hidden = true;
+      console.warn("listCampaignArchivesFs", e);
+    }
+  };
+
+  const openFullArchiveViewerModal = async (archiveId, displayLabel) => {
+    const api = await firebaseInitPromise;
+    if (!api.ready || !api.getArchivedArchiveRootFs || !api.getArchivedSegmentFs) return;
+
+    const titleBase = displayLabel ? `Archive — ${displayLabel}` : "Archived campaign";
+    const cache = { root: null, loaded: {} };
+
+    const formatCellVal = (val) => {
+      if (val == null) return "";
+      if (Array.isArray(val)) {
+        if (!val.length) return "—";
+        if (val.length <= 3 && val.every((x) => typeof x !== "object")) return val.join(", ");
+        return `${val.length} items`;
+      }
+      if (typeof val === "object") {
+        try {
+          return JSON.stringify(val);
+        } catch (_) {
+          return String(val);
+        }
+      }
+      return String(val);
+    };
+
+    const buildColumns = (rows, preferred, maxCols = 10) => {
+      if (!rows.length) return preferred.slice(0, maxCols);
+      const have = new Set();
+      rows.slice(0, 50).forEach((r) => {
+        Object.keys(r || {}).forEach((k) => have.add(k));
+      });
+      const out = [];
+      preferred.forEach((k) => {
+        if (have.has(k) && out.length < maxCols) out.push(k);
+      });
+      const first = rows[0];
+      if (first) {
+        Object.keys(first).forEach((k) => {
+          if (out.length >= maxCols) return;
+          if (!out.includes(k)) out.push(k);
+        });
+      }
+      return out.slice(0, maxCols);
+    };
+
+    const archivedVoterImageSrc = (row) => {
+      const u = row.photoUrl || row.photoURL || row.imageUrl;
+      if (u && /^https?:\/\//i.test(String(u).trim())) return String(u).trim();
+      return getVoterImageSrc(row);
+    };
+
+    const formatArchivedPledgeSummary = (voter) => {
+      const cp = voter?.candidatePledges;
+      if (cp && typeof cp === "object" && !Array.isArray(cp)) {
+        const parts = Object.entries(cp)
+          .filter(([, v]) => v === "yes" || v === "no" || v === "undecided")
+          .sort(([a], [b]) => String(a).localeCompare(String(b)))
+          .map(([k, v]) => `${k}: ${v}`);
+        if (parts.length) return parts.join(" · ");
+      }
+      const ps = voter?.pledgeStatus;
+      if (ps === "yes") return "Yes";
+      if (ps === "no") return "No";
+      if (ps === "undecided") return "Undecided";
+      return "—";
+    };
+
+    const archivedVoterVotedDisplay = (voter) => {
+      const raw = voter?.votedAt || voter?.votedTimeMarked;
+      if (raw == null || raw === "") return "—";
+      const s = String(raw).trim();
+      if (s.length >= 19 && s.includes("T")) return s.slice(0, 19).replace("T", " ");
+      return s;
+    };
+
+    const ARCHIVE_VOTERS_PAGE_SIZE = 15;
+
+    const renderArchivedVotersTable = (panelEl, rows) => {
+      panelEl.textContent = "";
+      if (!rows.length) {
+        panelEl.innerHTML = `<p class="text-muted">No rows in this snapshot.</p>`;
+        return;
+      }
+
+      const bulkCsvBar = document.createElement("div");
+      bulkCsvBar.className = "archive-viewer__bulk-csv-actions";
+      const bulkCsvBtn = document.createElement("button");
+      bulkCsvBtn.type = "button";
+      bulkCsvBtn.className = "ghost-button ghost-button--small";
+      bulkCsvBtn.textContent = "Download voters CSV (bulk upload template)";
+      bulkCsvBtn.title =
+        "Same columns as Settings → Data → Bulk Voter Upload (Sequence, Ballot Box, ID Number, Name, …)";
+      bulkCsvBtn.addEventListener("click", () => {
+        const csv = buildBulkVoterUploadTemplateCsv(rows);
+        const name = sanitizeFilenameSegment(displayLabel || "archive");
+        triggerDownloadCsv(`voters-archive-${name}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "CSV downloaded",
+            meta: `${rows.length} row(s) — bulk upload template.`,
+          });
+        }
+      });
+      bulkCsvBar.appendChild(bulkCsvBtn);
+      panelEl.appendChild(bulkCsvBar);
+
+      const voterColSkip = new Set([
+        "name",
+        "nationalId",
+        "ballotBox",
+        "ballotSequence",
+        "permanentAddress",
+        "candidatePledges",
+        "pledgeStatus",
+        "votedAt",
+        "votedTimeMarked",
+        "photoUrl",
+        "photoURL",
+        "imageUrl",
+      ]);
+      const restCols = buildColumns(rows, ["phone", "island", "referendumVote"], 8).filter((c) => !voterColSkip.has(c));
+      const headerCells = [
+        "Image",
+        "Name",
+        "National ID",
+        "Ballot box",
+        "Seq.",
+        "Pledge",
+        "Voted",
+        "Address",
+        ...restCols.map((c) => c),
+      ];
+      const colCount = headerCells.length;
+
+      const voterNameForSort = (v) => String(v.fullName || v.name || "").trim();
+      const sequenceForArchivedRow = (r) => {
+        if (r == null) return "";
+        if (r.sequence != null && r.sequence !== "") return r.sequence;
+        if (r.ballotSequence != null && r.ballotSequence !== "") return r.ballotSequence;
+        return "";
+      };
+
+      const archivedPledgeForFilter = (v) => {
+        const p = v?.pledgeStatus;
+        if (p === "yes" || p === "no" || p === "undecided") return p;
+        return "undecided";
+      };
+
+      const compareArchivedByBallotSequenceThenName = (a, b) => {
+        const c = compareBallotSequence(sequenceForArchivedRow(a), sequenceForArchivedRow(b));
+        if (c !== 0) return c;
+        return voterNameForSort(a).localeCompare(voterNameForSort(b), "en");
+      };
+
+      const compareArchivedByBallotBoxThenSequenceThenName = (a, b) => {
+        const boxA = String(a?.ballotBox || "Unassigned").trim();
+        const boxB = String(b?.ballotBox || "Unassigned").trim();
+        const boxCmp = boxA.localeCompare(boxB, "en");
+        if (boxCmp !== 0) return boxCmp;
+        return compareArchivedByBallotSequenceThenName(a, b);
+      };
+
+      const uid = `arc-vt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+      const toolbar = document.createElement("div");
+      toolbar.className = "voters-toolbar list-toolbar archive-viewer__voters-toolbar";
+      toolbar.innerHTML = `
+        <div class="list-toolbar__search">
+          <label for="${uid}-search" class="sr-only">Search voters</label>
+          <input type="search" id="${uid}-search" class="input" data-archive-voter-search placeholder="Search by name, ID, address, island, notes…" autocomplete="off">
+        </div>
+        <div class="list-toolbar__controls">
+          <div class="field-group field-group--inline">
+            <label for="${uid}-pledge">Filter</label>
+            <select id="${uid}-pledge" data-archive-voter-filter-pledge>
+              <option value="all">All pledge statuses</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+              <option value="undecided">Undecided</option>
+            </select>
+          </div>
+          <div class="field-group field-group--inline">
+            <label for="${uid}-sort">Sort</label>
+            <select id="${uid}-sort" data-archive-voter-sort>
+              <option value="sequence">Seq (ballot box order)</option>
+              <option value="name-asc">Name A–Z</option>
+              <option value="name-desc">Name Z–A</option>
+              <option value="id">ID Number</option>
+              <option value="address">Permanent address</option>
+              <option value="pledge">Pledge status</option>
+              <option value="island">Ballot box</option>
+            </select>
+          </div>
+          <div class="field-group field-group--inline">
+            <label for="${uid}-group">Group by</label>
+            <select id="${uid}-group" data-archive-voter-group-by>
+              <option value="none">None</option>
+              <option value="island">Ballot box</option>
+              <option value="pledge">Pledge status</option>
+            </select>
+          </div>
+        </div>
+      `;
+
+      const searchEl = toolbar.querySelector("[data-archive-voter-search]");
+      const filterPledgeEl = toolbar.querySelector("[data-archive-voter-filter-pledge]");
+      const sortEl = toolbar.querySelector("[data-archive-voter-sort]");
+      const groupByEl = toolbar.querySelector("[data-archive-voter-group-by]");
+
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap archive-viewer__table-wrap";
+      const tbl = document.createElement("table");
+      tbl.className = "data-table data-table--archive-view";
+      const head = document.createElement("thead");
+      head.innerHTML = `<tr>${headerCells.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
+      const tb = document.createElement("tbody");
+      tbl.appendChild(head);
+      tbl.appendChild(tb);
+      wrap.appendChild(tbl);
+
+      const paginationEl = document.createElement("div");
+      paginationEl.className = "pagination-bar";
+
+      const hint = document.createElement("p");
+      hint.className = "helper-text archive-viewer__count";
+
+      panelEl.appendChild(toolbar);
+      panelEl.appendChild(wrap);
+      panelEl.appendChild(paginationEl);
+      panelEl.appendChild(hint);
+
+      let currentPage = 1;
+
+      const appendArchivedVoterRow = (row) => {
+        const tr = document.createElement("tr");
+        const tdImg = document.createElement("td");
+        tdImg.className = "archive-viewer__img-cell";
+        const src = archivedVoterImageSrc(row);
+        if (src) {
+          const img = document.createElement("img");
+          img.className = "archive-viewer__voter-thumb";
+          img.src = src;
+          img.alt = "";
+          img.loading = "lazy";
+          let fallbackStep = 0;
+          img.addEventListener("error", () => {
+            const base = archivedVoterImageSrc(row);
+            fallbackStep += 1;
+            if (
+              fallbackStep === 1 &&
+              !/^https?:\/\//i.test(base) &&
+              /\.(jpe?g)$/i.test(base)
+            ) {
+              img.src = base.replace(/\.(jpe?g)$/i, ".png");
+              return;
+            }
+            img.replaceWith(document.createTextNode("—"));
+          });
+          tdImg.appendChild(img);
+        } else {
+          tdImg.textContent = "—";
+        }
+        tr.appendChild(tdImg);
+        const nameTd = document.createElement("td");
+        nameTd.textContent =
+          row.name != null && String(row.name).trim() !== ""
+            ? String(row.name)
+            : String(row.fullName || "").trim();
+        tr.appendChild(nameTd);
+        ["nationalId", "ballotBox"].forEach((c) => {
+          const td = document.createElement("td");
+          td.textContent = row[c] != null ? String(row[c]) : "";
+          tr.appendChild(td);
+        });
+        const tdSeq = document.createElement("td");
+        tdSeq.textContent =
+          row.ballotSequence != null && String(row.ballotSequence) !== ""
+            ? String(row.ballotSequence)
+            : row.sequence != null
+              ? String(row.sequence)
+              : "";
+        tr.appendChild(tdSeq);
+        const tdPledge = document.createElement("td");
+        tdPledge.className = "archive-viewer__pledge-cell";
+        tdPledge.textContent = formatArchivedPledgeSummary(row);
+        tr.appendChild(tdPledge);
+        const tdVoted = document.createElement("td");
+        tdVoted.className = "archive-viewer__voted-cell";
+        tdVoted.textContent = archivedVoterVotedDisplay(row);
+        tr.appendChild(tdVoted);
+        const tdAddr = document.createElement("td");
+        tdAddr.textContent = row.permanentAddress != null ? String(row.permanentAddress) : "";
+        tr.appendChild(tdAddr);
+        restCols.forEach((c) => {
+          const td = document.createElement("td");
+          td.textContent = formatCellVal(row[c]);
+          tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      };
+
+      const getFilteredSortedGrouped = () => {
+        const query = (searchEl?.value || "").toLowerCase().trim();
+        const pledgeFilter = filterPledgeEl?.value || "all";
+        const sortBy = sortEl?.value || "sequence";
+        const groupBy = groupByEl?.value || "none";
+
+        let list = rows.filter((voter) => {
+          if (pledgeFilter !== "all" && archivedPledgeForFilter(voter) !== pledgeFilter) return false;
+          if (query) {
+            const name = voterNameForSort(voter).toLowerCase();
+            const id = String(voter.id || "").toLowerCase();
+            const nationalId = String(voter.nationalId || "").toLowerCase();
+            const phone = String(voter.phone || "").toLowerCase();
+            const address = String(voter.permanentAddress || "").toLowerCase();
+            const island = String(voter.island || "").toLowerCase();
+            const notes = String(voter.notes || "").toLowerCase();
+            const seq = String(sequenceForArchivedRow(voter) || "").toLowerCase();
+            if (
+              !name.includes(query) &&
+              !id.includes(query) &&
+              !nationalId.includes(query) &&
+              !phone.includes(query) &&
+              !address.includes(query) &&
+              !island.includes(query) &&
+              !notes.includes(query) &&
+              !seq.includes(query)
+            )
+              return false;
+          }
+          return true;
+        });
+
+        const cmp = (a, b) => {
+          switch (sortBy) {
+            case "name-desc":
+              return voterNameForSort(b).localeCompare(voterNameForSort(a), "en");
+            case "sequence":
+              return compareArchivedByBallotSequenceThenName(a, b);
+            case "island":
+              return compareArchivedByBallotBoxThenSequenceThenName(a, b);
+            case "pledge":
+              return archivedPledgeForFilter(a).localeCompare(archivedPledgeForFilter(b), "en");
+            case "address":
+              return String(a.permanentAddress || "").localeCompare(String(b.permanentAddress || ""), "en");
+            case "id":
+              return String(a.nationalId || "").localeCompare(String(b.nationalId || ""), "en");
+            default:
+              return voterNameForSort(a).localeCompare(voterNameForSort(b), "en");
+          }
+        };
+        list = list.slice().sort(cmp);
+
+        if (groupBy === "island") {
+          list.sort(compareArchivedByBallotBoxThenSequenceThenName);
+        }
+
+        if (groupBy === "none") {
+          return list.map((voter) => ({ type: "row", voter }));
+        }
+
+        const getGroupKey = (v) => {
+          if (groupBy === "island") return String(v.ballotBox || "Unassigned").trim() || "Unassigned";
+          if (groupBy === "pledge") {
+            const p = archivedPledgeForFilter(v);
+            if (p === "yes") return "Yes";
+            if (p === "no") return "No";
+            return "Undecided";
+          }
+          return "";
+        };
+        const displayList = [];
+        let lastKey = null;
+        list.forEach((voter) => {
+          const key = getGroupKey(voter);
+          if (key !== lastKey) {
+            displayList.push({ type: "group", label: key });
+            lastKey = key;
+          }
+          displayList.push({ type: "row", voter });
+        });
+        return displayList;
+      };
+
+      const renderTableBody = () => {
+        const displayList = getFilteredSortedGrouped();
+        const dataRows = displayList.filter((x) => x.type === "row");
+        const total = dataRows.length;
+        const totalPages = Math.max(1, Math.ceil(total / ARCHIVE_VOTERS_PAGE_SIZE));
+        if (currentPage > totalPages) currentPage = totalPages;
+        const start = (currentPage - 1) * ARCHIVE_VOTERS_PAGE_SIZE;
+        const pageDataRows = dataRows.slice(start, start + ARCHIVE_VOTERS_PAGE_SIZE);
+
+        const pageDisplayList = [];
+        let lastGroup = null;
+        for (const rowItem of pageDataRows) {
+          const idxInDisplay = displayList.indexOf(rowItem);
+          const groupItem =
+            idxInDisplay > 0 && displayList[idxInDisplay - 1]?.type === "group"
+              ? displayList[idxInDisplay - 1]
+              : null;
+          if (groupItem && groupItem !== lastGroup) {
+            pageDisplayList.push(groupItem);
+            lastGroup = groupItem;
+          }
+          pageDisplayList.push(rowItem);
+        }
+
+        tb.textContent = "";
+        if (total === 0) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td colspan="${colCount}" class="text-muted" style="text-align:center;padding:24px;">No voters match the current filters.</td>`;
+          tb.appendChild(tr);
+        } else {
+          for (const item of pageDisplayList) {
+            if (item.type === "group") {
+              const tr = document.createElement("tr");
+              tr.className = "list-toolbar__group-header";
+              const td = document.createElement("td");
+              td.colSpan = colCount;
+              td.textContent = item.label;
+              tr.appendChild(td);
+              tb.appendChild(tr);
+              continue;
+            }
+            appendArchivedVoterRow(item.voter);
+          }
+        }
+
+        const from = total === 0 ? 0 : start + 1;
+        const to = Math.min(start + ARCHIVE_VOTERS_PAGE_SIZE, total);
+        paginationEl.innerHTML = `
+          <span class="pagination-bar__summary">Showing ${from}&ndash;${to} of ${total}</span>
+          <div class="pagination-bar__nav">
+            <button type="button" class="pagination-bar__btn" data-archive-voter-page="prev" ${currentPage <= 1 ? "disabled" : ""}>Previous</button>
+            <span class="pagination-bar__summary">Page ${currentPage} of ${totalPages}</span>
+            <button type="button" class="pagination-bar__btn" data-archive-voter-page="next" ${currentPage >= totalPages ? "disabled" : ""}>Next</button>
+          </div>
+        `;
+        paginationEl.querySelectorAll("[data-archive-voter-page]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            if (btn.dataset.archiveVoterPage === "prev" && currentPage > 1) currentPage--;
+            if (btn.dataset.archiveVoterPage === "next" && currentPage < totalPages) currentPage++;
+            renderTableBody();
+          });
+        });
+
+        const totalInSnapshot = rows.length;
+        hint.textContent =
+          total === totalInSnapshot
+            ? `${total} voter${total === 1 ? "" : "s"} (read-only snapshot).`
+            : `${total} of ${totalInSnapshot} voter${totalInSnapshot === 1 ? "" : "s"} match filters (read-only snapshot).`;
+      };
+
+      const scheduleRender = () => {
+        currentPage = 1;
+        renderTableBody();
+      };
+
+      searchEl.addEventListener("input", scheduleRender);
+      filterPledgeEl.addEventListener("change", scheduleRender);
+      sortEl.addEventListener("change", scheduleRender);
+      groupByEl.addEventListener("change", scheduleRender);
+
+      renderTableBody();
+    };
+
+    const renderTable = (panelEl, rows, preferredCols) => {
+      panelEl.textContent = "";
+      if (!rows.length) {
+        panelEl.innerHTML = `<p class="text-muted">No rows in this snapshot.</p>`;
+        return;
+      }
+      const cols = buildColumns(rows, preferredCols);
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap archive-viewer__table-wrap";
+      const tbl = document.createElement("table");
+      tbl.className = "data-table data-table--archive-view";
+      const head = document.createElement("thead");
+      head.innerHTML = `<tr>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
+      const tb = document.createElement("tbody");
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = cols
+          .map((c) => `<td>${escapeHtml(formatCellVal(row[c]))}</td>`)
+          .join("");
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(head);
+      tbl.appendChild(tb);
+      wrap.appendChild(tbl);
+      const hint = document.createElement("p");
+      hint.className = "helper-text archive-viewer__count";
+      hint.textContent = `${rows.length} row${rows.length === 1 ? "" : "s"} (read-only).`;
+      panelEl.appendChild(wrap);
+      panelEl.appendChild(hint);
+    };
+
+    const body = document.createElement("div");
+    body.className = "archive-viewer";
+
+    const tabsRow = document.createElement("div");
+    tabsRow.className = "archive-viewer__tabs";
+    tabsRow.setAttribute("role", "tablist");
+    tabsRow.setAttribute("aria-label", "Archive sections");
+
+    const panels = document.createElement("div");
+    panels.className = "archive-viewer__panels";
+
+    const tabDefs = [
+      { key: "overview", label: "Overview" },
+      { key: "voters", label: "Voters", segment: "voters" },
+      { key: "agents", label: "Agents", segment: "agents", cols: ["name", "nationalId", "candidateId", "mobile", "email"] },
+      { key: "candidates", label: "Candidates", segment: "candidates", cols: ["name", "id", "party", "constituency"] },
+      { key: "events", label: "Events", segment: "events", cols: ["title", "name", "id", "startDate", "date", "location"] },
+      { key: "trips", label: "Transport trips", segment: "transportTrips", cols: ["route", "tripType", "status", "pickupTime", "vehicle", "id"] },
+      { key: "routes", label: "Transport routes", segment: "transportRoutes", cols: ["routeNum", "status", "vehicle", "driver", "id"] },
+      { key: "lists", label: "Voter lists", segment: "voterLists", cols: ["name", "id", "voterIds", "shareToken"] },
+      { key: "monitors", label: "Ballot monitors", monitors: true, cols: ["name", "ballotBox", "shareToken", "mobile", "voterIds"] },
+    ];
+
+    const panelByKey = {};
+    tabDefs.forEach((def) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "archive-viewer__tab";
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-selected", def.key === "overview" ? "true" : "false");
+      btn.dataset.archiveTab = def.key;
+      btn.textContent = def.label;
+      tabsRow.appendChild(btn);
+
+      const panel = document.createElement("div");
+      panel.className = "archive-viewer__panel";
+      panel.hidden = def.key !== "overview";
+      panel.dataset.archivePanel = def.key;
+      panel.setAttribute("role", "tabpanel");
+      if (def.key === "overview") {
+        panel.innerHTML = `<p class="text-muted">Loading overview…</p>`;
+      } else {
+        panel.innerHTML = `<p class="text-muted">Open this tab to load data.</p>`;
+      }
+      panels.appendChild(panel);
+      panelByKey[def.key] = { def, panel, btn };
+    });
+
+    body.appendChild(tabsRow);
+    body.appendChild(panels);
+
+    const setActiveTab = (key) => {
+      tabDefs.forEach((d) => {
+        const { btn, panel } = panelByKey[d.key];
+        const on = d.key === key;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-selected", on ? "true" : "false");
+        panel.hidden = !on;
+      });
+    };
+
+    const loadTab = async (key) => {
+      const entry = panelByKey[key];
+      if (!entry) return;
+      const { def, panel } = entry;
+      if (def.key === "overview") {
+        if (cache.loaded.overview) return;
+        cache.loaded.overview = true;
+        panel.textContent = "";
+        const root = await api.getArchivedArchiveRootFs(archiveId);
+        cache.root = root;
+        if (!root) {
+          panel.innerHTML = `<p class="text-muted">Could not load archive metadata.</p>`;
+          return;
+        }
+        const stats = root.stats || {};
+        const dl = document.createElement("dl");
+        dl.className = "archive-viewer__meta";
+        const addRow = (k, v) => {
+          const dt = document.createElement("dt");
+          dt.textContent = k;
+          const dd = document.createElement("dd");
+          dd.textContent = v;
+          dl.appendChild(dt);
+          dl.appendChild(dd);
+        };
+        addRow("Label", String(root.label || "—"));
+        addRow("Archived at", String(root.archivedAt || "—"));
+        addRow("Campaign name (snapshot)", String(root.campaignNameSnapshot || "—"));
+        addRow("Voters", String(stats.voters != null ? stats.voters : "—"));
+        addRow("Agents", String(stats.agents != null ? stats.agents : "—"));
+        addRow("Candidates", String(stats.candidates != null ? stats.candidates : "—"));
+        addRow("Events", String(stats.events != null ? stats.events : "—"));
+        addRow("Transport trips", String(stats.transportTrips != null ? stats.transportTrips : "—"));
+        addRow("Transport routes", String(stats.transportRoutes != null ? stats.transportRoutes : "—"));
+        addRow("Voter lists", String(stats.voterLists != null ? stats.voterLists : "—"));
+        addRow("Monitor tokens", String(stats.monitorTokens != null ? stats.monitorTokens : "—"));
+        panel.appendChild(dl);
+        const cfg = root.configSnapshot;
+        if (cfg && typeof cfg === "object") {
+          const h = document.createElement("h4");
+          h.className = "archive-viewer__json-title";
+          h.textContent = "Campaign config snapshot";
+          panel.appendChild(h);
+          const pre = document.createElement("pre");
+          pre.className = "archive-viewer__json";
+          try {
+            pre.textContent = JSON.stringify(cfg, null, 2);
+          } catch (_) {
+            pre.textContent = String(cfg);
+          }
+          panel.appendChild(pre);
+        }
+        const note = document.createElement("p");
+        note.className = "helper-text";
+        note.textContent =
+          "This is a frozen snapshot. Use the tabs above to browse voters, lists, transport, and monitors as stored at archive time.";
+        panel.appendChild(note);
+        return;
+      }
+
+      if (cache.loaded[key]) return;
+      panel.innerHTML = `<p class="text-muted">Loading…</p>`;
+      try {
+        let rows;
+        if (def.monitors && api.getArchivedMonitorsFs) {
+          rows = await api.getArchivedMonitorsFs(archiveId);
+        } else if (def.segment) {
+          rows = await api.getArchivedSegmentFs(archiveId, def.segment);
+        } else {
+          rows = [];
+        }
+        if (def.key === "voters") {
+          renderArchivedVotersTable(panel, rows);
+        } else {
+          renderTable(panel, rows, def.cols || []);
+        }
+        cache.loaded[key] = true;
+      } catch (err) {
+        panel.innerHTML = `<p class="text-muted">Could not load this section.</p>`;
+        console.warn("archive viewer tab", key, err);
+      }
+    };
+
+    tabsRow.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-archive-tab]");
+      if (!btn) return;
+      const key = btn.getAttribute("data-archive-tab");
+      if (!key) return;
+      setActiveTab(key);
+      void loadTab(key);
+    });
+
+    tabDefs.forEach((d) => {
+      const btn = panelByKey[d.key].btn;
+      btn.setAttribute("data-archive-tab", d.key);
+    });
+
+    const footer = document.createElement("div");
+    footer.className = "form-actions";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "primary-button";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", () => closeModal());
+    footer.appendChild(closeBtn);
+
+    openModal({
+      title: titleBase,
+      body,
+      footer,
+      dialogClass: "modal--wide",
+      startMaximized: true,
+    });
+
+    await loadTab("overview");
+  };
+
+  if (!campaignArchiveListenersBound) {
+    campaignArchiveListenersBound = true;
+
+  openBtn.addEventListener("click", () => {
+    const body = document.createElement("div");
+    body.className = "form-grid";
+    body.innerHTML = `
+      <p class="helper-text" style="grid-column: 1 / -1;">
+        A snapshot is saved under <strong>campaignArchives</strong>, then active campaign data is removed from Firebase. Type <strong>ARCHIVE</strong> to confirm.
+      </p>
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="campaignArchiveLabelInput">Archive label (optional)</label>
+        <input type="text" id="campaignArchiveLabelInput" class="input" placeholder="e.g. 2024 General — North" maxlength="120">
+      </div>
+      <div class="form-group" style="grid-column: 1 / -1;">
+        <label for="campaignArchiveConfirmInput">Type ARCHIVE to confirm</label>
+        <input type="text" id="campaignArchiveConfirmInput" class="input" autocomplete="off" spellcheck="false" placeholder="ARCHIVE">
+      </div>
+    `;
+    const footer = document.createElement("div");
+    footer.className = "form-actions";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ghost-button";
+    cancelBtn.textContent = "Cancel";
+    const runBtn = document.createElement("button");
+    runBtn.type = "button";
+    runBtn.className = "primary-button primary-button--danger";
+    runBtn.textContent = "Archive and wipe";
+    runBtn.disabled = true;
+    const confirmInput = () => body.querySelector("#campaignArchiveConfirmInput");
+    const labelInput = () => body.querySelector("#campaignArchiveLabelInput");
+    const syncRunState = () => {
+      const ok = (confirmInput()?.value || "").trim() === "ARCHIVE";
+      runBtn.disabled = !ok;
+    };
+    confirmInput()?.addEventListener("input", syncRunState);
+    cancelBtn.addEventListener("click", () => closeModal());
+    runBtn.addEventListener("click", async () => {
+      if ((confirmInput()?.value || "").trim() !== "ARCHIVE") return;
+      runBtn.disabled = true;
+      const label = (labelInput()?.value || "").trim();
+
+      const progressRoot = document.createElement("div");
+      progressRoot.className = "campaign-archive-progress";
+      progressRoot.innerHTML = `
+        <div class="campaign-archive-progress__meta">
+          <span class="campaign-archive-progress__pct" id="campaignArchiveProgressPct">0%</span>
+          <span class="campaign-archive-progress__phase" id="campaignArchiveProgressPhase">Step 1 of 2: Saving snapshot</span>
+        </div>
+        <div
+          class="campaign-archive-progress__track"
+          id="campaignArchiveProgressTrack"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+          aria-label="Archive and wipe progress"
+        >
+          <div class="campaign-archive-progress__bar" id="campaignArchiveProgressBar"></div>
+        </div>
+        <p class="campaign-archive-progress__status" id="campaignArchiveProgressText">Starting…</p>
+      `;
+      const pctEl = () => progressRoot.querySelector("#campaignArchiveProgressPct");
+      const barEl = () => progressRoot.querySelector("#campaignArchiveProgressBar");
+      const trackEl = () => progressRoot.querySelector("#campaignArchiveProgressTrack");
+      const textEl = () => progressRoot.querySelector("#campaignArchiveProgressText");
+      const phaseEl = () => progressRoot.querySelector("#campaignArchiveProgressPhase");
+      const modalTitleEl = document.getElementById("modalTitle");
+
+      const updateProgress = (step, localPercent, message) => {
+        const global =
+          step === "archive"
+            ? Math.round(localPercent * 0.58)
+            : Math.round(58 + localPercent * 0.42);
+        const p = pctEl();
+        const b = barEl();
+        const t = trackEl();
+        const x = textEl();
+        const ph = phaseEl();
+        if (p) p.textContent = `${global}%`;
+        if (b) b.style.width = `${global}%`;
+        if (t) t.setAttribute("aria-valuenow", String(global));
+        if (x) x.textContent = message;
+        if (ph) {
+          ph.textContent =
+            step === "archive" ? "Step 1 of 2: Saving snapshot" : "Step 2 of 2: Clearing workspace";
+        }
+        if (modalTitleEl) {
+          modalTitleEl.textContent =
+            step === "archive" ? "Archiving campaign…" : "Clearing workspace…";
+        }
+      };
+
+      openModal({
+        title: "Archiving campaign…",
+        body: progressRoot,
+        footer: null,
+        hideMaximize: true,
+        closeOnBackdropClick: false,
+        closeOnEscape: false,
+      });
+      updateProgress("archive", 0, "Starting…");
+
+      try {
+        const api = await firebaseInitPromise;
+        if (!api.ready || !api.archiveCampaignSnapshotFs || !api.wipeActiveCampaignDataFs) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Archive unavailable",
+              meta: "Firebase is not ready.",
+            });
+          }
+          closeModal();
+          runBtn.disabled = false;
+          return;
+        }
+        const monitorTokens = await getMonitorTokensForArchive();
+        updateProgress("archive", 1, "Collecting monitor tokens…");
+
+        const snap = await api.archiveCampaignSnapshotFs({
+          label,
+          monitorTokens,
+          onProgress: ({ percent, message }) => updateProgress("archive", percent, message),
+        });
+        if (!snap.ok) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Archive failed",
+              meta: snap.error || "Unknown error",
+            });
+          }
+          closeModal();
+          runBtn.disabled = false;
+          return;
+        }
+
+        updateProgress("wipe", 0, "Starting workspace cleanup…");
+        const wipe = await api.wipeActiveCampaignDataFs({
+          monitorTokens,
+          onProgress: ({ percent, message }) => updateProgress("wipe", percent, message),
+        });
+        if (!wipe.ok) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Snapshot saved but wipe failed",
+              meta: wipe.error || "Clear active data manually or retry.",
+            });
+          }
+          closeModal();
+          runBtn.disabled = false;
+          return;
+        }
+        updateProgress("wipe", 100, "Reloading app…");
+        clearLocalCampaignWorkspaceCache();
+        closeModal();
+        location.reload();
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Archive failed",
+            meta: err?.message || String(err),
+          });
+        }
+        closeModal();
+        runBtn.disabled = false;
+      }
+    });
+    footer.appendChild(cancelBtn);
+    footer.appendChild(runBtn);
+    openModal({
+      title: "Archive current campaign",
+      body,
+      footer,
+      closeOnBackdropClick: false,
+      closeOnEscape: false,
+    });
+  });
+
+  tbody.addEventListener("click", async (e) => {
+    const viewBtn = e.target.closest("[data-archive-view-full]");
+    const delBtn = e.target.closest("[data-archive-delete]");
+    const csvBtn = e.target.closest("[data-archive-download-voters-csv]");
+    if (csvBtn) {
+      const id = csvBtn.getAttribute("data-archive-download-voters-csv");
+      if (!id) return;
+      const labelAttr = csvBtn.getAttribute("data-archive-label");
+      const label = labelAttr != null ? labelAttr : "";
+      csvBtn.disabled = true;
+      try {
+        const api = await firebaseInitPromise;
+        if (!api.ready || typeof api.getArchivedVotersFs !== "function") {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Could not download",
+              meta: "Archive voters API is unavailable.",
+            });
+          }
+          return;
+        }
+        const voters = await api.getArchivedVotersFs(id);
+        if (!Array.isArray(voters) || voters.length === 0) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "No voters in archive",
+              meta: "This snapshot has no voter rows to export.",
+            });
+          }
+          return;
+        }
+        const csv = buildBulkVoterUploadTemplateCsv(voters);
+        const name = sanitizeFilenameSegment(label);
+        triggerDownloadCsv(`voters-archive-${name}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "CSV downloaded",
+            meta: `${voters.length.toLocaleString("en-MV")} row(s) — same columns as Bulk Voter Upload.`,
+          });
+        }
+      } catch (err) {
+        console.warn("archive voters CSV download", err);
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Download failed",
+            meta: err?.message || String(err),
+          });
+        }
+      } finally {
+        csvBtn.disabled = false;
+      }
+      return;
+    }
+    if (viewBtn) {
+      const id = viewBtn.getAttribute("data-archive-view-full");
+      if (!id) return;
+      const label = (viewBtn.closest("tr")?.querySelector(".data-table-col--name")?.textContent || "").trim();
+      await openFullArchiveViewerModal(id, label || "");
+      return;
+    }
+    if (delBtn) {
+      const id = delBtn.getAttribute("data-archive-delete");
+      if (!id) return;
+      const ok = await confirmDialog({
+        title: "Delete archive?",
+        message: "This permanently removes this archived snapshot from Firebase.",
+        confirmText: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        const api = await firebaseInitPromise;
+        if (!api.ready || !api.deleteCampaignArchiveFs) return;
+        const res = await api.deleteCampaignArchiveFs(id);
+        if (!res.ok) {
+          if (window.appNotifications) {
+            window.appNotifications.push({
+              title: "Could not delete archive",
+              meta: res.error || "",
+            });
+          }
+          return;
+        }
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Archive deleted", meta: "" });
+        }
+        await refreshArchiveList();
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({
+            title: "Could not delete archive",
+            meta: err?.message || String(err),
+          });
+        }
+      }
+    }
+  });
+
+  }
+
+  refreshArchiveList();
+}
+
 function initCampaignTab() {
   loadCampaignConfig();
   applyCampaignToSidebar();
@@ -2576,6 +3673,8 @@ function initCampaignTab() {
       } catch (_) {}
     });
   }
+
+  initCampaignArchiveUI();
 }
 
 function initAgentsTab() {
@@ -3271,25 +4370,71 @@ export function initSettingsModule() {
 
   if (exportVotersCsvButton) {
     exportVotersCsvButton.addEventListener("click", async () => {
+      const prevDisabled = exportVotersCsvButton.disabled;
+      const prevLabel = exportVotersCsvButton.textContent;
+      exportVotersCsvButton.disabled = true;
+      exportVotersCsvButton.textContent = "Preparing…";
       try {
-        // Prefer live voters from Firebase so we capture latest updates (votedAt, pledge, notes, etc.)
-        let voters = [];
+        const jsonForCsv = (val) => {
+          if (val == null) return "";
+          if (typeof val === "object") {
+            try {
+              return JSON.stringify(val);
+            } catch (_) {
+              return "";
+            }
+          }
+          return String(val);
+        };
+
+        let fromFirestore = [];
         try {
           const api = await firebaseInitPromise;
-          if (api.ready && api.getAllVotersFs) {
-            voters = await api.getAllVotersFs();
+          if (api.ready && typeof api.getAllVotersFs === "function") {
+            // Prefer server + paged fetch; firebase.js falls back to cache if fromServer fails.
+            fromFirestore = await api.getAllVotersFs({ fromServer: true });
           }
-        } catch (_) {}
+        } catch (err) {
+          console.warn("[Settings] Export: Firestore fetch failed", err);
+        }
+
+        /** Base list first (Firestore or localStorage backup), then overlay in-memory voters so the session wins (unsynced edits). */
+        const mergeWithInMemoryVoters = (primaryList) => {
+          const byId = new Map();
+          (Array.isArray(primaryList) ? primaryList : []).forEach((v) => {
+            if (!v || v.id == null || v.id === "") return;
+            byId.set(String(v.id), v);
+          });
+          try {
+            const standalone = getVotersContextForStandalone();
+            if (standalone && typeof standalone.getAllVoters === "function") {
+              (standalone.getAllVoters() || []).forEach((v) => {
+                if (!v || v.id == null || v.id === "") return;
+                byId.set(String(v.id), v);
+              });
+            }
+          } catch (_) {
+            /* ignore */
+          }
+          return Array.from(byId.values());
+        };
+
+        let voters = mergeWithInMemoryVoters(fromFirestore);
+
         if (!Array.isArray(voters) || voters.length === 0) {
-          // Fallback to local cache if Firebase is not ready.
           try {
             const raw = localStorage.getItem("voters-data");
             if (raw) {
               const parsed = JSON.parse(raw);
-              if (Array.isArray(parsed)) voters = parsed;
+              if (Array.isArray(parsed) && parsed.length) {
+                voters = mergeWithInMemoryVoters(parsed);
+              }
             }
-          } catch (_) {}
+          } catch (_) {
+            /* ignore */
+          }
         }
+
         if (!Array.isArray(voters) || voters.length === 0) {
           if (window.appNotifications) {
             window.appNotifications.push({
@@ -3319,6 +4464,12 @@ export function initSettingsModule() {
           "Persuadable?",
           "Date pledged",
           "Voted at",
+          "Voted time marked",
+          "Referendum vote",
+          "Referendum notes",
+          "Candidate pledges (JSON)",
+          "Candidate agent assignments (JSON)",
+          "Document ID",
         ];
         const lines = [headers.map(csvEscape).join(",")];
         voters.forEach((v) => {
@@ -3341,6 +4492,12 @@ export function initSettingsModule() {
             v.persuadable || "",
             v.pledgedAt || "",
             v.votedAt || "",
+            v.votedTimeMarked || "",
+            v.referendumVote || "",
+            v.referendumNotes || "",
+            jsonForCsv(v.candidatePledges),
+            jsonForCsv(v.candidateAgentAssignments),
+            v.id || "",
           ];
           lines.push(row.map(csvEscape).join(","));
         });
@@ -3354,7 +4511,7 @@ export function initSettingsModule() {
         if (window.appNotifications) {
           window.appNotifications.push({
             title: "Voters exported",
-            meta: `${voters.length.toLocaleString("en-MV")} voters as CSV`,
+            meta: `${voters.length.toLocaleString("en-MV")} voter(s) — full list from the server (plus any unsynced rows on this device).`,
           });
         }
       } catch (err) {
@@ -3364,6 +4521,9 @@ export function initSettingsModule() {
             meta: err?.message || String(err),
           });
         }
+      } finally {
+        exportVotersCsvButton.disabled = prevDisabled;
+        exportVotersCsvButton.textContent = prevLabel;
       }
     });
   }

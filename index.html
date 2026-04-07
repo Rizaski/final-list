@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Dhuvaafaru Campaign Portal</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -131,7 +134,7 @@
         </button>
       </div>
 
-      <nav class="sidebar__nav">
+      <nav class="sidebar__nav" aria-label="Primary navigation">
         <button class="nav-item nav-item--active" data-module="dashboard">
           <span class="nav-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" class="icon-svg">
@@ -225,6 +228,32 @@
           <span class="nav-label">Settings</span>
         </button>
       </nav>
+
+      <div class="sidebar__toolbar" role="toolbar" aria-label="Quick actions">
+        <button type="button" class="sidebar__tool" id="sidebarRefreshBtn" title="Refresh data" aria-label="Refresh data from server">
+          <svg viewBox="0 0 24 24" class="sidebar__tool-icon" aria-hidden="true">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3 3v5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M21 21v-5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="sidebar__tool-text">Refresh</span>
+        </button>
+        <button type="button" class="sidebar__tool" id="sidebarNotificationsBtn" title="Notifications" aria-label="Open notifications">
+          <svg viewBox="0 0 24 24" class="sidebar__tool-icon" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+          <span class="sidebar__tool-text">Alerts</span>
+        </button>
+        <button type="button" class="sidebar__tool" id="sidebarSearchFocusBtn" title="Search voters" aria-label="Focus voter search">
+          <svg viewBox="0 0 24 24" class="sidebar__tool-icon" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M20 20l-3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <span class="sidebar__tool-text">Search</span>
+        </button>
+      </div>
 
     </aside>
     <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
@@ -1503,6 +1532,43 @@
                     </div>
                   </div>
                 </section>
+
+                <section class="card" id="settingsCampaignArchiveCard" hidden>
+                  <header class="card-header">
+                    <h2>Archive campaign &amp; start fresh</h2>
+                    <p class="card-subtitle">
+                      Saves a full snapshot to Firebase (voters, lists, events, transport, ballot monitors), then clears the active workspace so you can run a new campaign. Only administrators can view archived snapshots.
+                    </p>
+                  </header>
+                  <div class="card-body">
+                    <p class="helper-text" style="margin-bottom: 12px;">
+                      This does not remove user accounts. After archiving, the app reloads with an empty dataset and default campaign settings.
+                    </p>
+                    <div class="form-actions" style="flex-wrap: wrap; gap: 8px;">
+                      <button type="button" class="primary-button primary-button--danger" id="settingsCampaignArchiveOpen">
+                        Archive current campaign…
+                      </button>
+                    </div>
+                    <div id="settingsCampaignArchiveListWrap" style="margin-top: 20px;">
+                      <h3 class="settings-subheading" style="font-size: 0.95rem; margin-bottom: 8px;">Archived campaigns</h3>
+                      <p class="helper-text" style="margin: 0 0 8px;">Use <strong>Download voters CSV</strong> for the same column layout as Bulk Voter Upload (below).</p>
+                      <p id="settingsCampaignArchiveListEmpty" class="text-muted" style="margin: 0;">No archives yet.</p>
+                      <div class="table-wrap" style="max-height: 280px; overflow: auto;">
+                        <table class="data-table" id="settingsCampaignArchiveTable" hidden>
+                          <thead>
+                            <tr>
+                              <th>Label</th>
+                              <th>Archived</th>
+                              <th>Voters</th>
+                              <th style="text-align:right;">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody id="settingsCampaignArchiveTableBody"></tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
 
@@ -1577,7 +1643,7 @@
                         </span>
                         Import voters
                       </button>
-                      <button type="button" class="ghost-button" id="exportVotersCsvButton" title="Download full voters list with latest data">
+                      <button type="button" class="ghost-button" id="exportVotersCsvButton" title="Download every voter from the server (paged), plus any unsynced rows on this device; includes referendum and per-candidate fields">
                         Download voters CSV
                       </button>
                       <button type="button" class="ghost-button" id="syncVotersToFirebaseButton" title="Merge every voter in this browser into Firestore (safe with offline copies; sign in required)">

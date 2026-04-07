@@ -565,6 +565,37 @@ if (notificationClearButton) {
   });
 }
 
+const sidebarRefreshBtn = document.getElementById("sidebarRefreshBtn");
+const refreshButtonEl = document.getElementById("refreshButton");
+if (sidebarRefreshBtn && refreshButtonEl) {
+  sidebarRefreshBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    refreshButtonEl.click();
+    if (window.matchMedia("(max-width: 768px)").matches) closeSidebar();
+  });
+}
+
+const sidebarNotificationsBtn = document.getElementById("sidebarNotificationsBtn");
+if (sidebarNotificationsBtn && notificationButton) {
+  sidebarNotificationsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    notificationButton.click();
+  });
+}
+
+const sidebarSearchFocusBtn = document.getElementById("sidebarSearchFocusBtn");
+const globalSearchInput = document.getElementById("globalSearch");
+if (sidebarSearchFocusBtn && globalSearchInput) {
+  sidebarSearchFocusBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    globalSearchInput.focus();
+    try {
+      globalSearchInput.select();
+    } catch (_) {}
+    if (window.matchMedia("(max-width: 768px)").matches) closeSidebar();
+  });
+}
+
 document.addEventListener("click", (e) => {
   if (
     userMenu &&
@@ -678,16 +709,16 @@ document.addEventListener("events-updated", () => {
   refreshDashboard(scope);
 });
 
-const globalSearchInput = document.getElementById("globalSearch");
-
-globalSearchInput.addEventListener("input", () => {
-  const query = globalSearchInput.value.trim();
-  document.dispatchEvent(
-    new CustomEvent("global-search", {
-      detail: { query },
-    })
-  );
-});
+if (globalSearchInput) {
+  globalSearchInput.addEventListener("input", () => {
+    const query = globalSearchInput.value.trim();
+    document.dispatchEvent(
+      new CustomEvent("global-search", {
+        detail: { query },
+      })
+    );
+  });
+}
 
 function renderDashboardStats(stats) {
   const totalVotersEl = document.getElementById("statTotalVoters");

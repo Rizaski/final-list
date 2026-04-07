@@ -85,6 +85,7 @@ let transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_KEYS.slice();
 const MONITOR_BALLOT_SESSION_PREFIX = "monitor_ballot_session_";
 
 const ADMIN_BALLOT_SESSION_OPEN_SVG = `<svg class="monitor-admin-session-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none"/></svg>`;
+const ADMIN_BALLOT_SESSION_PAUSE_SVG = `<svg class="monitor-admin-session-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`;
 const ADMIN_BALLOT_SESSION_CLOSE_SVG = `<svg class="monitor-admin-session-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
 /** Ballot box card: list who has voted (check in circle). */
 const VOTE_BOX_VIEW_VOTED_SVG = `<svg class="vote-box-card__view-icon vote-box-card__view-icon--voted" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#22c55e" stroke="#15803d" stroke-width="1.15"/><path d="M9 12l2 2 4-4" fill="none" stroke="#ffffff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -110,6 +111,7 @@ let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
 let votedRealtimeUnsubscribes = []; // unsubscribe fns for Firestore voted listeners
 const votedByMonitor = {}; // token -> [{ voterId, timeMarked }] from real-time snapshots
 let monitorBallotSessionUnsubs = []; // ballot session snapshots for Manage Monitors status column
+let voteCardBallotSessionUnsubs = []; // Vote Marking tab cards
 let monitorBallotSessionVisibilityBound = false;
 let monitorRowMenuDocClose = null;
 let zeroDaySyncInProgress = false;
@@ -4503,26 +4505,82 @@ function applyMonitorSessionCell(monitorId, state) {
     state && (state.status === "paused" || state.status === "closed") ? state.status : "open";
   const label = st === "open" ? "Open" : st === "paused" ? "Paused" : "Closed";
   cell.textContent = label;
-  cell.className = "monitor-session-cell monitor-session-cell--" + st;
+  cell.className = "ballot-box-session-pill ballot-box-session-pill--compact monitor-session-cell monitor-session-cell--" + st;
   const reason = state && String(state.pauseReason || "").trim();
   if (st === "paused" && reason) cell.setAttribute("title", "Reason: " + reason);
   else cell.removeAttribute("title");
+  const row = table?.querySelector(`tbody tr[data-monitor-id="${String(monitorId)}"]`);
+  if (row) {
+    const o = row.querySelector("[data-admin-ballot-open]");
+    const p = row.querySelector("[data-admin-ballot-pause]");
+    const c = row.querySelector("[data-admin-ballot-close]");
+    if (o) o.disabled = st === "open";
+    if (p) p.disabled = st !== "open";
+    if (c) c.disabled = st === "closed";
+  }
 }
 
-async function adminSetVoteMarkingSessionForMonitor(monitor, wantOpen) {
+/** Sync Firestore ballot session: open, paused (with reason), or closed. */
+async function adminSetBallotSessionStatus(monitor, status, pauseReason = "") {
   if (!monitor?.shareToken) return false;
   try {
     const api = await firebaseInitPromise;
     if (!api.setBallotSessionFs) return false;
+    const st = status === "paused" || status === "closed" ? status : "open";
+    const nowIso = new Date().toISOString();
     await api.setBallotSessionFs(monitor.shareToken, {
-      status: wantOpen ? "open" : "closed",
-      pauseReason: "",
-      pausedAt: "",
+      status: st,
+      pauseReason: st === "paused" ? String(pauseReason || "") : "",
+      pausedAt: st === "paused" ? nowIso : "",
     });
     return true;
   } catch (_) {
     return false;
   }
+}
+
+async function adminSetVoteMarkingSessionForMonitor(monitor, wantOpen) {
+  return adminSetBallotSessionStatus(monitor, wantOpen ? "open" : "closed");
+}
+
+function openAdminPauseBallotSessionModal(monitor) {
+  if (!monitor?.shareToken) return;
+  const wrap = document.createElement("div");
+  wrap.className = "monitor-pause-modal__body";
+  const label = document.createElement("label");
+  label.textContent = "Reason for pause";
+  label.setAttribute("for", "adminMonitorPauseReasonInput");
+  const ta = document.createElement("textarea");
+  ta.id = "adminMonitorPauseReasonInput";
+  ta.className = "monitor-pause-modal__textarea";
+  ta.rows = 3;
+  ta.placeholder = "Shown to monitors at the ballot box.";
+  wrap.appendChild(label);
+  wrap.appendChild(ta);
+  const footerDiv = document.createElement("div");
+  footerDiv.className = "modal-footer-row";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Pause marking";
+  cancelBtn.addEventListener("click", () => closeModal());
+  saveBtn.addEventListener("click", async () => {
+    const reason = (ta.value || "").trim();
+    closeModal();
+    const ok = await adminSetBallotSessionStatus(monitor, "paused", reason || "Paused");
+    if (typeof window.showToast === "function") {
+      window.showToast(
+        ok ? "Vote marking paused for this ballot box." : "Could not update vote marking session."
+      );
+    }
+  });
+  footerDiv.appendChild(cancelBtn);
+  footerDiv.appendChild(saveBtn);
+  openModal({ title: "Pause vote marking", body: wrap, footer: footerDiv, hideMaximize: true });
 }
 
 function wireMonitorBallotSessionCells() {
@@ -4533,12 +4591,14 @@ function wireMonitorBallotSessionCells() {
     if (!cell) return;
     if (!m.shareToken) {
       cell.textContent = "—";
-      cell.className = "monitor-session-cell monitor-session-cell--na";
+      cell.className =
+        "ballot-box-session-pill ballot-box-session-pill--compact monitor-session-cell monitor-session-cell--na";
       cell.removeAttribute("title");
       return;
     }
     cell.textContent = "…";
-    cell.className = "monitor-session-cell monitor-session-cell--loading";
+    cell.className =
+      "ballot-box-session-pill ballot-box-session-pill--compact monitor-session-cell monitor-session-cell--loading";
     cell.removeAttribute("title");
   });
   firebaseInitPromise
@@ -4553,6 +4613,114 @@ function wireMonitorBallotSessionCells() {
           .catch(() => applyMonitorSessionCell(m.id, { status: "open" }));
         const unsub = api.onBallotSessionSnapshotFs(token, (s) => applyMonitorSessionCell(m.id, s));
         monitorBallotSessionUnsubs.push(unsub);
+      });
+    })
+    .catch(() => {});
+}
+
+function tearDownVoteCardBallotSessionListeners() {
+  voteCardBallotSessionUnsubs.forEach((u) => {
+    try {
+      u();
+    } catch (_) {}
+  });
+  voteCardBallotSessionUnsubs = [];
+}
+
+function updateVoteCardAdminButtons(boxKey, st) {
+  const container = document.getElementById("zeroDayVoteCards");
+  if (!container) return;
+  const card = [...container.querySelectorAll(".vote-box-card")].find((c) => {
+    const pill = c.querySelector("[data-ballot-session-for-box]");
+    return pill && pill.getAttribute("data-ballot-session-for-box") === boxKey;
+  });
+  if (!card) return;
+  const openBtn = card.querySelector("[data-vote-card-ballot-open]");
+  const pauseBtn = card.querySelector("[data-vote-card-ballot-pause]");
+  const closeBtn = card.querySelector("[data-vote-card-ballot-close]");
+  const m = zeroDayMonitors.find((x) => (x.ballotBox || "").trim() === boxKey);
+  if (!m?.shareToken || st === "na" || st === "loading") {
+    if (openBtn) openBtn.disabled = true;
+    if (pauseBtn) pauseBtn.disabled = true;
+    if (closeBtn) closeBtn.disabled = true;
+    return;
+  }
+  const status = st === "paused" || st === "closed" ? st : "open";
+  if (openBtn) openBtn.disabled = status === "open";
+  if (pauseBtn) pauseBtn.disabled = status !== "open";
+  if (closeBtn) closeBtn.disabled = status === "closed";
+}
+
+function applyVoteCardSessionPill(boxKey, state) {
+  const container = document.getElementById("zeroDayVoteCards");
+  if (!container) return;
+  const el = [...container.querySelectorAll("[data-ballot-session-for-box]")].find(
+    (n) => n.getAttribute("data-ballot-session-for-box") === boxKey
+  );
+  if (!el) return;
+  if (state === null || state === undefined || state.status === "na") {
+    el.textContent = "—";
+    el.className =
+      "ballot-box-session-pill ballot-box-session-pill--compact vote-box-card__session-pill ballot-box-session-pill--na";
+    el.removeAttribute("title");
+    updateVoteCardAdminButtons(boxKey, "na");
+    return;
+  }
+  const st =
+    state && (state.status === "paused" || state.status === "closed") ? state.status : "open";
+  const label = st === "open" ? "Open" : st === "paused" ? "Paused" : "Closed";
+  el.textContent = label;
+  el.className =
+    "ballot-box-session-pill ballot-box-session-pill--compact vote-box-card__session-pill ballot-box-session-pill--" + st;
+  const reason = state && String(state.pauseReason || "").trim();
+  if (st === "paused" && reason) el.setAttribute("title", "Reason: " + reason);
+  else el.removeAttribute("title");
+  updateVoteCardAdminButtons(boxKey, st);
+}
+
+function wireVoteCardBallotSessions() {
+  tearDownVoteCardBallotSessionListeners();
+  const container = document.getElementById("zeroDayVoteCards");
+  if (!container) return;
+  const pills = [...container.querySelectorAll("[data-ballot-session-for-box]")];
+  pills.forEach((pill) => {
+    const boxKey = pill.getAttribute("data-ballot-session-for-box") || "";
+    const m = zeroDayMonitors.find((x) => (x.ballotBox || "").trim() === boxKey);
+    if (!m?.shareToken) {
+      applyVoteCardSessionPill(boxKey, { status: "na" });
+      return;
+    }
+    pill.textContent = "…";
+    pill.className =
+      "ballot-box-session-pill ballot-box-session-pill--compact vote-box-card__session-pill ballot-box-session-pill--loading";
+    pill.removeAttribute("title");
+    updateVoteCardAdminButtons(boxKey, "loading");
+  });
+  firebaseInitPromise
+    .then((api) => {
+      if (!api.getBallotSessionFs || !api.onBallotSessionSnapshotFs) {
+        pills.forEach((pill) => {
+          const boxKey = pill.getAttribute("data-ballot-session-for-box") || "";
+          const m = zeroDayMonitors.find((x) => (x.ballotBox || "").trim() === boxKey);
+          applyVoteCardSessionPill(boxKey, m?.shareToken ? { status: "open" } : { status: "na" });
+        });
+        return;
+      }
+      pills.forEach((pill) => {
+        const boxKey = pill.getAttribute("data-ballot-session-for-box") || "";
+        const m = zeroDayMonitors.find((x) => (x.ballotBox || "").trim() === boxKey);
+        if (!m?.shareToken) {
+          applyVoteCardSessionPill(boxKey, { status: "na" });
+          return;
+        }
+        api
+          .getBallotSessionFs(m.shareToken)
+          .then((s) => applyVoteCardSessionPill(boxKey, s))
+          .catch(() => applyVoteCardSessionPill(boxKey, { status: "open" }));
+        const unsub = api.onBallotSessionSnapshotFs(m.shareToken, (s) =>
+          applyVoteCardSessionPill(boxKey, s)
+        );
+        voteCardBallotSessionUnsubs.push(unsub);
       });
     })
     .catch(() => {});
@@ -4619,6 +4787,9 @@ function renderMonitorsTable() {
           <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--open" data-admin-ballot-open="${mid}" title="Open vote marking" aria-label="Open vote marking"${
             m.shareToken ? "" : " disabled"
           }>${ADMIN_BALLOT_SESSION_OPEN_SVG}</button>
+          <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--pause" data-admin-ballot-pause="${mid}" title="Pause vote marking" aria-label="Pause vote marking"${
+            m.shareToken ? "" : " disabled"
+          }>${ADMIN_BALLOT_SESSION_PAUSE_SVG}</button>
           <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--close" data-admin-ballot-close="${mid}" title="Close vote marking" aria-label="Close vote marking"${
             m.shareToken ? "" : " disabled"
           }>${ADMIN_BALLOT_SESSION_CLOSE_SVG}</button>
@@ -6252,19 +6423,26 @@ function renderZeroDayVoteTable() {
       const linkCopyAttr = mid
         ? `data-copy-monitor-link="${mid}"`
         : `data-copy-monitor-link-for-box="${escapeHtml(boxKey)}"`;
+      const sessionBoxAttr = escapeHtml(boxKey);
       card.innerHTML = `
         <div class="vote-box-card__header">
-          <div>
-            <div class="vote-box-card__title-wrap">
-              <span class="vote-box-card__title">${escapeHtml(displayTitle)}</span>
+          <div class="vote-box-card__header-main">
+            <div class="vote-box-card__title-row">
+              <div class="vote-box-card__title-wrap">
+                <span class="vote-box-card__title">${escapeHtml(displayTitle)}</span>
+              </div>
+              <span class="vote-box-card__badge ${badgeClass}">${percentage}% voted</span>
             </div>
             <div class="vote-box-card__meta">${escapeHtml(metaLine)}</div>
+            <div class="vote-box-card__session-strip" role="status" aria-label="Vote marking session for this ballot box">
+              <span class="ballot-box-session-pill ballot-box-session-pill--compact vote-box-card__session-pill ballot-box-session-pill--loading" data-ballot-session-for-box="${sessionBoxAttr}">…</span>
+              <span class="vote-box-card__session-label">Session</span>
+            </div>
             <div class="vote-box-card__code-row">
               <span class="vote-box-card__code-label">Ballot box link</span>
               <button type="button" class="vote-box-card__copy-btn" ${linkCopyAttr} title="Copy ballot box link" aria-label="Copy ballot box link">${monitorShareIconLink()}</button>
             </div>
           </div>
-          <span class="vote-box-card__badge ${badgeClass}">${percentage}% voted</span>
         </div>
         <div class="vote-box-card__progress" role="img" aria-label="${percentage}% voted">
           <span class="vote-box-card__progress-seg vote-box-card__progress-seg--voted" style="width:${votedPct}%"></span>
@@ -6291,10 +6469,13 @@ function renderZeroDayVoteTable() {
           <span><strong>Undecided:</strong> ${pledgeUndecided}</span>
         </div>
         <div class="vote-box-card__actions">
-          <div class="vote-box-card__session-btns" role="group" aria-label="Open or close vote marking for this ballot box">
+          <div class="vote-box-card__session-btns" role="group" aria-label="Control vote marking session for this ballot box">
             <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--open vote-box-card__sess-btn" data-vote-card-ballot-open="${escapeHtml(
               boxKey
             )}" title="Open vote marking" aria-label="Open vote marking">${ADMIN_BALLOT_SESSION_OPEN_SVG}</button>
+            <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--pause vote-box-card__sess-btn" data-vote-card-ballot-pause="${escapeHtml(
+              boxKey
+            )}" title="Pause vote marking" aria-label="Pause vote marking">${ADMIN_BALLOT_SESSION_PAUSE_SVG}</button>
             <button type="button" class="monitor-admin-session-btn monitor-admin-session-btn--close vote-box-card__sess-btn" data-vote-card-ballot-close="${escapeHtml(
               boxKey
             )}" title="Close vote marking" aria-label="Close vote marking">${ADMIN_BALLOT_SESSION_CLOSE_SVG}</button>
@@ -6312,6 +6493,9 @@ function renderZeroDayVoteTable() {
       zeroDayVoteCardsContainer.appendChild(card);
     });
   }
+
+  ensureAggregateVoteMarkingMonitor();
+  wireVoteCardBallotSessions();
 
   if (zeroDayVotePaginationEl) {
     const from = total === 0 ? 0 : start + 1;
@@ -6334,8 +6518,6 @@ function renderZeroDayVoteTable() {
       });
     });
   }
-
-  ensureAggregateVoteMarkingMonitor();
 }
 
 function openMarkVotedModal() {
@@ -6489,15 +6671,28 @@ export function initZeroDayModule(votersContextParam, options = {}) {
         .then((api) => {
           if (!api.getBallotSessionFs) return;
           const tbl = document.getElementById("zeroDayMonitorsTable");
-          if (!tbl) return;
-          zeroDayMonitors.forEach((m) => {
-            if (!m.shareToken) return;
-            if (!tbl.querySelector(`tbody [data-monitor-session-cell="${String(m.id)}"]`)) return;
-            api
-              .getBallotSessionFs(m.shareToken)
-              .then((s) => applyMonitorSessionCell(m.id, s))
-              .catch(() => {});
-          });
+          if (tbl) {
+            zeroDayMonitors.forEach((m) => {
+              if (!m.shareToken) return;
+              if (!tbl.querySelector(`tbody [data-monitor-session-cell="${String(m.id)}"]`)) return;
+              api
+                .getBallotSessionFs(m.shareToken)
+                .then((s) => applyMonitorSessionCell(m.id, s))
+                .catch(() => {});
+            });
+          }
+          const voteCards = document.getElementById("zeroDayVoteCards");
+          if (voteCards) {
+            [...voteCards.querySelectorAll("[data-ballot-session-for-box]")].forEach((pill) => {
+              const boxKey = pill.getAttribute("data-ballot-session-for-box") || "";
+              const mon = zeroDayMonitors.find((x) => (x.ballotBox || "").trim() === boxKey);
+              if (!mon?.shareToken) return;
+              api
+                .getBallotSessionFs(mon.shareToken)
+                .then((s) => applyVoteCardSessionPill(boxKey, s))
+                .catch(() => {});
+            });
+          }
         })
         .catch(() => {});
     });
@@ -6601,15 +6796,21 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       const editBtn = e.target.closest("[data-edit-monitor]");
       const deleteBtn = e.target.closest("[data-delete-monitor]");
       const adminBallotOpen = e.target.closest("[data-admin-ballot-open]");
+      const adminBallotPause = e.target.closest("[data-admin-ballot-pause]");
       const adminBallotClose = e.target.closest("[data-admin-ballot-close]");
-      if (adminBallotOpen || adminBallotClose) {
+      if (adminBallotOpen || adminBallotPause || adminBallotClose) {
         e.preventDefault();
         const id = Number(
           adminBallotOpen?.getAttribute("data-admin-ballot-open") ||
+            adminBallotPause?.getAttribute("data-admin-ballot-pause") ||
             adminBallotClose?.getAttribute("data-admin-ballot-close")
         );
         const monitor = zeroDayMonitors.find((m) => m.id === id);
         if (!monitor?.shareToken) return;
+        if (adminBallotPause) {
+          openAdminPauseBallotSessionModal(monitor);
+          return;
+        }
         const wantOpen = !!adminBallotOpen;
         void (async () => {
           const ok = await adminSetVoteMarkingSessionForMonitor(monitor, wantOpen);
@@ -6902,17 +7103,23 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       const viewVotedBtn = e.target.closest("[data-view-voted]");
       const viewNotYetBtn = e.target.closest("[data-view-not-yet]");
       const voteCardOpen = e.target.closest("[data-vote-card-ballot-open]");
+      const voteCardPause = e.target.closest("[data-vote-card-ballot-pause]");
       const voteCardClose = e.target.closest("[data-vote-card-ballot-close]");
 
-      if (voteCardOpen || voteCardClose) {
+      if (voteCardOpen || voteCardPause || voteCardClose) {
         const boxKeyRaw =
           voteCardOpen?.getAttribute("data-vote-card-ballot-open") ||
+          voteCardPause?.getAttribute("data-vote-card-ballot-pause") ||
           voteCardClose?.getAttribute("data-vote-card-ballot-close");
         const boxKeyCtl = (boxKeyRaw || "").trim();
         if (!boxKeyCtl) return;
-        const wantOpen = !!voteCardOpen;
         let monitor = zeroDayMonitors.find((m) => (m.ballotBox || "").trim() === boxKeyCtl);
         if (!monitor) monitor = getOrEnsureMonitorForBallotBox(boxKeyCtl);
+        if (voteCardPause) {
+          openAdminPauseBallotSessionModal(monitor);
+          return;
+        }
+        const wantOpen = !!voteCardOpen;
         void (async () => {
           const ok = await adminSetVoteMarkingSessionForMonitor(monitor, wantOpen);
           if (typeof window.showToast === "function") {
@@ -7217,9 +7424,36 @@ export function initMonitorView(token, votersContextParam, options = {}) {
     }
   }
 
+  function syncStandaloneAppbarSession() {
+    if (!standaloneBallotPage) return;
+    const slot = document.getElementById("ballotBoxAppbarSessionSlot");
+    const pill = document.getElementById("ballotBoxAppbarSession");
+    if (!slot || !pill) return;
+    if (!monitor) {
+      slot.hidden = true;
+      return;
+    }
+    slot.hidden = false;
+    const sess =
+      ballotSessionStatus === "paused"
+        ? "paused"
+        : ballotSessionStatus === "closed"
+          ? "closed"
+          : "open";
+    const label = sess === "open" ? "Open" : sess === "paused" ? "Paused" : "Closed";
+    pill.className =
+      "ballot-box-session-pill ballot-box-appbar__session-pill ballot-box-session-pill--" + sess;
+    pill.textContent = label;
+    pill.setAttribute("aria-label", "Vote marking session: " + label);
+    if (sess === "paused" && ballotSessionPauseReason.trim())
+      pill.setAttribute("title", ballotSessionPauseReason.trim());
+    else pill.removeAttribute("title");
+  }
+
   /** Gate shows live Firestore session; workspace shows bar, header, overlay, search. */
   function syncBallotSessionUi() {
     renderGateBallotSessionStatus();
+    syncStandaloneAppbarSession();
     if (monitorViewEl.getAttribute("data-state") !== "list") return;
     renderBallotSessionBar();
     renderMonitorViewHeader();
@@ -7910,12 +8144,37 @@ export function initMonitorView(token, votersContextParam, options = {}) {
       const total = assignedVoters.length;
       const voted = getVotedEntries().length;
       const pct = total > 0 ? Math.min(100, Math.round((voted / total) * 100)) : 0;
+      const sess =
+        ballotSessionStatus === "paused"
+          ? "paused"
+          : ballotSessionStatus === "closed"
+            ? "closed"
+            : "open";
+      const sessLabel = sess === "open" ? "Open" : sess === "paused" ? "Paused" : "Closed";
+      const sessHint =
+        sess === "open"
+          ? "Search by sequence or ID and mark voters while the session is open."
+          : sess === "paused"
+            ? ballotSessionPauseReason.trim()
+              ? escapeHtml(ballotSessionPauseReason.trim())
+              : "Vote marking is paused. Slide to resume or wait for staff to open the session."
+            : "This ballot box is closed. Staff must open the session before marking.";
       main.innerHTML =
         '<div class="ballot-dash-head">' +
         '<div class="ballot-dash-head__titles">' +
         '<h1 id="monitorViewTitle" class="monitor-view__title ballot-dash-title">' +
         titleEscaped +
         "</h1>" +
+        "</div>" +
+        '<div class="ballot-dash-session-row" role="status">' +
+        '<span class="ballot-box-session-pill ballot-box-session-pill--lg ballot-dash__session-pill ballot-box-session-pill--' +
+        sess +
+        '">' +
+        escapeHtml(sessLabel) +
+        "</span>" +
+        '<p class="ballot-dash-session-hint">' +
+        sessHint +
+        "</p>" +
         "</div>" +
         '<div class="ballot-dash-progress-row">' +
         '<div class="ballot-dash-progress">' +

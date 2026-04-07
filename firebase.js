@@ -32,6 +32,10 @@ const CAMPAIGN_USERS_COLLECTION = "campaignUsers";
 const EVENTS_COLLECTION = "events";
 const TRANSPORT_TRIPS_COLLECTION = "transportTrips";
 const TRANSPORT_ROUTES_COLLECTION = "transportRoutes";
+/** Read-only snapshots + admin archive writes (Settings → Campaign). */
+const CAMPAIGN_ARCHIVES_COLLECTION = "campaignArchives";
+/** Matches default label in archiveCampaignSnapshotFs when none provided. */
+const DEFAULT_ARCHIVE_LABEL = "archived campaign";
 
 export const firebaseInitPromise = (async () => {
   try {
@@ -131,6 +135,22 @@ export const firebaseInitPromise = (async () => {
     let getListShareStatusFs = async () => [];
     let onListShareStatusSnapshotFs = () => noopUnsubscribe;
     let getListStatusByVoterIdFs = async () => [];
+
+    let listCampaignArchivesFs = async () => [];
+    let pruneDuplicateCampaignArchivesFs = async (_preferKeepId) => {};
+    let archiveCampaignSnapshotFs = async () => ({
+      ok: false,
+      error: "Firestore not initialized",
+    });
+    let getArchivedVotersFs = async () => [];
+    let getArchivedArchiveRootFs = async () => null;
+    let getArchivedSegmentFs = async () => [];
+    let getArchivedMonitorsFs = async () => [];
+    let deleteCampaignArchiveFs = async () => {};
+    let wipeActiveCampaignDataFs = async () => ({
+      ok: false,
+      error: "Firestore not initialized",
+    });
 
     try {
       const firestoreMod = await import(`${SDK_BASE}/firebase-firestore.js`);
@@ -318,10 +338,49 @@ export const firebaseInitPromise = (async () => {
       const VOTERS_COLLECTION = "voters";
       const votersColRef = firestoreMod.collection(db, VOTERS_COLLECTION);
 
-      getAllVotersFs = async () => {
-        const snap = await firestoreMod.getDocs(votersColRef);
-        // Document id must win — stored `id` in data would overwrite d.id and break updates/deduping.
-        return snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
+      /** Page through the whole collection (Firestore has per-response limits on large sets). */
+      const fetchAllVoterDocs = async (getDocsImpl) => {
+        const PAGE = 500;
+        const out = [];
+        let lastDoc = null;
+        try {
+          const docId = firestoreMod.documentId();
+          for (;;) {
+            const parts = [firestoreMod.orderBy(docId), firestoreMod.limit(PAGE)];
+            if (lastDoc) parts.push(firestoreMod.startAfter(lastDoc));
+            const q = firestoreMod.query(votersColRef, ...parts);
+            const snap = await getDocsImpl(q);
+            if (snap.empty) break;
+            out.push(...snap.docs);
+            if (snap.docs.length < PAGE) break;
+            lastDoc = snap.docs[snap.docs.length - 1];
+          }
+        } catch (err) {
+          console.warn("[Firestore] Paged voters fetch failed; trying single collection read", err?.message || err);
+          const snap = await getDocsImpl(votersColRef);
+          return snap.docs || [];
+        }
+        return out;
+      };
+
+      /**
+       * @param {{ fromServer?: boolean }} [opts] Pass `{ fromServer: true }` to prefer a server read (e.g. CSV export).
+       * Falls back to cache if the server request fails (offline, cold start, etc.).
+       */
+      getAllVotersFs = async (opts) => {
+        const fromServer = opts && opts.fromServer === true;
+        const mapSnaps = (snaps) =>
+          snaps.map((d) => ({ ...(d.data() || {}), id: d.id }));
+        if (fromServer && typeof firestoreMod.getDocsFromServer === "function") {
+          try {
+            const snaps = await fetchAllVoterDocs(firestoreMod.getDocsFromServer.bind(firestoreMod));
+            return mapSnaps(snaps);
+          } catch (err) {
+            console.warn("[Firestore] getAllVotersFs fromServer failed; using cache", err?.code || "", err?.message || err);
+          }
+        }
+        const snaps = await fetchAllVoterDocs(firestoreMod.getDocs.bind(firestoreMod));
+        return mapSnaps(snaps);
       };
 
       setVoterFs = async (voter) => {
@@ -413,8 +472,7 @@ export const firebaseInitPromise = (async () => {
       };
 
       deleteAllVotersFs = async () => {
-        const snap = await firestoreMod.getDocs(votersColRef);
-        const docs = snap.docs;
+        const docs = await fetchAllVoterDocs(firestoreMod.getDocs.bind(firestoreMod));
         if (typeof firestoreMod.writeBatch === "function") {
           const MAX_BATCH = 500;
           for (let i = 0; i < docs.length; i += MAX_BATCH) {
@@ -860,6 +918,566 @@ export const firebaseInitPromise = (async () => {
           "transportRoutes"
         );
       };
+
+      const deleteCollectionDocs = async (colRef) => {
+        const snap = await firestoreMod.getDocs(colRef);
+        const docs = snap.docs;
+        if (!docs.length) return;
+        const MAX = 450;
+        if (typeof firestoreMod.writeBatch === "function") {
+          for (let i = 0; i < docs.length; i += MAX) {
+            const batch = firestoreMod.writeBatch(db);
+            docs.slice(i, i + MAX).forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+          }
+          return;
+        }
+        for (const d of docs) await firestoreMod.deleteDoc(d.ref);
+      };
+
+      const deleteActiveMonitorTree = async (token) => {
+        if (!token) return;
+        const t = String(token);
+        await deleteCollectionDocs(
+          firestoreMod.collection(db, MONITORS_COLLECTION, t, "voted")
+        );
+        const bsRef = firestoreMod.doc(
+          db,
+          MONITORS_COLLECTION,
+          t,
+          "ballotSession",
+          "settings"
+        );
+        try {
+          await firestoreMod.deleteDoc(bsRef);
+        } catch (_) {}
+        await deleteMonitorDoc(t);
+      };
+
+      const writeArchivedDocsBatch = async (archiveId, segment, items, idField) => {
+        const field = idField || "id";
+        const valid = (Array.isArray(items) ? items : []).filter(
+          (item) => item && item[field] != null && item[field] !== ""
+        );
+        for (let i = 0; i < valid.length; i += 450) {
+          const batch = firestoreMod.writeBatch(db);
+          valid.slice(i, i + 450).forEach((item) => {
+            const docId = String(item[field]);
+            const ref = firestoreMod.doc(
+              db,
+              CAMPAIGN_ARCHIVES_COLLECTION,
+              archiveId,
+              segment,
+              docId
+            );
+            const { id: _drop, ...rest } = item;
+            const payload = {};
+            for (const [k, v] of Object.entries(rest)) {
+              if (v !== undefined) payload[k] = v;
+            }
+            batch.set(ref, payload, { merge: true });
+          });
+          await batch.commit();
+        }
+      };
+
+      archiveCampaignSnapshotFs = async ({ label, monitorTokens, onProgress } = {}) => {
+        const report = (pct, message) => {
+          if (typeof onProgress !== "function") return;
+          try {
+            onProgress({
+              percent: Math.min(100, Math.max(0, Math.round(pct))),
+              message: String(message || ""),
+            });
+          } catch (_) {}
+        };
+        try {
+          report(0, "Preparing archive…");
+          const archivesCol = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION);
+          const archiveRef = firestoreMod.doc(archivesCol);
+          const archiveId = archiveRef.id;
+          const nowIso = new Date().toISOString();
+          report(2, "Reading campaign configuration…");
+          const cfg = (await getFirestoreCampaignConfig()) || {};
+          const tokens = Array.isArray(monitorTokens)
+            ? [...new Set(monitorTokens.map((x) => String(x).trim()).filter(Boolean))]
+            : [];
+
+          report(5, "Loading voters from Firestore…");
+          const voters = await getAllVotersFs();
+          report(10, "Loading agents and candidates…");
+          const agents = await getAllAgentsFs();
+          const candidates = await getAllCandidatesFs();
+          report(14, "Loading events…");
+          const events = await getAllEventsFs();
+          report(17, "Loading transport trips and routes…");
+          const trips = await getAllTransportTripsFs();
+          const routes = await getAllTransportRoutesFs();
+          report(20, "Loading voter lists…");
+          const lists = await getAllVoterListsFs();
+
+          report(22, "Writing archive metadata…");
+          await firestoreMod.setDoc(archiveRef, {
+            label: String(label || "").trim() || "Archived campaign",
+            archivedAt: nowIso,
+            exportVersion: 1,
+            campaignNameSnapshot: String(cfg.campaignName || ""),
+            stats: {
+              voters: voters.length,
+              agents: agents.length,
+              candidates: candidates.length,
+              events: events.length,
+              transportTrips: trips.length,
+              transportRoutes: routes.length,
+              voterLists: lists.length,
+              monitorTokens: tokens.length,
+            },
+            configSnapshot: cfg,
+          });
+
+          const votersToArchive = voters.filter((v) => v && v.id != null);
+          const vBatchCount = Math.max(1, Math.ceil(votersToArchive.length / 450));
+          for (let bi = 0, i = 0; i < votersToArchive.length; bi++, i += 450) {
+            const batch = firestoreMod.writeBatch(db);
+            const chunk = votersToArchive.slice(i, i + 450);
+            const doneAfter = Math.min(i + chunk.length, votersToArchive.length);
+            report(
+              24 + Math.round(((bi + 1) / vBatchCount) * 38),
+              votersToArchive.length
+                ? `Copying voters to archive… (${doneAfter} of ${votersToArchive.length})`
+                : "Copying voters…"
+            );
+            chunk.forEach((v) => {
+              const vid = String(v.id);
+              const ref = firestoreMod.doc(
+                db,
+                CAMPAIGN_ARCHIVES_COLLECTION,
+                archiveId,
+                "voters",
+                vid
+              );
+              const { id: _drop, ...rest } = v;
+              const payload = {};
+              for (const [k, val] of Object.entries(rest)) {
+                if (val !== undefined) payload[k] = val;
+              }
+              batch.set(ref, payload, { merge: true });
+            });
+            await batch.commit();
+          }
+
+          report(64, "Copying agents to archive…");
+          await writeArchivedDocsBatch(archiveId, "agents", agents, "id");
+          report(69, "Copying candidates to archive…");
+          await writeArchivedDocsBatch(archiveId, "candidates", candidates, "id");
+          report(73, "Copying events to archive…");
+          await writeArchivedDocsBatch(archiveId, "events", events, "id");
+          report(77, "Copying transport trips to archive…");
+          await writeArchivedDocsBatch(archiveId, "transportTrips", trips, "id");
+          report(81, "Copying transport routes to archive…");
+          await writeArchivedDocsBatch(archiveId, "transportRoutes", routes, "id");
+          report(85, "Copying voter lists to archive…");
+          await writeArchivedDocsBatch(archiveId, "voterLists", lists, "id");
+
+          const nTok = tokens.length;
+          if (!nTok) report(95, "No ballot monitors to archive.");
+          for (let ti = 0; ti < tokens.length; ti++) {
+            const tok = tokens[ti];
+            report(
+              88 + Math.round(((ti + 1) / nTok) * 11),
+              `Archiving ballot monitors… (${ti + 1} of ${nTok})`
+            );
+            const mon = await getMonitorByToken(tok);
+            if (!mon) continue;
+            const mref = firestoreMod.doc(
+              db,
+              CAMPAIGN_ARCHIVES_COLLECTION,
+              archiveId,
+              "archivedMonitors",
+              String(tok)
+            );
+            const { id: _mid, ...mrest } = mon;
+            await firestoreMod.setDoc(mref, mrest, { merge: true });
+
+            const votedEntries = await getVotedForMonitor(tok);
+            for (let i = 0; i < votedEntries.length; i += 450) {
+              const batch = firestoreMod.writeBatch(db);
+              votedEntries.slice(i, i + 450).forEach((e) => {
+                const ref = firestoreMod.doc(
+                  db,
+                  CAMPAIGN_ARCHIVES_COLLECTION,
+                  archiveId,
+                  "archivedMonitors",
+                  String(tok),
+                  "voted",
+                  String(e.voterId)
+                );
+                batch.set(ref, { timeMarked: e.timeMarked || "" });
+              });
+              await batch.commit();
+            }
+
+            const sess = await getBallotSessionFs(tok);
+            const bsRef = firestoreMod.doc(
+              db,
+              CAMPAIGN_ARCHIVES_COLLECTION,
+              archiveId,
+              "archivedMonitors",
+              String(tok),
+              "ballotSession",
+              "settings"
+            );
+            await firestoreMod.setDoc(bsRef, sess, { merge: true });
+          }
+
+          report(100, "Archive snapshot complete.");
+          try {
+            await pruneDuplicateCampaignArchivesFs(archiveId);
+          } catch (_) {}
+          return { ok: true, archiveId };
+        } catch (e) {
+          console.warn("[Firebase] archiveCampaignSnapshotFs", e);
+          return { ok: false, error: String(e?.message || e || "Archive failed") };
+        }
+      };
+
+      const ARCHIVED_FLAT_SEGMENTS = new Set([
+        "voters",
+        "agents",
+        "candidates",
+        "events",
+        "transportTrips",
+        "transportRoutes",
+        "voterLists",
+      ]);
+
+      const readArchivedFlatSegment = async (archiveId, segment) => {
+        if (!archiveId || !ARCHIVED_FLAT_SEGMENTS.has(segment)) return [];
+        try {
+          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, segment);
+          const snap = await firestoreMod.getDocs(col);
+          return snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
+        } catch (e) {
+          console.warn("[Firebase] readArchivedFlatSegment", segment, e);
+          return [];
+        }
+      };
+
+      getArchivedArchiveRootFs = async (archiveId) => {
+        if (!archiveId) return null;
+        try {
+          const ref = firestoreMod.doc(db, CAMPAIGN_ARCHIVES_COLLECTION, String(archiveId));
+          const snap = await firestoreMod.getDoc(ref);
+          if (!snap || !snap.exists()) return null;
+          return { id: snap.id, ...snap.data() };
+        } catch (e) {
+          console.warn("[Firebase] getArchivedArchiveRootFs", e);
+          return null;
+        }
+      };
+
+      getArchivedSegmentFs = async (archiveId, segment) => readArchivedFlatSegment(archiveId, segment);
+
+      getArchivedVotersFs = async (archiveId) => readArchivedFlatSegment(archiveId, "voters");
+
+      getArchivedMonitorsFs = async (archiveId) => {
+        if (!archiveId) return [];
+        try {
+          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, "archivedMonitors");
+          const snap = await firestoreMod.getDocs(col);
+          return snap.docs.map((d) => {
+            const data = d.data() || {};
+            return { id: d.id, shareToken: d.id, ...data };
+          });
+        } catch (e) {
+          console.warn("[Firebase] getArchivedMonitorsFs", e);
+          return [];
+        }
+      };
+
+      deleteCampaignArchiveFs = async (archiveId) => {
+        if (!archiveId) return { ok: false };
+        try {
+          const segDelete = async (segment) => {
+            const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, segment);
+            await deleteCollectionDocs(col);
+          };
+          await segDelete("voters");
+          await segDelete("agents");
+          await segDelete("candidates");
+          await segDelete("events");
+          await segDelete("transportTrips");
+          await segDelete("transportRoutes");
+          await segDelete("voterLists");
+          const monCol = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, "archivedMonitors");
+          const monSnap = await firestoreMod.getDocs(monCol);
+          for (const md of monSnap.docs) {
+            const tok = md.id;
+            await deleteCollectionDocs(
+              firestoreMod.collection(
+                db,
+                CAMPAIGN_ARCHIVES_COLLECTION,
+                archiveId,
+                "archivedMonitors",
+                tok,
+                "voted"
+              )
+            );
+            const bsRef = firestoreMod.doc(
+              db,
+              CAMPAIGN_ARCHIVES_COLLECTION,
+              archiveId,
+              "archivedMonitors",
+              tok,
+              "ballotSession",
+              "settings"
+            );
+            try {
+              await firestoreMod.deleteDoc(bsRef);
+            } catch (_) {}
+            await firestoreMod.deleteDoc(md.ref);
+          }
+          await firestoreMod.deleteDoc(firestoreMod.doc(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId));
+          return { ok: true };
+        } catch (e) {
+          console.warn("[Firebase] deleteCampaignArchiveFs", e);
+          return { ok: false, error: String(e?.message || e) };
+        }
+      };
+
+      /** Same normalized label → keep most recent archivedAt (ties: prefer preferKeepId). Default label + identical stats within 10 min → keep one. */
+      pruneDuplicateCampaignArchivesFs = async (preferKeepId) => {
+        try {
+          const keepFirst = (a, b) => {
+            const prefer = preferKeepId ? String(preferKeepId) : "";
+            if (prefer && a.id === prefer) return -1;
+            if (prefer && b.id === prefer) return 1;
+            const t = String(b.archivedAt || "").localeCompare(String(a.archivedAt || ""));
+            if (t !== 0) return t;
+            return String(b.id).localeCompare(String(a.id));
+          };
+          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION);
+          const snap = await firestoreMod.getDocs(col);
+          const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const toDelete = new Set();
+
+          const normLabel = (r) => String(r.label || "").trim().toLowerCase();
+
+          const byLabel = new Map();
+          for (const r of rows) {
+            const k = normLabel(r);
+            if (!k || k === DEFAULT_ARCHIVE_LABEL) continue;
+            if (!byLabel.has(k)) byLabel.set(k, []);
+            byLabel.get(k).push(r);
+          }
+          for (const group of byLabel.values()) {
+            if (group.length <= 1) continue;
+            group.sort(keepFirst);
+            for (let i = 1; i < group.length; i++) {
+              toDelete.add(group[i].id);
+            }
+          }
+
+          const defaults = rows.filter((r) => {
+            const k = normLabel(r);
+            return (!k || k === DEFAULT_ARCHIVE_LABEL) && !toDelete.has(r.id);
+          });
+          const defGroups = new Map();
+          for (const r of defaults) {
+            const sig = `${JSON.stringify(r.stats || {})}\0${String(r.campaignNameSnapshot || "")}`;
+            if (!defGroups.has(sig)) defGroups.set(sig, []);
+            defGroups.get(sig).push(r);
+          }
+          const TEN_MIN_MS = 10 * 60 * 1000;
+          for (const group of defGroups.values()) {
+            if (group.length <= 1) continue;
+            const times = group.map((r) => new Date(r.archivedAt || 0).getTime());
+            const spread = Math.max(...times) - Math.min(...times);
+            if (spread > TEN_MIN_MS) continue;
+            group.sort(keepFirst);
+            for (let i = 1; i < group.length; i++) {
+              toDelete.add(group[i].id);
+            }
+          }
+
+          for (const id of toDelete) {
+            await deleteCampaignArchiveFs(id);
+          }
+        } catch (e) {
+          console.warn("[Firebase] pruneDuplicateCampaignArchivesFs", e);
+        }
+      };
+
+      listCampaignArchivesFs = async () => {
+        try {
+          await pruneDuplicateCampaignArchivesFs(null);
+          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION);
+          const snap = await firestoreMod.getDocs(col);
+          const out = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          out.sort((a, b) => String(b.archivedAt || "").localeCompare(String(a.archivedAt || "")));
+          return out;
+        } catch (e) {
+          console.warn("[Firebase] listCampaignArchivesFs", e);
+          return [];
+        }
+      };
+
+      wipeActiveCampaignDataFs = async ({ monitorTokens, onProgress } = {}) => {
+        const report = (pct, message) => {
+          if (typeof onProgress !== "function") return;
+          try {
+            onProgress({
+              percent: Math.min(100, Math.max(0, Math.round(pct))),
+              message: String(message || ""),
+            });
+          } catch (_) {}
+        };
+        try {
+          const tokens = Array.isArray(monitorTokens)
+            ? [...new Set(monitorTokens.map((x) => String(x).trim()).filter(Boolean))]
+            : [];
+          report(0, "Removing active voters…");
+          await deleteAllVotersFs();
+          report(8, "Loading agents to remove…");
+          const agents = await getAllAgentsFs();
+          const nA = agents.length;
+          for (let i = 0; i < agents.length; i++) {
+            await deleteAgentFs(agents[i].id);
+            report(
+              nA ? 8 + Math.round(((i + 1) / nA) * 10) : 18,
+              nA ? `Removing agents… (${i + 1} of ${nA})` : "Removing agents…"
+            );
+          }
+          report(20, "Loading candidates to remove…");
+          const candidates = await getAllCandidatesFs();
+          const nC = candidates.length;
+          for (let i = 0; i < candidates.length; i++) {
+            await deleteCandidateFs(candidates[i].id);
+            report(
+              nC ? 20 + Math.round(((i + 1) / nC) * 10) : 30,
+              nC ? `Removing candidates… (${i + 1} of ${nC})` : "Removing candidates…"
+            );
+          }
+          report(32, "Loading events to remove…");
+          const events = await getAllEventsFs();
+          const nE = events.length;
+          for (let i = 0; i < events.length; i++) {
+            await deleteEventFs(events[i].id);
+            report(
+              nE ? 32 + Math.round(((i + 1) / nE) * 8) : 40,
+              nE ? `Removing events… (${i + 1} of ${nE})` : "Removing events…"
+            );
+          }
+          report(42, "Loading transport trips to remove…");
+          const trips = await getAllTransportTripsFs();
+          const nT = trips.length;
+          for (let i = 0; i < trips.length; i++) {
+            await deleteTransportTripFs(trips[i].id);
+            report(
+              nT ? 42 + Math.round(((i + 1) / nT) * 8) : 50,
+              nT ? `Removing transport trips… (${i + 1} of ${nT})` : "Removing transport trips…"
+            );
+          }
+          report(52, "Loading transport routes to remove…");
+          const routes = await getAllTransportRoutesFs();
+          const nR = routes.length;
+          for (let i = 0; i < routes.length; i++) {
+            await deleteTransportRouteFs(routes[i].id);
+            report(
+              nR ? 52 + Math.round(((i + 1) / nR) * 8) : 60,
+              nR ? `Removing transport routes… (${i + 1} of ${nR})` : "Removing transport routes…"
+            );
+          }
+          report(62, "Loading voter lists to remove…");
+          const lists = await getAllVoterListsFs();
+          const nL = lists.length;
+          for (let i = 0; i < lists.length; i++) {
+            await deleteVoterListFs(lists[i].id);
+            report(
+              nL ? 62 + Math.round(((i + 1) / nL) * 8) : 70,
+              nL ? `Removing voter lists… (${i + 1} of ${nL})` : "Removing voter lists…"
+            );
+          }
+
+          const nTok = tokens.length;
+          if (!nTok) report(84, "No ballot monitors to remove.");
+          for (let ti = 0; ti < tokens.length; ti++) {
+            const tok = tokens[ti];
+            report(
+              72 + Math.round(((ti + 1) / nTok) * 12),
+              `Removing ballot monitors… (${ti + 1} of ${nTok})`
+            );
+            await deleteActiveMonitorTree(tok);
+          }
+
+          report(86, "Removing shared list links…");
+          const sharesSnap = await firestoreMod.getDocs(
+            firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION)
+          );
+          const shareDocs = sharesSnap.docs;
+          for (let si = 0; si < shareDocs.length; si++) {
+            const d = shareDocs[si];
+            const token = d.id;
+            report(
+              shareDocs.length
+                ? 86 + Math.round(((si + 1) / shareDocs.length) * 5)
+                : 91,
+              shareDocs.length
+                ? `Clearing voter list shares… (${si + 1} of ${shareDocs.length})`
+                : "Clearing voter list shares…"
+            );
+            await deleteCollectionDocs(
+              firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION, token, "status")
+            );
+            await firestoreMod.deleteDoc(d.ref);
+          }
+          if (!shareDocs.length) report(91, "No voter list shares to clear.");
+          report(92, "Removing pledged report shares…");
+          const pledgedSnap = await firestoreMod.getDocs(
+            firestoreMod.collection(db, PLEDGED_REPORT_SHARES_COLLECTION)
+          );
+          for (const d of pledgedSnap.docs) {
+            await firestoreMod.deleteDoc(d.ref);
+          }
+          report(95, "Removing event participant shares…");
+          const evPartSnap = await firestoreMod.getDocs(
+            firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION)
+          );
+          const evDocs = evPartSnap.docs;
+          for (let ei = 0; ei < evDocs.length; ei++) {
+            const d = evDocs[ei];
+            report(
+              evDocs.length
+                ? 95 + Math.round(((ei + 1) / evDocs.length) * 3)
+                : 98,
+              evDocs.length
+                ? `Clearing event shares… (${ei + 1} of ${evDocs.length})`
+                : "Clearing event shares…"
+            );
+            await deleteCollectionDocs(
+              firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, d.id, "rows")
+            );
+            await firestoreMod.deleteDoc(d.ref);
+          }
+          if (!evDocs.length) report(98, "No event participant shares to clear.");
+
+          report(99, "Resetting campaign settings…");
+          await setFirestoreCampaignConfig({
+            campaignName: "New campaign",
+            campaignType: "Local Council Election",
+            constituency: "",
+            island: "",
+            monitorShareTokens: [],
+            voteMonitoringEnabled: false,
+            showPledgesNav: true,
+          });
+          report(100, "Workspace cleared.");
+          return { ok: true };
+        } catch (e) {
+          console.warn("[Firebase] wipeActiveCampaignDataFs", e);
+          return { ok: false, error: String(e?.message || e || "Wipe failed") };
+        }
+      };
     } catch (fsErr) {
       // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
       console.error(
@@ -957,6 +1575,15 @@ export const firebaseInitPromise = (async () => {
       setTransportRouteFs,
       deleteTransportRouteFs,
       onTransportRoutesSnapshotFs,
+      listCampaignArchivesFs,
+      pruneDuplicateCampaignArchivesFs,
+      archiveCampaignSnapshotFs,
+      getArchivedVotersFs,
+      getArchivedArchiveRootFs,
+      getArchivedSegmentFs,
+      getArchivedMonitorsFs,
+      deleteCampaignArchiveFs,
+      wipeActiveCampaignDataFs,
     };
   } catch (err) {
     console.error(
