@@ -370,7 +370,7 @@ function renderCandidatesTable() {
       : `<div class="avatar-cell avatar-cell--settings-agent"><div class="avatar-circle">${escapeHtml(initials)}</div></div>`;
     tr.innerHTML = `
       <td>${photoCell}</td>
-      <td>${escapeHtml(c.name || "")}</td>
+      <td class="data-table-col--name">${escapeHtml(c.name || "")}</td>
       <td>${escapeHtml(c.candidateNumber ?? "")}</td>
       <td>${escapeHtml(c.position ?? "")}</td>
       <td>${escapeHtml(c.electionType || "")}</td>
@@ -379,6 +379,7 @@ function renderCandidatesTable() {
         <div class="settings-agents-crud" role="group" aria-label="Candidate actions">
           <button type="button" class="ghost-button ghost-button--small" data-candidate-pledged-voters="${escapeHtml(c.id)}" title="Pledged voters list">Voters</button>
           <button type="button" class="ghost-button ghost-button--small" data-edit-candidate="${escapeHtml(c.id)}">Edit</button>
+          <button type="button" class="ghost-button ghost-button--small settings-agents-crud__delete" data-delete-candidate="${escapeHtml(c.id)}" title="Delete">Delete</button>
         </div>
       </td>
     `;
@@ -2199,6 +2200,52 @@ async function deleteAgentRecord(agent) {
     if (window.appNotifications) {
       window.appNotifications.push({
         title: "Could not delete agent",
+        meta,
+      });
+    }
+  }
+}
+
+/** Delete candidate (D in CRUD) — Firestore + local cache. */
+async function deleteCandidateRecord(candidate) {
+  if (!candidate || candidate.id == null) return;
+  const id = String(candidate.id).trim();
+  if (!id) return;
+  try {
+    const api = await firebaseInitPromise;
+    const canDeleteRemote = Boolean(api.ready && typeof api.deleteCandidateFs === "function");
+    if (!canDeleteRemote) {
+      if (window.appNotifications) {
+        window.appNotifications.push({
+          title: "Cannot delete candidate",
+          meta: "Firebase is not ready. Check your connection and try again.",
+        });
+      }
+      return;
+    }
+    await api.deleteCandidateFs(id);
+    candidates = candidates.filter((c) => String(c.id).trim() !== id);
+    saveCandidatesToStorage();
+    renderCandidatesTable();
+    document.dispatchEvent(
+      new CustomEvent("candidates-updated", {
+        detail: { candidates: [...candidates] },
+      })
+    );
+    if (window.appNotifications) {
+      window.appNotifications.push({ title: "Candidate deleted", meta: candidate.name || id });
+    }
+  } catch (err) {
+    const code = err && err.code;
+    let meta = err?.message || String(err);
+    if (code === "permission-denied") {
+      meta =
+        "Firestore blocked this delete. Deploy the latest firestore.rules (e.g. firebase deploy --only firestore:rules).";
+    }
+    console.error("[Candidates] delete failed", code, err);
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Could not delete candidate",
         meta,
       });
     }
@@ -4089,7 +4136,7 @@ export function initSettingsModule() {
   }
 
   if (candidatesTableBody) {
-    candidatesTableBody.addEventListener("click", (e) => {
+    candidatesTableBody.addEventListener("click", async (e) => {
       const votersBtn = e.target.closest("[data-candidate-pledged-voters]");
       if (votersBtn) {
         const candidateId = votersBtn.getAttribute("data-candidate-pledged-voters");
@@ -4101,6 +4148,24 @@ export function initSettingsModule() {
           getCurrentUser: () => parseViewerFromStorage(),
           getCandidates,
         });
+        return;
+      }
+      const delBtn = e.target.closest("[data-delete-candidate]");
+      if (delBtn) {
+        const rawId = delBtn.getAttribute("data-delete-candidate");
+        if (rawId == null || rawId === "") return;
+        const cand = candidates.find((c) => String(c.id) === String(rawId));
+        if (!cand) return;
+        const safeName = escapeHtml(String(cand.name || cand.id || ""));
+        const ok = await confirmDialog({
+          title: "Delete candidate",
+          message: `Remove ${safeName} from the candidate list? Agents or pledges scoped to this candidate may need updating. This cannot be undone.`,
+          confirmText: "Delete",
+          cancelText: "Cancel",
+          danger: true,
+        });
+        if (!ok) return;
+        await deleteCandidateRecord(cand);
         return;
       }
       const btn = e.target.closest("[data-edit-candidate]");

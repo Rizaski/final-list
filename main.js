@@ -63,14 +63,77 @@ const SETTINGS_MODULE_KEY = "settings";
 const ADMIN_EMAIL = "alirixamv@gmail.com";
 const AUTH_STORAGE_KEY = "campaign-auth-user";
 
-/** SMS MFA after email/password (Firebase enrolled second factors only). */
+/** Log Firebase Auth errors with server payload (internal-error often hides detail in customData). */
+function logFirebaseAuthError(context, err) {
+  if (!err) {
+    console.error(context, "(no error object)");
+    return;
+  }
+  const payload = { code: err.code, message: err.message, name: err.name };
+  try {
+    const cd = err.customData;
+    if (cd && typeof cd === "object") {
+      payload.customDataKeys = Object.keys(cd);
+      const sr = cd._serverResponse;
+      if (sr !== undefined) {
+        payload.serverResponse = typeof sr === "string" ? sr : JSON.stringify(sr);
+      }
+    }
+  } catch (_) {}
+  console.error(context, payload, err);
+}
+
+function authErrorMessageForUi(err) {
+  if (!err || typeof err.message !== "string") {
+    return "Something went wrong. Try again.";
+  }
+  const code = err.code || "";
+  const msg = err.message.trim();
+  const isInternal =
+    code === "auth/internal-error" ||
+    code === "auth/internal-error-encountered" ||
+    /internal-error/i.test(code);
+  if (isInternal) {
+    const looksGeneric = /^Firebase:\s*Error \(auth\/internal-error(-encountered)?\)\.?\s*$/i.test(msg);
+    if (!looksGeneric && msg.length > 0) {
+      return msg;
+    }
+    return (
+      "Authentication returned an internal error. Use https:// (not a file:// page), add this hostname under " +
+      "Firebase Console → Authentication → Settings → Authorized domains, and ensure SMS multi-factor is enabled " +
+      "(Identity Platform upgrade + billing if Google requires it for your region). Check the browser console for " +
+      "full details under customData / serverResponse."
+    );
+  }
+  return err.message;
+}
+
+/**
+ * SMS MFA after email/password (enrolled phone second factor).
+ * This is not primary phone sign-in: we use PhoneAuthProvider.verifyPhoneNumber with
+ * multiFactorHint + resolver.session, then PhoneMultiFactorGenerator + resolveSignIn — not signInWithPhoneNumber.
+ */
 const mfaLoginState = {
   resolver: null,
   verificationId: null,
   recaptchaVerifier: null,
+  /** Widget id from RecaptchaVerifier.render(); used with grecaptcha.reset on errors (Firebase phone/MFA docs). */
+  recaptchaWidgetId: null,
 };
 
+function resetMfaGrecaptchaWidget() {
+  const wid = mfaLoginState.recaptchaWidgetId;
+  mfaLoginState.recaptchaWidgetId = null;
+  if (wid == null) return;
+  try {
+    if (typeof window.grecaptcha !== "undefined" && typeof window.grecaptcha.reset === "function") {
+      window.grecaptcha.reset(wid);
+    }
+  } catch (_) {}
+}
+
 function clearMfaRecaptchaVerifier() {
+  resetMfaGrecaptchaWidget();
   if (mfaLoginState.recaptchaVerifier) {
     try {
       mfaLoginState.recaptchaVerifier.clear();
@@ -124,25 +187,33 @@ async function sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl, errorEl } = {}
   try {
     if (statusEl) statusEl.textContent = "Sending code…";
     clearMfaRecaptchaVerifier();
+    mfaLoginState.recaptchaWidgetId = null;
     mfaLoginState.recaptchaVerifier = firebaseApi.createRecaptchaVerifier("loginMfaRecaptcha", {
       size: "invisible",
     });
+    if (
+      mfaLoginState.recaptchaVerifier &&
+      typeof mfaLoginState.recaptchaVerifier.render === "function"
+    ) {
+      mfaLoginState.recaptchaWidgetId = await mfaLoginState.recaptchaVerifier.render();
+    }
     const phoneInfoOptions = {
       multiFactorHint: hint,
       session: resolver.session,
     };
-    mfaLoginState.verificationId = await firebaseApi.PhoneAuthProvider.verifyPhoneNumber(
+    const phoneAuth = new firebaseApi.PhoneAuthProvider(firebaseApi.auth);
+    mfaLoginState.verificationId = await phoneAuth.verifyPhoneNumber(
       phoneInfoOptions,
       mfaLoginState.recaptchaVerifier
     );
     if (statusEl) statusEl.textContent = "Code sent. Enter it below.";
     return true;
   } catch (err) {
-    console.error("[Auth] MFA send SMS failed", err);
+    logFirebaseAuthError("[Auth] MFA send SMS failed", err);
+    // clearMfaRecaptchaVerifier → grecaptcha.reset(widgetId) then verifier.clear() (Firebase phone/MFA guidance).
     clearMfaRecaptchaVerifier();
     if (errorEl) {
-      errorEl.textContent =
-        err && err.message ? err.message : "Could not send SMS code. Try again.";
+      errorEl.textContent = authErrorMessageForUi(err) || "Could not send SMS code. Try again.";
     }
     if (statusEl) statusEl.textContent = "";
     return false;
@@ -174,10 +245,9 @@ async function completeMfaSignIn(firebaseApi, verifyBtn, codeInput, errorEl) {
     const assertion = firebaseApi.PhoneMultiFactorGenerator.assertion(cred);
     await mfaLoginState.resolver.resolveSignIn(assertion);
   } catch (err) {
-    console.error("[Auth] MFA verification failed", err);
+    logFirebaseAuthError("[Auth] MFA verification failed", err);
     if (errorEl) {
-      errorEl.textContent =
-        err && err.message ? err.message : "Invalid code. Try again.";
+      errorEl.textContent = authErrorMessageForUi(err) || "Invalid code. Try again.";
     }
   } finally {
     verifyBtn.classList.remove("btn--loading");
@@ -1132,7 +1202,7 @@ async function boot() {
         await firebaseApi.signInWithEmailAndPassword(email, password);
         console.log("[Auth] signInWithEmailAndPassword resolved successfully");
       } catch (err) {
-        console.error("[Auth] Login failed", err);
+        logFirebaseAuthError("[Auth] Login failed", err);
         if (
           err &&
           err.code === "auth/multi-factor-auth-required" &&
@@ -1146,19 +1216,15 @@ async function boot() {
             await sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl, errorEl });
             document.getElementById("loginMfaCode")?.focus();
           } catch (mfaErr) {
-            console.error("[Auth] MFA flow failed", mfaErr);
+            logFirebaseAuthError("[Auth] MFA flow failed", mfaErr);
             if (loginError) {
               loginError.textContent =
-                mfaErr && mfaErr.message
-                  ? mfaErr.message
-                  : "Could not start SMS verification.";
+                authErrorMessageForUi(mfaErr) || "Could not start SMS verification.";
             }
           }
         } else if (loginError) {
           loginError.textContent =
-            err && err.message
-              ? err.message
-              : "Sign-in failed. Check your credentials.";
+            authErrorMessageForUi(err) || "Sign-in failed. Check your credentials.";
         }
       } finally {
         if (loginSubmit) {

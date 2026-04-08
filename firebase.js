@@ -18,6 +18,14 @@ const firebaseConfig = {
   measurementId: "G-5KW10W5549",
 };
 
+/**
+ * Public reCAPTCHA v2 site key for this web app (reCAPTCHA Admin / domain allow-list).
+ * Do not pass this to Firebase `RecaptchaVerifier`: the SDK forbids `sitekey` in parameters
+ * and loads the project key via Identity Toolkit (`getRecaptchaParams`). Use for App Check
+ * (`ReCaptchaV3Provider`) if you add it later, or to mirror hostnames in reCAPTCHA settings.
+ */
+export const RECAPTCHA_SITE_KEY = "6LetFKwsAAAAACdl54MwRHqk4qZgjtXJP80ENTzL";
+
 const noopUnsubscribe = () => {};
 const noopPromise = () => Promise.resolve();
 
@@ -45,6 +53,18 @@ export const firebaseInitPromise = (async () => {
       ? appMod.getApp()
       : appMod.initializeApp(firebaseConfig);
     const auth = authMod.getAuth(app);
+    // Localize Auth UI, reCAPTCHA, and SMS where supported (Firebase Auth i18n).
+    if (typeof authMod.useDeviceLanguage === "function") {
+      authMod.useDeviceLanguage(auth);
+    } else {
+      try {
+        const lang =
+          typeof navigator !== "undefined" && navigator.language
+            ? String(navigator.language).split("-")[0]
+            : "en";
+        auth.languageCode = lang;
+      } catch (_) {}
+    }
 
     let db = null;
     let getFirestoreCampaignConfig = () => Promise.resolve(null);
@@ -1500,8 +1520,10 @@ export const firebaseInitPromise = (async () => {
       getMultiFactorResolver: (error) => authMod.getMultiFactorResolver(auth, error),
       PhoneAuthProvider: authMod.PhoneAuthProvider,
       PhoneMultiFactorGenerator: authMod.PhoneMultiFactorGenerator,
+      // Firebase JS v9.x: (container, parameters, auth). v10+ reordered to (auth, container, parameters).
+      // Never set `sitekey` here — RecaptchaVerifier throws ARGUMENT_ERROR if `sitekey` is preset (see Firebase SDK).
       createRecaptchaVerifier: (containerId, parameters) =>
-        new authMod.RecaptchaVerifier(auth, containerId, parameters || {}),
+        new authMod.RecaptchaVerifier(containerId, parameters || {}, auth),
       getFirestoreCampaignConfig,
       setFirestoreCampaignConfig,
       updateFirestoreCampaignConfig,
