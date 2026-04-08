@@ -2799,6 +2799,12 @@ function initCampaignArchiveUI() {
       return s;
     };
 
+    const archivedVoterHasVoted = (voter) => {
+      const raw = voter?.votedAt || voter?.votedTimeMarked;
+      if (raw == null) return false;
+      return String(raw).trim() !== "";
+    };
+
     const ARCHIVE_VOTERS_PAGE_SIZE = 15;
 
     const renderArchivedVotersTable = (panelEl, rows) => {
@@ -2845,7 +2851,7 @@ function initCampaignArchiveUI() {
         "imageUrl",
       ]);
       const restCols = buildColumns(rows, ["phone", "island", "referendumVote"], 8).filter((c) => !voterColSkip.has(c));
-      const headerCells = [
+      const headerLabels = [
         "Image",
         "Name",
         "National ID",
@@ -2856,7 +2862,7 @@ function initCampaignArchiveUI() {
         "Address",
         ...restCols.map((c) => c),
       ];
-      const colCount = headerCells.length;
+      const colCount = headerLabels.length;
 
       const voterNameForSort = (v) => String(v.fullName || v.name || "").trim();
       const sequenceForArchivedRow = (r) => {
@@ -2906,6 +2912,14 @@ function initCampaignArchiveUI() {
             </select>
           </div>
           <div class="field-group field-group--inline">
+            <label for="${uid}-voted">Voted</label>
+            <select id="${uid}-voted" data-archive-voter-filter-voted>
+              <option value="all">All</option>
+              <option value="yes">Voted</option>
+              <option value="no">Not voted</option>
+            </select>
+          </div>
+          <div class="field-group field-group--inline">
             <label for="${uid}-sort">Sort</label>
             <select id="${uid}-sort" data-archive-voter-sort>
               <option value="sequence">Seq (ballot box order)</option>
@@ -2915,6 +2929,7 @@ function initCampaignArchiveUI() {
               <option value="address">Permanent address</option>
               <option value="pledge">Pledge status</option>
               <option value="island">Ballot box</option>
+              <option value="voted">Voted (time)</option>
             </select>
           </div>
           <div class="field-group field-group--inline">
@@ -2930,15 +2945,52 @@ function initCampaignArchiveUI() {
 
       const searchEl = toolbar.querySelector("[data-archive-voter-search]");
       const filterPledgeEl = toolbar.querySelector("[data-archive-voter-filter-pledge]");
+      const filterVotedEl = toolbar.querySelector("[data-archive-voter-filter-voted]");
       const sortEl = toolbar.querySelector("[data-archive-voter-sort]");
       const groupByEl = toolbar.querySelector("[data-archive-voter-group-by]");
+
+      restCols.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = `rest:${c}`;
+        opt.textContent = `Column: ${c}`;
+        sortEl.appendChild(opt);
+      });
 
       const wrap = document.createElement("div");
       wrap.className = "table-wrap archive-viewer__table-wrap";
       const tbl = document.createElement("table");
       tbl.className = "data-table data-table--archive-view";
       const head = document.createElement("thead");
-      head.innerHTML = `<tr>${headerCells.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
+      const headRow = document.createElement("tr");
+      const sortKeyForLabel = (label, idx) => {
+        if (idx === 0) return null;
+        if (label === "Name") return "name";
+        if (label === "National ID") return "id";
+        if (label === "Ballot box") return "island";
+        if (label === "Seq.") return "sequence";
+        if (label === "Pledge") return "pledge";
+        if (label === "Voted") return "voted";
+        if (label === "Address") return "address";
+        const rc = restCols[idx - 8];
+        return rc != null ? `rest:${rc}` : null;
+      };
+      headerLabels.forEach((label, idx) => {
+        const th = document.createElement("th");
+        th.scope = "col";
+        const sk = sortKeyForLabel(label, idx);
+        if (sk) {
+          th.className = "th-sortable";
+          th.setAttribute("data-sort-key", sk);
+          th.appendChild(document.createTextNode(label));
+          const ind = document.createElement("span");
+          ind.className = "sort-indicator";
+          th.appendChild(ind);
+        } else {
+          th.textContent = label;
+        }
+        headRow.appendChild(th);
+      });
+      head.appendChild(headRow);
       const tb = document.createElement("tbody");
       tbl.appendChild(head);
       tbl.appendChild(tb);
@@ -3025,14 +3077,48 @@ function initCampaignArchiveUI() {
         tb.appendChild(tr);
       };
 
+      const updateArchiveSortIndicators = () => {
+        const sortBy = sortEl?.value || "sequence";
+        head.querySelectorAll("th.th-sortable").forEach((th) => {
+          const key = th.getAttribute("data-sort-key");
+          th.classList.remove("is-sorted-asc", "is-sorted-desc");
+          th.removeAttribute("aria-sort");
+          if (!key) return;
+          if (key === "name" && (sortBy === "name-asc" || sortBy === "name-desc")) {
+            th.classList.add(sortBy === "name-asc" ? "is-sorted-asc" : "is-sorted-desc");
+            th.setAttribute("aria-sort", sortBy === "name-asc" ? "ascending" : "descending");
+          } else if (sortBy === key) {
+            th.classList.add("is-sorted-asc");
+            th.setAttribute("aria-sort", "ascending");
+          }
+        });
+      };
+
+      head.addEventListener("click", (e) => {
+        const th = e.target.closest("th.th-sortable");
+        if (!th) return;
+        const key = th.getAttribute("data-sort-key");
+        if (!key) return;
+        if (key === "name") {
+          sortEl.value = sortEl.value === "name-asc" ? "name-desc" : "name-asc";
+        } else {
+          sortEl.value = key;
+        }
+        currentPage = 1;
+        renderTableBody();
+      });
+
       const getFilteredSortedGrouped = () => {
         const query = (searchEl?.value || "").toLowerCase().trim();
         const pledgeFilter = filterPledgeEl?.value || "all";
+        const votedFilter = filterVotedEl?.value || "all";
         const sortBy = sortEl?.value || "sequence";
         const groupBy = groupByEl?.value || "none";
 
         let list = rows.filter((voter) => {
           if (pledgeFilter !== "all" && archivedPledgeForFilter(voter) !== pledgeFilter) return false;
+          if (votedFilter === "yes" && !archivedVoterHasVoted(voter)) return false;
+          if (votedFilter === "no" && archivedVoterHasVoted(voter)) return false;
           if (query) {
             const name = voterNameForSort(voter).toLowerCase();
             const id = String(voter.id || "").toLowerCase();
@@ -3042,6 +3128,7 @@ function initCampaignArchiveUI() {
             const island = String(voter.island || "").toLowerCase();
             const notes = String(voter.notes || "").toLowerCase();
             const seq = String(sequenceForArchivedRow(voter) || "").toLowerCase();
+            const votedDisp = String(archivedVoterVotedDisplay(voter) || "").toLowerCase();
             if (
               !name.includes(query) &&
               !id.includes(query) &&
@@ -3050,7 +3137,8 @@ function initCampaignArchiveUI() {
               !address.includes(query) &&
               !island.includes(query) &&
               !notes.includes(query) &&
-              !seq.includes(query)
+              !seq.includes(query) &&
+              !(votedDisp !== "—" && votedDisp.includes(query))
             )
               return false;
           }
@@ -3059,6 +3147,8 @@ function initCampaignArchiveUI() {
 
         const cmp = (a, b) => {
           switch (sortBy) {
+            case "name-asc":
+              return voterNameForSort(a).localeCompare(voterNameForSort(b), "en");
             case "name-desc":
               return voterNameForSort(b).localeCompare(voterNameForSort(a), "en");
             case "sequence":
@@ -3071,8 +3161,21 @@ function initCampaignArchiveUI() {
               return String(a.permanentAddress || "").localeCompare(String(b.permanentAddress || ""), "en");
             case "id":
               return String(a.nationalId || "").localeCompare(String(b.nationalId || ""), "en");
-            default:
+            case "voted": {
+              const ta = String(a.votedAt || a.votedTimeMarked || "").trim();
+              const tb = String(b.votedAt || b.votedTimeMarked || "").trim();
+              if (!ta && !tb) return 0;
+              if (!ta) return 1;
+              if (!tb) return -1;
+              return ta.localeCompare(tb);
+            }
+            default: {
+              if (sortBy && String(sortBy).startsWith("rest:")) {
+                const f = String(sortBy).slice(5);
+                return String(a[f] ?? "").localeCompare(String(b[f] ?? ""), "en");
+              }
               return voterNameForSort(a).localeCompare(voterNameForSort(b), "en");
+            }
           }
         };
         list = list.slice().sort(cmp);
@@ -3176,6 +3279,8 @@ function initCampaignArchiveUI() {
           total === totalInSnapshot
             ? `${total} voter${total === 1 ? "" : "s"} (read-only snapshot).`
             : `${total} of ${totalInSnapshot} voter${totalInSnapshot === 1 ? "" : "s"} match filters (read-only snapshot).`;
+
+        updateArchiveSortIndicators();
       };
 
       const scheduleRender = () => {
@@ -3185,6 +3290,7 @@ function initCampaignArchiveUI() {
 
       searchEl.addEventListener("input", scheduleRender);
       filterPledgeEl.addEventListener("change", scheduleRender);
+      filterVotedEl.addEventListener("change", scheduleRender);
       sortEl.addEventListener("change", scheduleRender);
       groupByEl.addEventListener("change", scheduleRender);
 
@@ -3198,26 +3304,95 @@ function initCampaignArchiveUI() {
         return;
       }
       const cols = buildColumns(rows, preferredCols);
+      const sortState = { key: cols[0], dir: "asc" };
+
+      const cellSortVal = (row, col) => {
+        const v = row[col];
+        if (v == null) return "";
+        if (typeof v === "number" && !Number.isNaN(v)) return v;
+        if (typeof v === "boolean") return v ? 1 : 0;
+        const s = formatCellVal(v);
+        const n = Number(s);
+        if (s !== "" && !Number.isNaN(n) && String(n) === s.trim()) return n;
+        return s;
+      };
+
+      const compareRows = (a, b) => {
+        const k = sortState.key;
+        const va = cellSortVal(a, k);
+        const vb = cellSortVal(b, k);
+        const mul = sortState.dir === "asc" ? 1 : -1;
+        if (typeof va === "number" && typeof vb === "number") {
+          const t = va - vb;
+          return t === 0 ? 0 : t * mul;
+        }
+        return String(va).localeCompare(String(vb), "en", { numeric: true }) * mul;
+      };
+
       const wrap = document.createElement("div");
       wrap.className = "table-wrap archive-viewer__table-wrap";
       const tbl = document.createElement("table");
       tbl.className = "data-table data-table--archive-view";
       const head = document.createElement("thead");
-      head.innerHTML = `<tr>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
-      const tb = document.createElement("tbody");
-      rows.forEach((row) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = cols
-          .map((c) => `<td>${escapeHtml(formatCellVal(row[c]))}</td>`)
-          .join("");
-        tb.appendChild(tr);
+      const headRow = document.createElement("tr");
+      cols.forEach((c) => {
+        const th = document.createElement("th");
+        th.scope = "col";
+        th.className = "th-sortable";
+        th.setAttribute("data-sort-key", c);
+        th.appendChild(document.createTextNode(c));
+        const ind = document.createElement("span");
+        ind.className = "sort-indicator";
+        th.appendChild(ind);
+        headRow.appendChild(th);
       });
+      head.appendChild(headRow);
+      const tb = document.createElement("tbody");
+
+      const updateGenericSortIndicators = () => {
+        head.querySelectorAll("th.th-sortable").forEach((th) => {
+          const key = th.getAttribute("data-sort-key");
+          th.classList.remove("is-sorted-asc", "is-sorted-desc");
+          th.removeAttribute("aria-sort");
+          if (key === sortState.key) {
+            th.classList.add(sortState.dir === "asc" ? "is-sorted-asc" : "is-sorted-desc");
+            th.setAttribute("aria-sort", sortState.dir === "asc" ? "ascending" : "descending");
+          }
+        });
+      };
+
+      const renderBody = () => {
+        const sorted = rows.slice().sort(compareRows);
+        tb.textContent = "";
+        sorted.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = cols.map((c) => `<td>${escapeHtml(formatCellVal(row[c]))}</td>`).join("");
+          tb.appendChild(tr);
+        });
+        updateGenericSortIndicators();
+      };
+
+      head.addEventListener("click", (e) => {
+        const th = e.target.closest("th.th-sortable");
+        if (!th) return;
+        const key = th.getAttribute("data-sort-key");
+        if (!key) return;
+        if (sortState.key === key) {
+          sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+        } else {
+          sortState.key = key;
+          sortState.dir = "asc";
+        }
+        renderBody();
+      });
+
+      renderBody();
       tbl.appendChild(head);
       tbl.appendChild(tb);
       wrap.appendChild(tbl);
       const hint = document.createElement("p");
       hint.className = "helper-text archive-viewer__count";
-      hint.textContent = `${rows.length} row${rows.length === 1 ? "" : "s"} (read-only).`;
+      hint.textContent = `${rows.length} row${rows.length === 1 ? "" : "s"} (read-only). Click a column header to sort.`;
       panelEl.appendChild(wrap);
       panelEl.appendChild(hint);
     };

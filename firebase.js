@@ -4,7 +4,8 @@
  * Exports firebaseInitPromise → { auth, db, ...authFns, getFirestoreCampaignConfig, setFirestoreCampaignConfig, updateFirestoreCampaignConfig, deleteFirestoreCampaignConfig }.
  * CRUD for campaign config: Read (get), Create/Replace (set), Update (patch), Delete.
  */
-const FIREBASE_SDK_VERSION = "9.22.2";
+/** Newer builds improve Identity Platform / SMS MFA + reCAPTCHA; v10+ uses RecaptchaVerifier(auth, container, params). */
+const FIREBASE_SDK_VERSION = "10.14.1";
 const SDK_BASE = `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}`;
 
 const firebaseConfig = {
@@ -65,6 +66,19 @@ export const firebaseInitPromise = (async () => {
         auth.languageCode = lang;
       } catch (_) {}
     }
+    // Opt-in: localStorage.setItem("firebaseAuthAppVerificationDisabled","true") — only for Firebase *test* phone flows per docs.
+    try {
+      if (
+        typeof localStorage !== "undefined" &&
+        localStorage.getItem("firebaseAuthAppVerificationDisabled") === "true" &&
+        auth.settings
+      ) {
+        auth.settings.appVerificationDisabledForTesting = true;
+        console.warn(
+          "[Firebase] appVerificationDisabledForTesting is on (localStorage firebaseAuthAppVerificationDisabled). Use only with console test numbers."
+        );
+      }
+    } catch (_) {}
 
     let db = null;
     let getFirestoreCampaignConfig = () => Promise.resolve(null);
@@ -1510,6 +1524,8 @@ export const firebaseInitPromise = (async () => {
     return {
       auth,
       db,
+      /** For admin links (e.g. MFA troubleshooting) — same as firebaseConfig.projectId */
+      projectId: firebaseConfig.projectId,
       ready: true,
       onAuthStateChanged: authMod.onAuthStateChanged.bind(null, auth),
       signOut: () => authMod.signOut(auth),
@@ -1520,10 +1536,10 @@ export const firebaseInitPromise = (async () => {
       getMultiFactorResolver: (error) => authMod.getMultiFactorResolver(auth, error),
       PhoneAuthProvider: authMod.PhoneAuthProvider,
       PhoneMultiFactorGenerator: authMod.PhoneMultiFactorGenerator,
-      // Firebase JS v9.x: (container, parameters, auth). v10+ reordered to (auth, container, parameters).
-      // Never set `sitekey` here — RecaptchaVerifier throws ARGUMENT_ERROR if `sitekey` is preset (see Firebase SDK).
+      // v10+: (auth, containerOrId, parameters). v9.x was (container, parameters, auth).
+      // Never set `sitekey` — the SDK loads the project key via Identity Toolkit.
       createRecaptchaVerifier: (containerId, parameters) =>
-        new authMod.RecaptchaVerifier(containerId, parameters || {}, auth),
+        new authMod.RecaptchaVerifier(auth, containerId, parameters || {}),
       getFirestoreCampaignConfig,
       setFirestoreCampaignConfig,
       updateFirestoreCampaignConfig,

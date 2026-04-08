@@ -70,7 +70,7 @@
           <h2 class="login-card__heading">SMS verification</h2>
           <p class="login-card__subheading">Enter the code sent to your enrolled phone number to finish signing in.</p>
           <p id="loginMfaHint" class="login-helper login-mfa-hint" aria-live="polite"></p>
-          <div id="loginMfaRecaptcha" class="login-mfa-recaptcha" aria-hidden="true"></div>
+          <div id="loginMfaRecaptcha" class="login-mfa-recaptcha" aria-label="Security check"></div>
           <div class="form-group">
             <label for="loginMfaCode">SMS code</label>
             <input
@@ -90,6 +90,21 @@
           </button>
           <button type="button" id="loginMfaResend" class="ghost-button--login">Resend code</button>
           <button type="button" id="loginMfaCancel" class="ghost-button--login">Back to sign in</button>
+          <details class="login-mfa-troubleshoot">
+            <summary>If the code is never sent (server error)</summary>
+            <p class="login-helper">The app cannot fix SMS delivery. A project admin must use <strong>Firebase Console</strong>:</p>
+            <ol>
+              <li><strong>Authentication → Settings → Authorized domains</strong> — include this site’s hostname.</li>
+              <li><strong>Authentication → SMS / multi-factor</strong> — allow the <strong>SMS region</strong> for the phone number’s country; confirm billing / Identity Platform if SMS is required.</li>
+              <li>Or open <strong>Authentication → Users</strong>, select the user, and <strong>remove the SMS second factor</strong> so sign-in is email/password only until SMS works again.</li>
+              <li>Persistent <code>mfaSignIn:start</code> HTTP 500 — contact <strong>Firebase Support</strong> with project ID <code id="loginMfaProjectId">—</code>.</li>
+            </ol>
+            <p class="login-mfa-troubleshoot__actions">
+              <a id="loginMfaConsoleUsers" href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer">Authentication → Users</a>
+              <span aria-hidden="true"> · </span>
+              <a id="loginMfaConsoleSettings" href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer">Authentication → Settings</a>
+            </p>
+          </details>
         </div>
       </div>
     </div>

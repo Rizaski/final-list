@@ -158,6 +158,42 @@ body {
   min-height: 0;
 }
 
+.login-mfa-troubleshoot {
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-subtle);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.login-mfa-troubleshoot summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.login-mfa-troubleshoot ol {
+  margin: 8px 0 0 1.15em;
+  padding: 0;
+}
+
+.login-mfa-troubleshoot li {
+  margin-bottom: 6px;
+}
+
+.login-mfa-troubleshoot code {
+  font-size: 11px;
+}
+
+.login-mfa-troubleshoot__actions {
+  margin: 10px 0 0;
+}
+
+.login-mfa-troubleshoot__actions a {
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
 .login-step--mfa .form-group {
   margin-bottom: 2px;
 }
