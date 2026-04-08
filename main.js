@@ -1096,7 +1096,7 @@ async function startAppModules(firebaseApi) {
   const eventsContext = initEventsModule();
   const callsContext = initCallsModule(votersContext);
   initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser });
-  initZeroDayModule(votersContext, { pledgesContext, updateVoterPhone });
+  initZeroDayModule(votersContext, { pledgesContext, updateVoterPhone, getCurrentUser });
   initSettingsModule();
   syncCampaignConfigFromFirestore();
   applyElectionTypeFromCampaign();

@@ -145,6 +145,10 @@ let campaignConfig = {
   island: "",
   /** When false, Pledges is hidden from the sidebar (staff/admin). */
   showPledgesNav: true,
+  /** Zero Day → Vote Marking: ordered ballot box keys (excludes synthetic aggregate). */
+  voteMarkingBallotBoxOrder: [],
+  /** Ballot box key → view: `cards` | `list` | `compact`. Optional `__aggregate__` for campaign-wide card. */
+  voteMarkingBallotBoxViews: {},
 };
 
 function loadCampaignConfig() {
@@ -184,6 +188,14 @@ async function syncCampaignConfigFromFirestore() {
       } else if (remote.showPledgesNav !== undefined) {
         campaignConfig.showPledgesNav = Boolean(remote.showPledgesNav);
       }
+      if (Array.isArray(remote.voteMarkingBallotBoxOrder)) {
+        campaignConfig.voteMarkingBallotBoxOrder = remote.voteMarkingBallotBoxOrder
+          .map((x) => String(x).trim())
+          .filter(Boolean);
+      }
+      if (remote.voteMarkingBallotBoxViews && typeof remote.voteMarkingBallotBoxViews === "object") {
+        campaignConfig.voteMarkingBallotBoxViews = { ...remote.voteMarkingBallotBoxViews };
+      }
       saveCampaignConfig();
       applyCampaignToSidebar();
       document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: { ...campaignConfig } }));
@@ -201,6 +213,13 @@ async function syncCampaignConfigToFirestore() {
       constituency: campaignConfig.constituency,
       island: campaignConfig.island,
       showPledgesNav: campaignConfig.showPledgesNav !== false,
+      ...(Array.isArray(campaignConfig.voteMarkingBallotBoxOrder)
+        ? { voteMarkingBallotBoxOrder: campaignConfig.voteMarkingBallotBoxOrder }
+        : {}),
+      ...(campaignConfig.voteMarkingBallotBoxViews &&
+      typeof campaignConfig.voteMarkingBallotBoxViews === "object"
+        ? { voteMarkingBallotBoxViews: { ...campaignConfig.voteMarkingBallotBoxViews } }
+        : {}),
     });
   } catch (_) {}
 }
@@ -220,6 +239,14 @@ function applyCampaignToSidebar() {
 
 export function getCampaignConfig() {
   return { ...campaignConfig };
+}
+
+/** Merge into in-memory campaign config, persist localStorage, notify listeners (e.g. Vote Marking layout). */
+export function mergeLocalCampaignConfig(partial) {
+  if (!partial || typeof partial !== "object") return;
+  campaignConfig = { ...campaignConfig, ...partial };
+  saveCampaignConfig();
+  document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: { ...campaignConfig } }));
 }
 
 export { syncCampaignConfigFromFirestore };

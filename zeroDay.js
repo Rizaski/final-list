@@ -5,7 +5,7 @@
 
 import { openModal, closeModal, confirmDialog } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
-import { getAgents } from "./settings.js";
+import { getAgents, getCampaignConfig, mergeLocalCampaignConfig } from "./settings.js";
 import { sequenceAsImportedFromCsv, compareVotersByBallotSequenceThenName } from "./sequence-utils.js";
 
 const zeroDayAddTripButton = document.getElementById("zeroDayAddTripButton");
@@ -106,6 +106,9 @@ let votersContext = null;
 /** Injected from main.js to avoid circular import (voters.js imports zeroDay). */
 let updateVoterPhoneFromHost = null;
 let pledgeContextRef = null; // optional: { getPledges() } for agent lookup and sync
+/** Injected from main.js — used to show Vote Marking layout controls for admins only. */
+let zeroDayGetCurrentUser = null;
+let voteMarkingCampaignListenerBound = false;
 let zeroDayVoteCurrentPage = 1;
 let transportViewFilter = "all"; // "all" | "flight" | "speedboat"
 let votedRealtimeUnsubscribes = []; // unsubscribe fns for Firestore voted listeners
@@ -136,6 +139,240 @@ function voteMarkingScopeTitle(monitor) {
 function zeroDayBallotBoxCellLabel(boxKey) {
   const k = String(boxKey || "").trim();
   return isZeroDayAggregateBallotKey(k) ? ZERO_DAY_ALL_BOXES_DISPLAY : k || "—";
+}
+
+const VOTE_MARKING_VIEW_TYPES = ["cards", "list", "compact"];
+
+/** Apply saved ballot box order (aggregate card stays first). */
+function applyVoteMarkingDisplayOrder(list) {
+  const cfg = getCampaignConfig();
+  const order = Array.isArray(cfg.voteMarkingBallotBoxOrder)
+    ? cfg.voteMarkingBallotBoxOrder.map((x) => String(x).trim()).filter(Boolean)
+    : [];
+  const idx = new Map(order.map((k, i) => [k, i]));
+  const aggs = list.filter((b) => b.isAggregate);
+  const rest = list.filter((b) => !b.isAggregate);
+  rest.sort((a, b) => {
+    const ia = idx.has(a.box) ? idx.get(a.box) : 1e9;
+    const ib = idx.has(b.box) ? idx.get(b.box) : 1e9;
+    if (ia !== ib) return ia - ib;
+    return String(a.box).localeCompare(String(b.box), "en");
+  });
+  return [...aggs, ...rest];
+}
+
+function resolveVoteMarkingViewType(boxKey) {
+  const cfg = getCampaignConfig();
+  const views =
+    cfg.voteMarkingBallotBoxViews && typeof cfg.voteMarkingBallotBoxViews === "object"
+      ? cfg.voteMarkingBallotBoxViews
+      : {};
+  const mapKey = isZeroDayAggregateBallotKey(boxKey) ? "__aggregate__" : String(boxKey || "").trim();
+  const v = views[mapKey];
+  return VOTE_MARKING_VIEW_TYPES.includes(v) ? v : "cards";
+}
+
+function collectBallotBoxKeysFromVoters() {
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  return [
+    ...new Set(voters.map((v) => (v.ballotBox || v.island || "Unassigned").trim())),
+  ].sort((a, b) => a.localeCompare(b, "en"));
+}
+
+function openVoteMarkingLayoutModal() {
+  const keys = collectBallotBoxKeysFromVoters();
+  const cfg0 = getCampaignConfig();
+  let order = Array.isArray(cfg0.voteMarkingBallotBoxOrder)
+    ? cfg0.voteMarkingBallotBoxOrder.map((x) => String(x).trim()).filter(Boolean)
+    : [];
+  keys.forEach((k) => {
+    if (!order.includes(k)) order.push(k);
+  });
+  order = order.filter((k) => keys.includes(k));
+  const views = {
+    ...(cfg0.voteMarkingBallotBoxViews && typeof cfg0.voteMarkingBallotBoxViews === "object"
+      ? cfg0.voteMarkingBallotBoxViews
+      : {}),
+  };
+
+  const body = document.createElement("div");
+  body.className = "vote-marking-layout-modal";
+
+  const renderModalBody = () => {
+    body.textContent = "";
+    const intro = document.createElement("p");
+    intro.className = "helper-text";
+    intro.textContent =
+      "Set the order of ballot boxes and a view type for each. The campaign-wide card can use its own view; it always appears first when shown.";
+    body.appendChild(intro);
+
+    const aggWrap = document.createElement("div");
+    aggWrap.className = "vote-marking-layout-modal__row vote-marking-layout-modal__row--aggregate";
+    const aggVt = VOTE_MARKING_VIEW_TYPES.includes(views.__aggregate__)
+      ? views.__aggregate__
+      : "cards";
+    aggWrap.innerHTML = `
+      <div class="vote-marking-layout-modal__label">
+        <strong>${escapeHtml(ZERO_DAY_ALL_BOXES_DISPLAY)}</strong>
+        <span class="text-muted">Campaign-wide</span>
+      </div>
+      <div class="field-group field-group--inline">
+        <label for="vmlAggView">View</label>
+        <select id="vmlAggView" class="input">
+          ${VOTE_MARKING_VIEW_TYPES.map(
+            (t) =>
+              `<option value="${escapeHtml(t)}"${aggVt === t ? " selected" : ""}>${escapeHtml(
+                t.charAt(0).toUpperCase() + t.slice(1)
+              )}</option>`
+          ).join("")}
+        </select>
+      </div>
+    `;
+    body.appendChild(aggWrap);
+    aggWrap.querySelector("#vmlAggView").addEventListener("change", (e) => {
+      views.__aggregate__ = e.target.value;
+    });
+
+    order.forEach((boxKey, i) => {
+      const vt = VOTE_MARKING_VIEW_TYPES.includes(views[boxKey]) ? views[boxKey] : "cards";
+      const row = document.createElement("div");
+      row.className = "vote-marking-layout-modal__row";
+      const btns = document.createElement("div");
+      btns.className = "vote-marking-layout-modal__order-btns";
+      const up = document.createElement("button");
+      up.type = "button";
+      up.className = "ghost-button ghost-button--small";
+      up.title = "Move up";
+      up.setAttribute("aria-label", "Move up");
+      up.textContent = "↑";
+      up.setAttribute("data-vml-up", String(i));
+      up.disabled = i === 0;
+      const down = document.createElement("button");
+      down.type = "button";
+      down.className = "ghost-button ghost-button--small";
+      down.title = "Move down";
+      down.setAttribute("aria-label", "Move down");
+      down.textContent = "↓";
+      down.setAttribute("data-vml-down", String(i));
+      down.disabled = i === order.length - 1;
+      btns.appendChild(up);
+      btns.appendChild(down);
+      const label = document.createElement("div");
+      label.className = "vote-marking-layout-modal__label";
+      const strong = document.createElement("strong");
+      strong.textContent = boxKey;
+      label.appendChild(strong);
+      const fg = document.createElement("div");
+      fg.className = "field-group field-group--inline";
+      const lbl = document.createElement("label");
+      lbl.textContent = "View";
+      const sel = document.createElement("select");
+      sel.className = "input";
+      VOTE_MARKING_VIEW_TYPES.forEach((t) => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+        if (vt === t) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change", () => {
+        views[boxKey] = sel.value;
+      });
+      fg.appendChild(lbl);
+      fg.appendChild(sel);
+      row.appendChild(btns);
+      row.appendChild(label);
+      row.appendChild(fg);
+      body.appendChild(row);
+    });
+
+    body.querySelectorAll("[data-vml-up]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const i = Number(btn.getAttribute("data-vml-up"));
+        if (i <= 0) return;
+        const t = order[i];
+        order[i] = order[i - 1];
+        order[i - 1] = t;
+        renderModalBody();
+      });
+    });
+    body.querySelectorAll("[data-vml-down]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const i = Number(btn.getAttribute("data-vml-down"));
+        if (i >= order.length - 1) return;
+        const t = order[i];
+        order[i] = order[i + 1];
+        order[i + 1] = t;
+        renderModalBody();
+      });
+    });
+  };
+
+  renderModalBody();
+
+  const footer = document.createElement("div");
+  footer.className = "form-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost-button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeModal);
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "primary-button";
+  saveBtn.textContent = "Save layout";
+  saveBtn.addEventListener("click", async () => {
+    const cleanViews = {};
+    Object.keys(views).forEach((k) => {
+      if (VOTE_MARKING_VIEW_TYPES.includes(views[k])) cleanViews[k] = views[k];
+    });
+    try {
+      const api = await firebaseInitPromise;
+      if (api.ready && api.setFirestoreCampaignConfig) {
+        await api.setFirestoreCampaignConfig({
+          voteMarkingBallotBoxOrder: order.slice(),
+          voteMarkingBallotBoxViews: cleanViews,
+        });
+      }
+      mergeLocalCampaignConfig({
+        voteMarkingBallotBoxOrder: order.slice(),
+        voteMarkingBallotBoxViews: cleanViews,
+      });
+    } catch (e) {
+      console.warn("[VoteMarking] save layout", e);
+      mergeLocalCampaignConfig({
+        voteMarkingBallotBoxOrder: order.slice(),
+        voteMarkingBallotBoxViews: cleanViews,
+      });
+    }
+    renderZeroDayVoteTable();
+    closeModal();
+    if (window.appNotifications) {
+      window.appNotifications.push({
+        title: "Vote Marking layout saved",
+        meta: "Ballot box order and views updated.",
+      });
+    }
+  });
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+
+  openModal({
+    title: "Ballot box layout",
+    body,
+    footer,
+  });
+}
+
+function updateVoteMarkingLayoutButtonVisibility() {
+  const layoutBtn = document.getElementById("zeroDayVoteLayoutButton");
+  if (!layoutBtn) return;
+  try {
+    const u = zeroDayGetCurrentUser && zeroDayGetCurrentUser();
+    layoutBtn.hidden = !u || !u.isAdmin;
+  } catch (_) {
+    layoutBtn.hidden = true;
+  }
 }
 
 /** Returns array of unique transport route names from Zero Day trips. */
@@ -6370,7 +6607,7 @@ function ensureMonitorForBallotBox(ballotBox) {
 function renderZeroDayVoteTable() {
   if (!zeroDayVoteCardsContainer) return;
   zeroDayVoteCardsContainer.innerHTML = "";
-  const boxes = getVoteBoxSummaries();
+  const boxes = applyVoteMarkingDisplayOrder(getVoteBoxSummaries());
   const total = boxes.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (zeroDayVoteCurrentPage > totalPages) zeroDayVoteCurrentPage = totalPages;
@@ -6389,8 +6626,12 @@ function renderZeroDayVoteTable() {
   } else {
     pageBoxes.forEach((box) => {
       const card = document.createElement("div");
-      card.className = "vote-box-card" + (box.isAggregate ? " vote-box-card--aggregate" : "");
       const boxKey = (box.box || "").trim();
+      const viewType = resolveVoteMarkingViewType(boxKey);
+      card.className =
+        "vote-box-card" +
+        (box.isAggregate ? " vote-box-card--aggregate" : "") +
+        ` vote-box-card--view-${viewType}`;
       const displayTitle = box.isAggregate ? ZERO_DAY_ALL_BOXES_DISPLAY : box.box;
       const metaLine = box.isAggregate
         ? "Campaign-wide — everyone not yet marked voted"
@@ -6645,6 +6886,8 @@ function bindTransportMenu() {
 export function initZeroDayModule(votersContextParam, options = {}) {
   votersContext = votersContextParam || null;
   pledgeContextRef = options.pledgesContext || null;
+  zeroDayGetCurrentUser =
+    typeof options.getCurrentUser === "function" ? options.getCurrentUser : null;
   updateVoterPhoneFromHost =
     typeof options.updateVoterPhone === "function" ? options.updateVoterPhone : null;
   loadVotedEntries();
@@ -6662,6 +6905,21 @@ export function initZeroDayModule(votersContextParam, options = {}) {
   renderZeroDayVoteTable();
   renderMonitorsTable();
   bindZeroDayToolbar();
+
+  const zeroDayVoteLayoutButton = document.getElementById("zeroDayVoteLayoutButton");
+  if (zeroDayVoteLayoutButton) {
+    zeroDayVoteLayoutButton.addEventListener("click", () => openVoteMarkingLayoutModal());
+  }
+  updateVoteMarkingLayoutButtonVisibility();
+  if (!voteMarkingCampaignListenerBound) {
+    voteMarkingCampaignListenerBound = true;
+    document.addEventListener("campaign-config-changed", () => {
+      updateVoteMarkingLayoutButtonVisibility();
+      try {
+        renderZeroDayVoteTable();
+      } catch (_) {}
+    });
+  }
 
   if (!monitorBallotSessionVisibilityBound) {
     monitorBallotSessionVisibilityBound = true;
