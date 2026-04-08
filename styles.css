@@ -4846,6 +4846,10 @@ textarea.voter-detail-referendum-notes:focus {
   text-transform: uppercase;
   line-height: 1.25;
   max-width: 100%;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
 }
 .ballot-box-session-pill--compact {
   padding: 3px 10px;

@@ -115,6 +115,11 @@ let votedRealtimeUnsubscribes = []; // unsubscribe fns for Firestore voted liste
 const votedByMonitor = {}; // token -> [{ voterId, timeMarked }] from real-time snapshots
 let monitorBallotSessionUnsubs = []; // ballot session snapshots for Manage Monitors status column
 let voteCardBallotSessionUnsubs = []; // Vote Marking tab cards
+/** boxKey -> { token, state } last ballot session from Firestore — avoids "…" flicker on every table re-render */
+const lastVoteCardBallotSessionByBoxKey = new Map();
+/** monitor id -> { token, state } — same for Manage Monitors session column */
+const lastMonitorBallotSessionByMonitorId = new Map();
+let mergeVotedRenderDebounceTimer = null;
 let monitorBallotSessionVisibilityBound = false;
 let monitorRowMenuDocClose = null;
 let zeroDaySyncInProgress = false;
@@ -1725,11 +1730,21 @@ function notifyVotedEntriesUpdated() {
   } catch (_) {}
 }
 
+function votedEntriesSignature(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return "";
+  return entries
+    .map((e) => `${String(e.voterId)}\t${String(e.timeMarked || "")}`)
+    .sort()
+    .join("\n");
+}
+
 /** Fetches voted entries from Firestore (all monitors) and merges into zeroDayVotedEntries so ballot box counts reflect votes from the link. */
 export async function syncVotedFromFirestore() {
   try {
+    loadVotedEntries();
+    const prevSig = votedEntriesSignature(zeroDayVotedEntries);
     const api = await firebaseInitPromise;
-    if (!api.ready || !api.getVotedForMonitor) return;
+    if (!api.ready || !api.getVotedForMonitor) return false;
     const tokenSet = await collectMonitorShareTokensForSync(api);
     const fromMonitors = new Map();
     for (const token of tokenSet) {
@@ -1747,9 +1762,16 @@ export async function syncVotedFromFirestore() {
       timeMarked: timeMarked || "",
     }));
     saveVotedEntries();
-    mergeVotedAtFromVoters(votersContext && votersContext.getAllVoters ? votersContext.getAllVoters() : []);
-    notifyVotedEntriesUpdated();
-  } catch (_) {}
+    mergeVotedAtFromVoters(
+      votersContext && votersContext.getAllVoters ? votersContext.getAllVoters() : [],
+      { skipNotify: true }
+    );
+    const changed = prevSig !== votedEntriesSignature(zeroDayVotedEntries);
+    if (changed) notifyVotedEntriesUpdated();
+    return changed;
+  } catch (_) {
+    return false;
+  }
 }
 
 /** One-shot pull of transport trips from Firestore (e.g. header hard refresh). Merges with localStorage, then pushes merged trips to Firestore. */
@@ -1775,6 +1797,8 @@ export async function refreshTransportTripsFromFirestore() {
  * Replacing (not only adding) is required so undo/delete on a monitor removes voters from local state.
  */
 function mergeRealtimeVotedIntoLocal() {
+  loadVotedEntries();
+  const prevSig = votedEntriesSignature(zeroDayVotedEntries);
   const fromMonitors = new Map();
   for (const token of Object.keys(votedByMonitor)) {
     const entries = votedByMonitor[token];
@@ -1792,10 +1816,17 @@ function mergeRealtimeVotedIntoLocal() {
     timeMarked: timeMarked || "",
   }));
   saveVotedEntries();
-  mergeVotedAtFromVoters(votersContext && votersContext.getAllVoters ? votersContext.getAllVoters() : []);
-  zeroDayVoteCurrentPage = 1;
-  renderZeroDayVoteTable();
-  notifyVotedEntriesUpdated();
+  mergeVotedAtFromVoters(
+    votersContext && votersContext.getAllVoters ? votersContext.getAllVoters() : [],
+    { skipNotify: true }
+  );
+  if (prevSig === votedEntriesSignature(zeroDayVotedEntries)) return;
+  if (mergeVotedRenderDebounceTimer != null) clearTimeout(mergeVotedRenderDebounceTimer);
+  mergeVotedRenderDebounceTimer = setTimeout(() => {
+    mergeVotedRenderDebounceTimer = null;
+    renderZeroDayVoteTable();
+    notifyVotedEntriesUpdated();
+  }, 160);
 }
 
 /** Subscribes to Firestore voted subcollection for each monitor; ballot box cards update in real time when a monitor marks a voter. */
@@ -1870,9 +1901,11 @@ export async function clearVotedForVoter(voterId) {
 }
 
 /** Merge votedAt from Firestore voter docs into zeroDayVotedEntries so Vote Marking and reports stay in sync. */
-export function mergeVotedAtFromVoters(votersArray) {
-  if (!Array.isArray(votersArray) || votersArray.length === 0) return;
+export function mergeVotedAtFromVoters(votersArray, options = {}) {
+  const { skipNotify = false } = options;
+  if (!Array.isArray(votersArray) || votersArray.length === 0) return false;
   loadVotedEntries();
+  const beforeSig = votedEntriesSignature(zeroDayVotedEntries);
   const existingById = new Map(zeroDayVotedEntries.map((e) => [String(e.voterId), e.timeMarked]));
   for (const v of votersArray) {
     const votedAt = v && (v.votedAt || v.votedTimeMarked);
@@ -1881,9 +1914,14 @@ export function mergeVotedAtFromVoters(votersArray) {
     const existing = existingById.get(key);
     if (!existing || (votedAt > (existing || ""))) existingById.set(key, votedAt);
   }
-  zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({ voterId, timeMarked: timeMarked || "" }));
+  zeroDayVotedEntries = Array.from(existingById.entries()).map(([voterId, timeMarked]) => ({
+    voterId,
+    timeMarked: timeMarked || "",
+  }));
   saveVotedEntries();
-  notifyVotedEntriesUpdated();
+  const changed = beforeSig !== votedEntriesSignature(zeroDayVotedEntries);
+  if (changed && !skipNotify) notifyVotedEntriesUpdated();
+  return changed;
 }
 
 function generateShareToken() {
@@ -4755,6 +4793,18 @@ function applyMonitorSessionCell(monitorId, state) {
     if (p) p.disabled = st !== "open";
     if (c) c.disabled = st === "closed";
   }
+  const m = zeroDayMonitors.find((x) => String(x.id) === String(monitorId));
+  if (m?.shareToken) {
+    lastMonitorBallotSessionByMonitorId.set(m.id, {
+      token: m.shareToken,
+      state: {
+        status: st,
+        pauseReason: st === "paused" ? reason : "",
+      },
+    });
+  } else {
+    lastMonitorBallotSessionByMonitorId.delete(monitorId);
+  }
 }
 
 /** Sync Firestore ballot session: open, paused (with reason), or closed. */
@@ -4831,12 +4881,18 @@ function wireMonitorBallotSessionCells() {
       cell.className =
         "ballot-box-session-pill ballot-box-session-pill--compact monitor-session-cell monitor-session-cell--na";
       cell.removeAttribute("title");
+      lastMonitorBallotSessionByMonitorId.delete(m.id);
       return;
     }
-    cell.textContent = "…";
-    cell.className =
-      "ballot-box-session-pill ballot-box-session-pill--compact monitor-session-cell monitor-session-cell--loading";
-    cell.removeAttribute("title");
+    const cached = lastMonitorBallotSessionByMonitorId.get(m.id);
+    if (cached && cached.token === m.shareToken && cached.state != null) {
+      applyMonitorSessionCell(m.id, cached.state);
+    } else {
+      cell.textContent = "…";
+      cell.className =
+        "ballot-box-session-pill ballot-box-session-pill--compact monitor-session-cell monitor-session-cell--loading";
+      cell.removeAttribute("title");
+    }
   });
   firebaseInitPromise
     .then((api) => {
@@ -4895,12 +4951,18 @@ function applyVoteCardSessionPill(boxKey, state) {
     (n) => n.getAttribute("data-ballot-session-for-box") === boxKey
   );
   if (!el) return;
+  const m = zeroDayMonitors.find((x) => (x.ballotBox || "").trim() === boxKey);
   if (state === null || state === undefined || state.status === "na") {
     el.textContent = "—";
     el.className =
       "ballot-box-session-pill ballot-box-session-pill--compact vote-box-card__session-pill ballot-box-session-pill--na";
     el.removeAttribute("title");
     updateVoteCardAdminButtons(boxKey, "na");
+    if (m?.shareToken) {
+      lastVoteCardBallotSessionByBoxKey.set(boxKey, { token: m.shareToken, state: { status: "na" } });
+    } else {
+      lastVoteCardBallotSessionByBoxKey.delete(boxKey);
+    }
     return;
   }
   const st =
@@ -4913,6 +4975,15 @@ function applyVoteCardSessionPill(boxKey, state) {
   if (st === "paused" && reason) el.setAttribute("title", "Reason: " + reason);
   else el.removeAttribute("title");
   updateVoteCardAdminButtons(boxKey, st);
+  if (m?.shareToken) {
+    lastVoteCardBallotSessionByBoxKey.set(boxKey, {
+      token: m.shareToken,
+      state: {
+        status: st,
+        pauseReason: st === "paused" ? reason : "",
+      },
+    });
+  }
 }
 
 function wireVoteCardBallotSessions() {
@@ -4927,11 +4998,16 @@ function wireVoteCardBallotSessions() {
       applyVoteCardSessionPill(boxKey, { status: "na" });
       return;
     }
-    pill.textContent = "…";
-    pill.className =
-      "ballot-box-session-pill ballot-box-session-pill--compact vote-box-card__session-pill ballot-box-session-pill--loading";
-    pill.removeAttribute("title");
-    updateVoteCardAdminButtons(boxKey, "loading");
+    const cached = lastVoteCardBallotSessionByBoxKey.get(boxKey);
+    if (cached && cached.token === m.shareToken && cached.state != null) {
+      applyVoteCardSessionPill(boxKey, cached.state);
+    } else {
+      pill.textContent = "…";
+      pill.className =
+        "ballot-box-session-pill ballot-box-session-pill--compact vote-box-card__session-pill ballot-box-session-pill--loading";
+      pill.removeAttribute("title");
+      updateVoteCardAdminButtons(boxKey, "loading");
+    }
   });
   firebaseInitPromise
     .then((api) => {
@@ -7291,10 +7367,13 @@ export function initZeroDayModule(votersContextParam, options = {}) {
     if (zeroDaySyncInProgress) return;
     setSyncButtonState(true);
     try {
-      await syncVotedFromFirestore();
-      zeroDayVoteCurrentPage = 1;
-      renderZeroDayVoteTable();
-      if (showToast && typeof window.showToast === "function") window.showToast("Votes synced from ballot box links.");
+      const changed = await syncVotedFromFirestore();
+      if (changed) renderZeroDayVoteTable();
+      if (showToast && typeof window.showToast === "function") {
+        window.showToast(
+          changed ? "Votes synced from ballot box links." : "Already up to date."
+        );
+      }
     } finally {
       setSyncButtonState(false);
     }
