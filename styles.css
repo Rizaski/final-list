@@ -1745,6 +1745,136 @@ body.sidebar-collapsed .sidebar__tool {
   background: var(--color-undecided);
 }
 
+.chart-bar__fill--persuadable-50 {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+/* Reports → Persuadable & met: bars + radial donut */
+.referendum-fieldwork-card {
+  width: 100%;
+  min-width: 0;
+}
+
+.referendum-fieldwork__charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+  padding-top: 4px;
+}
+
+@media (max-width: 900px) {
+  .referendum-fieldwork__charts {
+    grid-template-columns: 1fr;
+  }
+}
+
+.referendum-fieldwork__bars-wrap,
+.referendum-fieldwork__donut-wrap {
+  min-width: 0;
+}
+
+.met-donut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 16px 20px;
+  width: 100%;
+}
+
+.met-donut__ring {
+  width: 132px;
+  height: 132px;
+  max-width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.14);
+}
+
+.met-donut__inner {
+  width: 72%;
+  height: 72%;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+  padding: 6px;
+}
+
+.met-donut__value {
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-primary);
+  letter-spacing: -0.03em;
+}
+
+.met-donut__suffix {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.met-donut__caption {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-accent);
+  margin-top: 4px;
+}
+
+.met-donut__pct {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.met-donut__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.met-donut__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.met-donut__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.met-donut__swatch--met {
+  background: var(--color-primary, #0d9488);
+}
+
+.met-donut__swatch--not {
+  background: #e5e7eb;
+}
+
 /* Reports → pledge distribution: pie + overview bars */
 .pledge-distribution-card__body {
   padding-top: 8px;
@@ -2160,6 +2290,212 @@ body.sidebar-collapsed .sidebar__tool {
   border-radius: 999px;
   border: 1px solid var(--color-border-subtle);
   background-color: #f9fafb;
+}
+
+/* Voters module: Table / List / Cards (toolbar #voterPageViewType) */
+.voters-list-display {
+  position: relative;
+  min-height: 120px;
+}
+.voters-list-alt {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: min(62vh, 640px);
+}
+.voters-list-alt__empty {
+  margin: 0;
+}
+.voters-page-group-header {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  padding: 10px 4px 6px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  margin-top: 10px;
+}
+.voters-page-group-header:first-child {
+  margin-top: 0;
+}
+.voters-page-list-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: var(--color-surface, #fff);
+  cursor: pointer;
+}
+.voters-page-list-row:hover {
+  border-color: rgba(13, 148, 136, 0.25);
+}
+.voters-page-list-row.is-selected {
+  border-color: var(--color-primary, #0d9488);
+  box-shadow: 0 0 0 1px rgba(13, 148, 136, 0.2);
+}
+.voters-page-list-row__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.voters-page-list-row__seq {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  min-width: 2rem;
+}
+.voters-page-list-row__text {
+  min-width: 0;
+}
+.voters-page-list-row__name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.voters-page-list-row__meta,
+.voters-page-list-row__agent {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.voters-page-list-row__mid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.voters-page-list-row__tail {
+  margin-left: auto;
+}
+.voters-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  flex-wrap: nowrap;
+}
+.voters-row-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted, #64748b);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.voters-row-icon-btn:hover {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-text, #0f172a);
+}
+.voters-row-icon-btn--danger:hover {
+  background: rgba(185, 28, 28, 0.1);
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.15);
+}
+.voters-row-icon-btn:focus-visible {
+  outline: 2px solid var(--color-primary, #0d9488);
+  outline-offset: 1px;
+}
+.voters-row-icon {
+  display: block;
+  pointer-events: none;
+}
+#votersTable .voters-table-actions-cell .voters-row-actions {
+  justify-content: flex-end;
+}
+.voters-page-card__footer .voters-row-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.voters-page-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+.voters-page-cards-group-title {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  padding: 6px 2px;
+}
+.voters-page-card {
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(165deg, #fff 0%, #f8fafc 100%);
+  cursor: pointer;
+}
+.voters-page-card:hover {
+  border-color: rgba(13, 148, 136, 0.22);
+}
+.voters-page-card.is-selected {
+  border-color: var(--color-primary, #0d9488);
+  box-shadow: 0 0 0 1px rgba(13, 148, 136, 0.2);
+}
+.voters-page-card__top {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.voters-page-card__head {
+  min-width: 0;
+}
+.voters-page-card__seq {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.voters-page-card__name {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.voters-page-card__dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.voters-page-card__dl dt {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+.voters-page-card__dl dd {
+  margin: 0;
+  word-break: break-word;
+}
+.voters-page-card__pledge,
+.voters-page-card__voted {
+  margin-top: 8px;
+}
+.voters-page-card__footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+.voters-page-avatar .avatar-img,
+.voters-page-avatar .avatar-circle {
+  width: 40px;
+  height: 40px;
+}
+.voters-page-avatar .avatar-img {
+  object-fit: cover;
+  border-radius: 999px;
 }
 
 /* List toolbar (Pledges + Voters + Zero Day + List workspace: search, sort, filter, group) */
@@ -4638,6 +4974,157 @@ textarea.voter-detail-referendum-notes:focus {
   z-index: 2;
 }
 
+/* Zero Day voter modal: table wrapper + List / Cards alternate views */
+.zd-voter-modal-table-wrap {
+  overflow-x: auto;
+}
+.zd-voter-modal-table-wrap--list,
+.zd-voter-modal-table-wrap--cards {
+  overflow-y: auto;
+  max-height: min(62vh, 540px);
+}
+.zd-voter-modal-list-row .avatar-cell--zd-modal .avatar-img,
+.zd-voter-modal-card__top .avatar-img {
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.zd-voter-modal-list-row .avatar-cell--zd-modal .avatar-img:hover,
+.zd-voter-modal-card__top .avatar-img:hover {
+  transform: scale(2.2);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.45);
+  z-index: 2;
+}
+.zd-voter-modal-group-header {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  padding: 10px 8px 6px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  margin-top: 8px;
+}
+.zd-voter-modal-group-header:first-child {
+  margin-top: 0;
+}
+.zd-voter-modal-list-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: var(--color-surface, #fff);
+}
+.zd-voter-modal-list-row__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.zd-voter-modal-list-row .avatar-cell--zd-modal {
+  flex-shrink: 0;
+}
+.zd-voter-modal-list-row__seq {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  min-width: 2rem;
+}
+.zd-voter-modal-list-row__text {
+  min-width: 0;
+  flex: 1;
+}
+.zd-voter-modal-list-row__name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.zd-voter-modal-list-row__meta,
+.zd-voter-modal-list-row__sub {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.zd-voter-modal-list-row__tail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.zd-voter-modal-list-row__time {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.zd-voter-modal-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.zd-voter-modal-cards-group-title {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  padding: 6px 4px 4px;
+}
+.zd-voter-modal-card {
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(165deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.zd-voter-modal-card__top {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+.zd-voter-modal-card__title-block {
+  min-width: 0;
+}
+.zd-voter-modal-card__seq {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.zd-voter-modal-card__name {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.zd-voter-modal-card__dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+.zd-voter-modal-card__dl dt {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+.zd-voter-modal-card__dl dd {
+  margin: 0;
+  word-break: break-word;
+}
+.zd-voter-modal-card__pledge {
+  margin-top: 8px;
+}
+.zd-voter-modal-card__footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
 .data-table th {
   font-size: 11px;
   text-transform: uppercase;
@@ -6064,6 +6551,68 @@ textarea.voter-detail-referendum-notes:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+/* Door to Door — searchable permanent address (combobox + hidden select) */
+.door-to-door-address-combobox {
+  position: relative;
+  min-width: min(260px, 38vw);
+  max-width: min(320px, 92vw);
+}
+
+#module-door-to-door .door-to-door-address-combobox .voter-agent-dropdown__menu {
+  z-index: 50;
+}
+
+#module-door-to-door .door-to-door-address-combobox__input {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  background-color: #ffffff;
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+#module-door-to-door .door-to-door-address-combobox__input:hover {
+  border-color: rgba(0, 156, 156, 0.35);
+}
+
+#module-door-to-door .door-to-door-address-combobox__input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+.door-to-door-filter-address-select-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  .pledges-toolbar__controls .field-group--door-address {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+  }
+
+  #module-door-to-door .door-to-door-address-combobox {
+    max-width: 100%;
+    min-width: 0;
+  }
 }
 
 /* Modals & forms (slightly denser) */

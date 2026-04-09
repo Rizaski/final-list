@@ -29,6 +29,24 @@ import {
 const PAGE_SIZE = 15;
 const CANDIDATES_STORAGE_KEY = "candidates-data";
 const VOTERS_STORAGE_KEY = "voters-data";
+/** Voters page layout: full table vs dense list vs cards (localStorage). */
+const VOTERS_PAGE_VIEW_KEY = "voters-page-list-view";
+const VOTERS_PAGE_VIEWS = ["table", "list", "cards"];
+
+function getVotersPageViewPref() {
+  try {
+    const v = localStorage.getItem(VOTERS_PAGE_VIEW_KEY);
+    if (VOTERS_PAGE_VIEWS.includes(v)) return v;
+  } catch (_) {}
+  return "table";
+}
+
+function setVotersPageViewPref(v) {
+  if (!VOTERS_PAGE_VIEWS.includes(v)) return;
+  try {
+    localStorage.setItem(VOTERS_PAGE_VIEW_KEY, v);
+  } catch (_) {}
+}
 
 // Dynamic data: starts empty and is populated via bulk upload and in-app actions.
 let currentVoters = [];
@@ -40,6 +58,11 @@ let votersBulkImportInProgress = false;
  * @type {Map<string, { candidateId: string, status: string, until: number }>}
  */
 const pendingCandidatePledgeEdits = new Map();
+
+/** Mirrors header `#electionType`: `local` merges Firebase live voters with LCE2026 archive backup. */
+let headerElectionScope = "local";
+/** Cached `getArchivedVotersFs` rows for the resolved LCE2026 archive (when scope is local). */
+let lceArchiveVotersCache = null;
 
 function sameVoterId(a, b) {
   if (a == null || b == null) return false;
@@ -97,6 +120,162 @@ function mergeVotersFromSnapshot(prevList, incomingList) {
       candidatePledges: mergedCp,
     });
   });
+}
+
+/** Append archive-only rows (e.g. removed from live `voters` but still in LCE2026 Firebase archive). */
+function mergeLiveWithArchivedBackup(live, archived) {
+  const liveArr = (Array.isArray(live) ? live : []).map((x) => normalizeVoterCandidateFields(x));
+  const seen = new Set(liveArr.map((v) => String(v.id)));
+  const out = [...liveArr];
+  for (const v of Array.isArray(archived) ? archived : []) {
+    if (!v || v.id == null) continue;
+    const id = String(v.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(normalizeVoterCandidateFields(v));
+  }
+  return out;
+}
+
+function applyLceArchiveMergeToItems(items) {
+  if (headerElectionScope !== "local" || !lceArchiveVotersCache || lceArchiveVotersCache.length === 0) {
+    return items;
+  }
+  return mergeLiveWithArchivedBackup(items, lceArchiveVotersCache);
+}
+
+function setHeaderElectionScope(scope) {
+  const v = String(scope || "local").trim();
+  headerElectionScope =
+    v === "parliamentary" || v === "presidential" ? v : "local";
+}
+
+/** Current header election scope (`local` | `parliamentary` | `presidential`) for Settings / pledges / reports. */
+export function getHeaderElectionScope() {
+  return headerElectionScope;
+}
+
+function effectiveCampaignTypeForHeaderUi() {
+  const map = {
+    local: "Local Council Election",
+    parliamentary: "Parliamentary Election",
+    presidential: "Presidential Election",
+  };
+  try {
+    const el = typeof document !== "undefined" ? document.getElementById("electionType") : null;
+    const v = el?.value;
+    if (v === "local" || v === "parliamentary" || v === "presidential") return map[v];
+  } catch (_) {}
+  return map[headerElectionScope] || map.local;
+}
+
+/** Same filtering as Settings `getCandidatesForActiveElectionView` (avoid importing settings into voters). */
+function filterCandidatesListForActiveElectionView(candidates) {
+  const want = effectiveCampaignTypeForHeaderUi();
+  const all = Array.isArray(candidates) ? candidates : [];
+  const matched = all.filter((c) => String(c.electionType || "").trim() === want);
+  return matched.length > 0 ? matched : all;
+}
+
+/** Canonical Firebase campaign archive label for Local Council 2026 voter backup. */
+const LCE2026_ARCHIVE_LABEL = "LCE2026";
+
+/**
+ * Pick the newest Firebase campaign archive that represents a Local Council election.
+ * `listCampaignArchivesFs` returns rows sorted newest `archivedAt` first.
+ */
+function archiveRowLooksLikeLocalCouncil(r) {
+  if (!r || typeof r !== "object") return false;
+  const rawLabel = String(r.label || "").trim();
+  if (rawLabel.toLowerCase() === LCE2026_ARCHIVE_LABEL.toLowerCase()) return true;
+  const cfg = r.configSnapshot;
+  if (cfg && typeof cfg === "object") {
+    const ct = String(cfg.campaignType || "").trim();
+    if (ct === "Local Council Election") return true;
+  }
+  const label = `${r.label || ""} ${r.campaignNameSnapshot || ""}`;
+  if (/LCE\s*2026|LCE2026|2026\s*LCE/i.test(label)) return true;
+  if (/\bLCE\b/i.test(label) && /\b2026\b/.test(label)) return true;
+  if (/local council election/i.test(label)) return true;
+  if (/local council/i.test(label) && !/parliamentary|presidential/i.test(label)) return true;
+  return false;
+}
+
+async function resolveLocalCouncilArchiveId(api) {
+  if (!api?.listCampaignArchivesFs) return null;
+  try {
+    const rows = await api.listCampaignArchivesFs();
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const exactLce2026 = rows.find(
+      (r) => String(r?.label || "").trim().toLowerCase() === LCE2026_ARCHIVE_LABEL.toLowerCase()
+    );
+    if (exactLce2026?.id) return String(exactLce2026.id);
+    let found = rows.find(archiveRowLooksLikeLocalCouncil);
+    if (found?.id) return String(found.id);
+    // Some list responses omit nested fields; read archive root docs (newest first).
+    if (typeof api.getArchivedArchiveRootFs === "function") {
+      for (let i = 0; i < Math.min(10, rows.length); i++) {
+        const id = rows[i]?.id;
+        if (!id) continue;
+        try {
+          const root = await api.getArchivedArchiveRootFs(id);
+          const ct =
+            root?.configSnapshot && typeof root.configSnapshot === "object"
+              ? String(root.configSnapshot.campaignType || "").trim()
+              : "";
+          if (ct === "Local Council Election") return String(id);
+        } catch (_) {}
+      }
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function hydrateLceArchiveCache(api) {
+  lceArchiveVotersCache = null;
+  if (headerElectionScope !== "local" || !api?.getArchivedVotersFs) return;
+  const aid = await resolveLocalCouncilArchiveId(api);
+  if (!aid) return;
+  try {
+    const rows = await api.getArchivedVotersFs(aid);
+    lceArchiveVotersCache = Array.isArray(rows) ? rows : null;
+  } catch (_) {
+    lceArchiveVotersCache = null;
+  }
+}
+
+/**
+ * Load voters for the header election scope: Presidential/Parliamentary = live Firestore (server read);
+ * Local Council = same live read plus rows from the LCE2026 campaign archive in Firebase when missing from live.
+ */
+export async function refreshVotersForElectionScope(electionType) {
+  setHeaderElectionScope(electionType);
+  try {
+    const api = await firebaseInitPromise;
+    if (!api?.ready || !api.getAllVotersFs) {
+      refreshVotersFromStorage();
+      return;
+    }
+    await hydrateLceArchiveCache(api);
+    const items = await api.getAllVotersFs({ fromServer: true });
+    if (!Array.isArray(items)) {
+      refreshVotersFromStorage();
+      return;
+    }
+    const mergedItems = applyLceArchiveMergeToItems(items);
+    currentVoters = mergeVotersFromSnapshot(currentVoters, mergedItems).map(normalizeVoterCandidateFields);
+    saveVotersToStorage();
+    mergeVotedAtFromVoters(mergedItems);
+    renderVotersTable();
+    const selected = selectedVoterId ? findVoterById(selectedVoterId) || null : null;
+    renderVoterDetails(selected);
+    document.dispatchEvent(new CustomEvent("voters-updated"));
+  } catch (err) {
+    console.error("[Voters] refreshVotersForElectionScope", err);
+    refreshVotersFromStorage();
+  }
 }
 
 /** Stable key for matching voter rows (trim + internal spaces collapsed). */
@@ -794,6 +973,10 @@ const voterSortEl = document.getElementById("voterSort");
 const voterFilterPledgeEl = document.getElementById("voterFilterPledge");
 const voterFilterAgentEl = document.getElementById("voterFilterAgent");
 const voterGroupByEl = document.getElementById("voterGroupBy");
+const voterPageViewTypeEl = document.getElementById("voterPageViewType");
+const votersTableWrapper = document.getElementById("votersTableWrapper");
+const votersListAltEl = document.getElementById("votersListAlt");
+const votersListDisplayEl = document.getElementById("votersListDisplay");
 const voterDetailsSubtitle = document.getElementById("voterDetailsSubtitle");
 const voterDetailsContent = document.getElementById("voterDetailsContent");
 const voterNotesTextarea = document.getElementById("voterNotes");
@@ -841,6 +1024,26 @@ export function getEffectiveVotedAtForVoter(voter) {
   const doc = voter.votedAt || voter.votedTimeMarked;
   const fromMarks = getVotedTimeMarked(voter.id);
   return String(doc || fromMarks || "").trim();
+}
+
+/** Icon-only row actions (aligned with monitor / vote-marking icon patterns). */
+const VOTERS_ICON_EDIT_SVG = `<svg class="voters-row-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
+const VOTERS_ICON_DELETE_SVG = `<svg class="voters-row-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+const VOTERS_ICON_UNMARK_SVG = `<svg class="voters-row-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>`;
+
+function votersRowActionsMarkup(voter, ctx) {
+  if (ctx) return '<span class="text-muted">—</span>';
+  const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
+  const id = escapeHtml(String(voter.id));
+  return `<div class="voters-row-actions" role="group" aria-label="Voter actions">
+    <button type="button" class="voters-row-icon-btn" data-voter-edit="${id}" title="Edit" aria-label="Edit voter">${VOTERS_ICON_EDIT_SVG}</button>
+    <button type="button" class="voters-row-icon-btn voters-row-icon-btn--danger" data-voter-delete="${id}" title="Delete" aria-label="Delete voter">${VOTERS_ICON_DELETE_SVG}</button>
+    ${
+      timeMarked
+        ? `<button type="button" class="voters-row-icon-btn" data-voter-unmark="${id}" title="Mark not voted" aria-label="Mark not voted">${VOTERS_ICON_UNMARK_SVG}</button>`
+        : ""
+    }
+  </div>`;
 }
 
 function supportBadgeClass(status) {
@@ -983,6 +1186,155 @@ export function getCurrentFilteredVoterIds() {
   return displayList.filter((x) => x.type === "row").map((x) => x.voter.id);
 }
 
+function votersPagePhotoCellHtml(voter) {
+  const initials = (voter.fullName || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("") || "?";
+  const photoSrc = getVoterImageSrc(voter);
+  return photoSrc
+    ? `<div class="avatar-cell voters-page-avatar"><img class="avatar-img" src="${escapeHtml(
+        photoSrc
+      )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${initials}</div></div>`
+    : `<div class="avatar-cell voters-page-avatar"><div class="avatar-circle">${initials}</div></div>`;
+}
+
+function votersPageVotedCellHtml(voter) {
+  const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
+  if (!timeMarked) return '<span class="text-muted">—</span>';
+  const d = new Date(timeMarked);
+  const formatted = d.toLocaleString("en-MV", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `<span class="pledge-pill pledge-pill--pledged" title="${escapeHtml(formatted)}">Voted</span>`;
+}
+
+function renderVotersPageAltView(pageDisplayList, viewType, ctx, agentMapForRows, emptyMsg) {
+  if (!votersListAltEl) return;
+  votersListAltEl.innerHTML = "";
+  const dataRows = pageDisplayList.filter((x) => x.type === "row");
+  if (dataRows.length === 0) {
+    const p = document.createElement("p");
+    p.className = "text-muted voters-list-alt__empty";
+    p.style.cssText = "text-align:center;padding:24px;";
+    p.textContent = emptyMsg;
+    votersListAltEl.appendChild(p);
+    return;
+  }
+
+  const attachRowClick = (el, voterId) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("[data-voter-edit], [data-voter-delete], [data-voter-unmark]")) return;
+      selectVoter(voterId);
+    });
+  };
+
+  if (viewType === "list") {
+    const root = document.createElement("div");
+    root.className = "voters-page-list";
+    for (const item of pageDisplayList) {
+      if (item.type === "group") {
+        const gh = document.createElement("div");
+        gh.className = "voters-page-group-header";
+        gh.textContent = String(item.label);
+        root.appendChild(gh);
+        continue;
+      }
+      const voter = item.voter;
+      const effPledge = getEffectivePledgeStatus(voter);
+      const pledgeDisplay = pledgeStatusLabel(effPledge);
+      const assignedAgentName = ctx
+        ? getCandidateScopedAssignedAgentNameWithMap(voter, ctx.candidateId, agentMapForRows)
+        : "";
+      const row = document.createElement("div");
+      row.className =
+        "voters-page-list-row" + (sameVoterId(voter.id, selectedVoterId) ? " is-selected" : "");
+      row.dataset.voterRowId = String(voter.id);
+      row.innerHTML = `
+        <div class="voters-page-list-row__lead">
+          <span class="voters-page-list-row__seq">${escapeHtml(sequenceAsImportedFromCsv(voter) || "")}</span>
+          ${votersPagePhotoCellHtml(voter)}
+          <div class="voters-page-list-row__text">
+            <div class="voters-page-list-row__name">${escapeHtml(voter.fullName || "")}</div>
+            <div class="voters-page-list-row__meta">${escapeHtml(
+              [voter.nationalId || voter.id || "", voter.permanentAddress || ""].filter(Boolean).join(" · ")
+            )}</div>
+            ${
+              ctx
+                ? `<div class="voters-page-list-row__agent"><span class="text-muted">Agent:</span> ${escapeHtml(
+                    assignedAgentName || "—"
+                  )}</div>`
+                : ""
+            }
+          </div>
+        </div>
+        <div class="voters-page-list-row__mid">
+          <span class="${pledgePillClass(effPledge)}">${escapeHtml(pledgeDisplay)}</span>
+          <div class="voters-page-list-row__voted">${votersPageVotedCellHtml(voter)}</div>
+        </div>
+        <div class="voters-page-list-row__tail">${votersRowActionsMarkup(voter, ctx)}</div>
+      `;
+      attachRowClick(row, voter.id);
+      root.appendChild(row);
+    }
+    votersListAltEl.appendChild(root);
+    return;
+  }
+
+  const grid = document.createElement("div");
+  grid.className = "voters-page-cards-grid";
+  for (const item of pageDisplayList) {
+    if (item.type === "group") {
+      const gt = document.createElement("div");
+      gt.className = "voters-page-cards-group-title";
+      gt.textContent = String(item.label);
+      grid.appendChild(gt);
+      continue;
+    }
+    const voter = item.voter;
+    const effPledge = getEffectivePledgeStatus(voter);
+    const pledgeDisplay = pledgeStatusLabel(effPledge);
+    const assignedAgentName = ctx
+      ? getCandidateScopedAssignedAgentNameWithMap(voter, ctx.candidateId, agentMapForRows)
+      : "";
+    const card = document.createElement("article");
+    card.className =
+      "voters-page-card" + (sameVoterId(voter.id, selectedVoterId) ? " is-selected" : "");
+    card.dataset.voterRowId = String(voter.id);
+    card.innerHTML = `
+      <div class="voters-page-card__top">
+        ${votersPagePhotoCellHtml(voter)}
+        <div class="voters-page-card__head">
+          <span class="voters-page-card__seq">#${escapeHtml(sequenceAsImportedFromCsv(voter) || "")}</span>
+          <h4 class="voters-page-card__name">${escapeHtml(voter.fullName || "")}</h4>
+        </div>
+      </div>
+      <dl class="voters-page-card__dl">
+        <dt>ID</dt><dd>${escapeHtml(String(voter.nationalId || voter.id || "—"))}</dd>
+        <dt>Address</dt><dd>${escapeHtml(String(voter.permanentAddress || "—"))}</dd>
+        ${
+          ctx
+            ? `<dt>Agent</dt><dd>${escapeHtml(assignedAgentName || "—")}</dd>`
+            : ""
+        }
+      </dl>
+      <div class="voters-page-card__pledge"><span class="${pledgePillClass(
+        effPledge
+      )}">${escapeHtml(pledgeDisplay)}</span></div>
+      <div class="voters-page-card__voted">${votersPageVotedCellHtml(voter)}</div>
+      <footer class="voters-page-card__footer">${votersRowActionsMarkup(voter, ctx)}</footer>
+    `;
+    attachRowClick(card, voter.id);
+    grid.appendChild(card);
+  }
+  votersListAltEl.appendChild(grid);
+}
+
 function renderVotersTable() {
   if (!votersTableBody) return;
   const ctx = getCandidateContext();
@@ -1022,17 +1374,24 @@ function renderVotersTable() {
     pageDisplayList.push(rowItem);
   }
 
+  const emptyMsg = ctx
+    ? "No voters in the system yet. Staff can import voters in Settings → Data."
+    : "No voters. Add a voter or import from Settings → Data.";
+  const viewTypeRaw = (voterPageViewTypeEl && voterPageViewTypeEl.value) || getVotersPageViewPref();
+  const viewType = VOTERS_PAGE_VIEWS.includes(viewTypeRaw) ? viewTypeRaw : "table";
+  const useTable = viewType === "table";
+  if (votersTableWrapper) votersTableWrapper.hidden = !useTable;
+  if (votersListAltEl) votersListAltEl.hidden = useTable;
+
   votersTableBody.innerHTML = "";
 
-  if (total === 0) {
+  if (!useTable) {
+    renderVotersPageAltView(pageDisplayList, viewType, ctx, agentMapForRows, emptyMsg);
+  } else if (total === 0) {
     const tr = document.createElement("tr");
-    const emptyMsg = ctx
-      ? "No voters in the system yet. Staff can import voters in Settings → Data."
-      : "No voters. Add a voter or import from Settings → Data.";
     tr.innerHTML = `<td colspan="${getVotersTableColumnCount()}" class="text-muted" style="text-align:center;padding:24px;">${emptyMsg}</td>`;
     votersTableBody.appendChild(tr);
-  }
-
+  } else {
   for (const item of pageDisplayList) {
     if (item.type === "group") {
       const tr = document.createElement("tr");
@@ -1093,24 +1452,8 @@ function renderVotersTable() {
       )}">${pledgeDisplay}</span></td>
       ${assignedAgentCell}
       <td class="voted-status-cell">${votedCell}</td>
-      <td style="text-align:right;">
-        ${
-          getCandidateContext()
-            ? '<span class="text-muted">—</span>'
-            : `<button type="button" class="ghost-button ghost-button--small" data-voter-edit="${escapeHtml(
-                voter.id
-              )}" title="Edit">Edit</button>
-        <button type="button" class="ghost-button ghost-button--small" data-voter-delete="${escapeHtml(
-          voter.id
-        )}" title="Delete">Delete</button>
-        ${
-          timeMarked
-            ? `<button type="button" class="ghost-button ghost-button--small" data-voter-unmark="${escapeHtml(
-                voter.id
-              )}" title="Mark not voted">Not voted</button>`
-            : ""
-        }`
-        }
+      <td class="voters-table-actions-cell" style="text-align:right;">
+        ${votersRowActionsMarkup(voter, ctx)}
       </td>
     `;
     tr.addEventListener("click", (e) => {
@@ -1118,6 +1461,7 @@ function renderVotersTable() {
       selectVoter(voter.id);
     });
     votersTableBody.appendChild(tr);
+  }
   }
 
   if (votersPaginationEl) {
@@ -1140,7 +1484,7 @@ function renderVotersTable() {
     });
   }
 
-  updateVoterSortIndicators();
+  if (useTable) updateVoterSortIndicators();
   applyCandidateVotersUi();
   if (clearedSelectionForCandidate) {
     renderVoterDetails(null);
@@ -1735,7 +2079,7 @@ function renderVoterDetails(voter) {
     }
 
     // Admin: same assignments as Reports → pledged voters, plus all-campaign global agent.
-    const candidatesList = getCandidatesListFromStorage();
+    const candidatesList = filterCandidatesListForActiveElectionView(getCandidatesListFromStorage());
 
     let scopeSession = "";
     try {
@@ -2555,6 +2899,13 @@ function bindVoterToolbar() {
   if (voterFilterPledgeEl) voterFilterPledgeEl.addEventListener("change", go);
   if (voterFilterAgentEl) voterFilterAgentEl.addEventListener("change", go);
   if (voterGroupByEl) voterGroupByEl.addEventListener("change", go);
+  if (voterPageViewTypeEl) {
+    voterPageViewTypeEl.value = getVotersPageViewPref();
+    voterPageViewTypeEl.addEventListener("change", () => {
+      setVotersPageViewPref(voterPageViewTypeEl.value);
+      renderVotersTable();
+    });
+  }
 }
 bindVoterToolbar();
 
@@ -3191,9 +3542,9 @@ export async function initVotersModule(getCurrentUser, options = {}) {
     document.addEventListener("voters-updated", refreshMyLists);
   }
 
-  const votersTable = document.getElementById("votersTable");
-  if (votersTable) {
-    votersTable.addEventListener("click", (e) => {
+  const votersClickRoot = votersListDisplayEl || document.getElementById("votersTable");
+  if (votersClickRoot) {
+    votersClickRoot.addEventListener("click", (e) => {
       const editBtn = e.target.closest("[data-voter-edit]");
       const deleteBtn = e.target.closest("[data-voter-delete]");
       const unmarkBtn = e.target.closest("[data-voter-unmark]");
@@ -3242,11 +3593,17 @@ export async function initVotersModule(getCurrentUser, options = {}) {
     const api = await firebaseInitPromise;
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
       loadVotersFromStorage();
+      try {
+        const sel = document.getElementById("electionType");
+        if (sel && sel.value) setHeaderElectionScope(sel.value);
+        await hydrateLceArchiveCache(api);
+      } catch (_) {}
       const initial = await api.getAllVotersFs();
       if (Array.isArray(initial)) {
-        currentVoters = mergeVotersFromSnapshot(currentVoters, initial).map(normalizeVoterCandidateFields);
+        const initialMerged = applyLceArchiveMergeToItems(initial);
+        currentVoters = mergeVotersFromSnapshot(currentVoters, initialMerged).map(normalizeVoterCandidateFields);
         saveVotersToStorage();
-        mergeVotedAtFromVoters(initial);
+        mergeVotedAtFromVoters(initialMerged);
       } else {
         loadVotersFromStorage();
       }
@@ -3257,8 +3614,9 @@ export async function initVotersModule(getCurrentUser, options = {}) {
       unsubscribeVotersFs = api.onVotersSnapshotFs((items) => {
         if (votersBulkImportInProgress) return;
         if (Array.isArray(items)) {
-          currentVoters = mergeVotersFromSnapshot(currentVoters, items).map(normalizeVoterCandidateFields);
-          mergeVotedAtFromVoters(items);
+          const mergedSnap = applyLceArchiveMergeToItems(items);
+          currentVoters = mergeVotersFromSnapshot(currentVoters, mergedSnap).map(normalizeVoterCandidateFields);
+          mergeVotedAtFromVoters(mergedSnap);
           renderVotersTable();
           const selected =
             selectedVoterId &&
@@ -3292,6 +3650,11 @@ export async function initVotersModule(getCurrentUser, options = {}) {
 
   registerAutoSyncLocalVotersWhenOnline();
 
+  document.addEventListener("effective-election-view-changed", () => {
+    const sel = selectedVoterId ? findVoterById(selectedVoterId) : null;
+    renderVoterDetails(sel);
+  });
+
   return {
     getAllVoters: () => [...currentVoters],
   };
@@ -3312,21 +3675,23 @@ export function refreshVotersFromStorage() {
 }
 
 /** Pull latest voter list from Firestore, persist, merge voted times, re-render (header hard refresh). */
-export async function refreshVotersFromFirestore() {
+export async function refreshVotersFromFirestore(opts = {}) {
+  const fromServer = opts && opts.fromServer === true;
   try {
     const api = await firebaseInitPromise;
     if (!api.ready || !api.getAllVotersFs) {
       refreshVotersFromStorage();
       return;
     }
-    const items = await api.getAllVotersFs();
+    const items = await api.getAllVotersFs(fromServer ? { fromServer: true } : {});
     if (!Array.isArray(items)) {
       refreshVotersFromStorage();
       return;
     }
-    currentVoters = mergeVotersFromSnapshot(currentVoters, items).map(normalizeVoterCandidateFields);
+    const mergedItems = applyLceArchiveMergeToItems(items);
+    currentVoters = mergeVotersFromSnapshot(currentVoters, mergedItems).map(normalizeVoterCandidateFields);
     saveVotersToStorage();
-    mergeVotedAtFromVoters(items);
+    mergeVotedAtFromVoters(mergedItems);
     renderVotersTable();
     const selected = selectedVoterId
       ? findVoterById(selectedVoterId) || null

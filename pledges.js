@@ -1,5 +1,5 @@
 import * as votersApi from "./voters.js";
-import { getCandidates, openAddAgentModal } from "./settings.js";
+import { getCandidatesForActiveElectionView, openAddAgentModal } from "./settings.js";
 import { getAgentsFromStorage } from "./agents-context.js";
 import { initPledgesTableViewInColumnMenu } from "./table-view-menu.js";
 import {
@@ -520,7 +520,7 @@ function csvEscape(val) {
 function exportPledgesCSV() {
   const displayList = getFilteredSortedGroupedPledges();
   const dataRows = displayList.filter((x) => x.type === "row").map((x) => x.row);
-  const candidates = getCandidates();
+  const candidates = getCandidatesForActiveElectionView();
   const baseHeaders = [
     "Seq",
     "Image",
@@ -599,7 +599,7 @@ function renderPledgesDetailsPanel(row) {
   const cp = row.candidatePledges || {};
   const candAgentMap = row.candidateAgentAssignments || {};
   const candAgentIdMap = row.candidateAgentAssignmentIds || {};
-  const allCandidates = getCandidates() || [];
+  const allCandidates = getCandidatesForActiveElectionView() || [];
   const allAgents = getAgentsFromStorage();
   const agentsByCandidateId = new Map();
   for (const a of allAgents) {
@@ -835,17 +835,20 @@ export function initPledgesModule(votersContext) {
     }
   });
 
-  document.addEventListener("voters-updated", () => {
+  const refreshPledgesAfterElectionViewChange = () => {
     ensureSeedData(votersContext);
     renderPledgesTable();
-
     if (selectedPledgeVoterId != null) {
       const row = pledgeRows.find((r) => String(r.voterId) === String(selectedPledgeVoterId));
       renderPledgesDetailsPanel(row || null);
     } else {
       renderPledgesDetailsPanel(null);
     }
-  });
+  };
+
+  document.addEventListener("voters-updated", refreshPledgesAfterElectionViewChange);
+
+  document.addEventListener("effective-election-view-changed", refreshPledgesAfterElectionViewChange);
 
   pledgesTableBody?.addEventListener("click", (e) => {
     const tr = e.target.closest("tr");

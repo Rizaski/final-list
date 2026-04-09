@@ -9,6 +9,7 @@ import {
   AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY,
   importCandidatePledgeAgentFromCsvRows,
   getEffectiveVotedAtForVoter,
+  getHeaderElectionScope,
 } from "./voters.js";
 import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
 import { firebaseInitPromise } from "./firebase.js";
@@ -239,6 +240,50 @@ function applyCampaignToSidebar() {
 
 export function getCampaignConfig() {
   return { ...campaignConfig };
+}
+
+/** Maps top bar `#electionType` value → canonical campaign type string (candidate `electionType`, positions, etc.). */
+const HEADER_SCOPE_TO_CAMPAIGN_TYPE = {
+  local: "Local Council Election",
+  parliamentary: "Parliamentary Election",
+  presidential: "Presidential Election",
+};
+
+/**
+ * Campaign config as the user is currently viewing it: `campaignType` follows the header election
+ * dropdown so merged Local Council voter data is paired with Local Council candidates/pledges even when
+ * Settings / Firestore still store Presidential (e.g. after archive delete + merged list).
+ * Use `getCampaignConfig()` only when persisting or editing saved workspace settings.
+ */
+export function getEffectiveCampaignConfig() {
+  const base = { ...campaignConfig };
+  let scope = null;
+  try {
+    const el = typeof document !== "undefined" ? document.getElementById("electionType") : null;
+    const v = el?.value;
+    if (v === "local" || v === "parliamentary" || v === "presidential") scope = v;
+  } catch (_) {}
+  if (!scope) {
+    try {
+      const s = getHeaderElectionScope();
+      if (s === "local" || s === "parliamentary" || s === "presidential") scope = s;
+    } catch (_) {}
+  }
+  if (!scope) scope = "local";
+  const ct = HEADER_SCOPE_TO_CAMPAIGN_TYPE[scope];
+  if (ct) base.campaignType = ct;
+  return base;
+}
+
+/**
+ * Candidates for the election type currently selected in the header (matches `electionType` on each candidate).
+ * If none match, returns all candidates so older data without `electionType` still works.
+ */
+export function getCandidatesForActiveElectionView() {
+  const want = getEffectiveCampaignConfig().campaignType;
+  const all = getCandidates();
+  const matched = all.filter((c) => String(c.electionType || "").trim() === want);
+  return matched.length > 0 ? matched : all;
 }
 
 /** Merge into in-memory campaign config, persist localStorage, notify listeners (e.g. Vote Marking layout). */
@@ -2480,7 +2525,7 @@ function renderAgentsTable() {
 
 function openCandidateForm(existing) {
   const isEdit = !!existing;
-  const config = getCampaignConfig();
+  const config = getEffectiveCampaignConfig();
   const defaultConstituency = (config.constituency || "").trim();
   const constituencyValue = existing?.constituency || defaultConstituency;
 
@@ -3614,7 +3659,7 @@ function initCampaignArchiveUI() {
       </p>
       <div class="form-group" style="grid-column: 1 / -1;">
         <label for="campaignArchiveLabelInput">Archive label (optional)</label>
-        <input type="text" id="campaignArchiveLabelInput" class="input" placeholder="e.g. 2024 General — North" maxlength="120">
+        <input type="text" id="campaignArchiveLabelInput" class="input" value="LCE2026" placeholder="LCE2026 (Local Council backup for header scope)" maxlength="120">
       </div>
       <div class="form-group" style="grid-column: 1 / -1;">
         <label for="campaignArchiveConfirmInput">Type ARCHIVE to confirm</label>
@@ -3909,7 +3954,11 @@ function initCampaignTab() {
       syncCampaignConfigToFirestore();
       saveCampaignConfig();
       applyCampaignToSidebar();
-      document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: campaignConfig }));
+      document.dispatchEvent(
+        new CustomEvent("campaign-config-changed", {
+          detail: { ...campaignConfig, alignHeaderElectionType: true },
+        })
+      );
       if (window.appNotifications) {
         window.appNotifications.push({
           title: "Campaign settings updated",

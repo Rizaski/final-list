@@ -1,7 +1,7 @@
 import { getPledgeByBallotBox, getVoterImageSrc } from "./voters.js";
 import { getVotedVoterIds, getVotedTimeMarked } from "./zeroDay.js";
 import { openModal, closeModal } from "./ui.js";
-import { getCandidates } from "./settings.js";
+import { getCandidatesForActiveElectionView } from "./settings.js";
 import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
 import { sequenceAsImportedFromCsv } from "./sequence-utils.js";
 
@@ -104,7 +104,7 @@ function renderWinOMeter(container, voters) {
           <div class="win-o-meter__metric">
             <span class="win-o-meter__metric-label">Pledge yes</span>
             <span class="win-o-meter__metric-value">${(w.pledgeRate * 100).toFixed(1)}%</span>
-            <span class="win-o-meter__metric-meta">${w.yesPledge.toLocaleString("en-MV")} / ${w.total.toLocaleString("en-MV")}</span>
+            <span class="win-o-meter__metric-meta">${w.yesPledge.toLocaleString("en-US")} / ${w.total.toLocaleString("en-US")}</span>
           </div>
           <div class="win-o-meter__metric">
             <span class="win-o-meter__metric-label">Support blend</span>
@@ -114,7 +114,7 @@ function renderWinOMeter(container, voters) {
           <div class="win-o-meter__metric">
             <span class="win-o-meter__metric-label">Marked voted</span>
             <span class="win-o-meter__metric-value">${(w.turnoutRate * 100).toFixed(1)}%</span>
-            <span class="win-o-meter__metric-meta">${w.votedCount.toLocaleString("en-MV")} / ${w.total.toLocaleString("en-MV")}</span>
+            <span class="win-o-meter__metric-meta">${w.votedCount.toLocaleString("en-US")} / ${w.total.toLocaleString("en-US")}</span>
           </div>
         </div>
       </div>
@@ -130,17 +130,85 @@ function renderBarSet(container, items) {
     return;
   }
   items.forEach((item) => {
+    const fillMod = item.fillClass && String(item.fillClass).trim() ? String(item.fillClass).trim() : "chart-bar__fill--primary";
     const row = document.createElement("div");
     row.className = "chart-bar";
     row.innerHTML = `
       <div class="chart-bar__label">${escapeHtml(item.label)}</div>
       <div class="chart-bar__track">
-        <div class="chart-bar__fill chart-bar__fill--primary" style="width:${item.value}%"></div>
+        <div class="chart-bar__fill ${fillMod}" style="width:${item.value}%"></div>
       </div>
       <div class="chart-bar__value">${item.value.toFixed(1)}%</div>
     `;
     container.appendChild(row);
   });
+}
+
+const PERSUADABLE_REPORT_KEYS = [
+  { key: "unknown", label: "Unknown" },
+  { key: "yes", label: "Yes" },
+  { key: "no", label: "No" },
+  { key: "50%", label: "50%" },
+];
+
+function normalizePersuadableReportKey(v) {
+  const raw = String(v?.persuadable ?? "unknown").trim().toLowerCase();
+  if (raw === "yes") return "yes";
+  if (raw === "no") return "no";
+  if (raw === "50%" || raw === "50") return "50%";
+  return "unknown";
+}
+
+function persuadableBarFillClass(key) {
+  if (key === "yes") return "chart-bar__fill--pledge-yes";
+  if (key === "no") return "chart-bar__fill--pledge-no";
+  if (key === "50%") return "chart-bar__fill--persuadable-50";
+  return "chart-bar__fill--pledge-undecided";
+}
+
+/** Radial donut: share of voters with door-to-door Met = yes. */
+function renderMetCountDonut(container, voters) {
+  if (!container) return;
+  const n = voters.length;
+  if (n === 0) {
+    container.innerHTML = '<div class="helper-text">Import voters to see met counts.</div>';
+    return;
+  }
+  const met = voters.filter((v) => String(v.metStatus || "").trim() === "met").length;
+  const notMet = Math.max(0, n - met);
+  const metPct = (met / n) * 100;
+  const metDeg = (met / n) * 360;
+  const aria = `${met} of ${n} voters marked met (${metPct.toFixed(1)} percent)`;
+  container.innerHTML = `
+    <div class="met-donut">
+      <div class="met-donut__ring" role="img" aria-label="${escapeHtml(aria)}">
+        <div class="met-donut__inner">
+          <span class="met-donut__value">${met.toLocaleString("en-US")}</span>
+          <span class="met-donut__suffix">/ ${n.toLocaleString("en-US")}</span>
+          <span class="met-donut__caption">Met</span>
+          <span class="met-donut__pct">${metPct.toFixed(1)}%</span>
+        </div>
+      </div>
+      <ul class="met-donut__legend" aria-hidden="true">
+        <li class="met-donut__legend-item">
+          <span class="met-donut__swatch met-donut__swatch--met"></span>
+          Met — ${met.toLocaleString("en-US")}
+        </li>
+        <li class="met-donut__legend-item">
+          <span class="met-donut__swatch met-donut__swatch--not"></span>
+          Not met — ${notMet.toLocaleString("en-US")}
+        </li>
+      </ul>
+    </div>
+  `;
+  const ring = container.querySelector(".met-donut__ring");
+  if (ring) {
+    ring.style.background = `conic-gradient(
+      from -90deg,
+      var(--color-primary, #0d9488) 0deg ${metDeg}deg,
+      #e5e7eb ${metDeg}deg 360deg
+    )`;
+  }
 }
 
 function renderPledgePie(container, { yesPct, noPct, undecidedPct, yesCount = 0, noCount = 0, undecidedCount = 0 }) {
@@ -162,15 +230,15 @@ function renderPledgePie(container, { yesPct, noPct, undecidedPct, yesCount = 0,
       <div class="pie-chart__legend">
         <div class="pie-chart__legend-item">
           <span class="pie-chart__legend-color" style="background: var(--color-pledged);"></span>
-          Yes – ${yesCount.toLocaleString("en-MV")} (${yesPct.toFixed(1)}%)
+          Yes – ${yesCount.toLocaleString("en-US")} (${yesPct.toFixed(1)}%)
         </div>
         <div class="pie-chart__legend-item">
           <span class="pie-chart__legend-color" style="background: var(--color-not-pledged);"></span>
-          No – ${noCount.toLocaleString("en-MV")} (${noPct.toFixed(1)}%)
+          No – ${noCount.toLocaleString("en-US")} (${noPct.toFixed(1)}%)
         </div>
         <div class="pie-chart__legend-item">
           <span class="pie-chart__legend-color" style="background: var(--color-undecided);"></span>
-          Undecided – ${undecidedCount.toLocaleString("en-MV")} (${undecidedPct.toFixed(1)}%)
+          Undecided – ${undecidedCount.toLocaleString("en-US")} (${undecidedPct.toFixed(1)}%)
         </div>
       </div>
     </div>
@@ -212,7 +280,7 @@ function renderPledgeOverviewBars(container, { yesCount, noCount, undecidedCount
       <div class="chart-bar__track">
         <div class="chart-bar__fill ${row.fillClass}" style="width:${Math.min(100, row.pct).toFixed(1)}%"></div>
       </div>
-      <div class="chart-bar__value">${row.count.toLocaleString("en-MV")} (${row.pct.toFixed(1)}%)</div>
+      <div class="chart-bar__value">${row.count.toLocaleString("en-US")} (${row.pct.toFixed(1)}%)</div>
     `;
     container.appendChild(el);
   });
@@ -298,7 +366,7 @@ function buildVoterDetailTable(voters, options = {}) {
     const votedCell = timeMarked
       ? (() => {
           const d = new Date(timeMarked);
-          const formatted = d.toLocaleString("en-MV", {
+          const formatted = d.toLocaleString("en-US", {
             day: "2-digit",
             month: "short",
             hour: "2-digit",
@@ -341,7 +409,7 @@ function buildVoterDetailTable(voters, options = {}) {
 
 function renderCandidatePledgeSummary(container, voters, options = {}) {
   if (!container) return;
-  let allCandidates = getCandidates();
+  let allCandidates = getCandidatesForActiveElectionView();
   const restrictToCandidateId = options.restrictToCandidateId != null ? String(options.restrictToCandidateId) : null;
   if (restrictToCandidateId) {
     allCandidates = allCandidates.filter((c) => String(c.id) === restrictToCandidateId);
@@ -409,7 +477,7 @@ function renderCandidatePledgeSummary(container, voters, options = {}) {
       tr.innerHTML = `
         <td>${escapeHtml(row.name)}</td>
         <td>${escapeHtml(row.candidateNumber)}</td>
-        <td>${row.pledgedCount.toLocaleString("en-MV")}</td>
+        <td>${row.pledgedCount.toLocaleString("en-US")}</td>
         <td>${row.pledgePct.toFixed(1)}%</td>
         <td style="text-align:right;">
           <button type="button" class="ghost-button ghost-button--small" data-report-candidate-id="${escapeHtml(
@@ -430,7 +498,8 @@ function renderCandidatePledgeSummary(container, voters, options = {}) {
 
 export function initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser }) {
   const pledgeChart = document.getElementById("reportsPledgeChart");
-  const referendumChart = document.getElementById("reportsReferendumChart");
+  const persuadableBarsEl = document.getElementById("reportsPersuadableBars");
+  const metDonutEl = document.getElementById("reportsMetDonut");
   const registrationChart = document.getElementById("reportsRegistrationChart");
   const pledgeOverviewBars = document.getElementById("reportsPledgeOverviewBars");
   const boxPledgeChart = document.getElementById("reportsBoxPledgeChart");
@@ -443,7 +512,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     const isCandidate = user?.role === "candidate" && user?.candidateId;
     if (!reportsModule || !isCandidate) return;
     const candidateCard = candidateSummaryEl?.closest(".card");
-    const referendumCard = document.getElementById("reportsReferendumChart")?.closest(".card");
+    const referendumCard = document.getElementById("reportsReferendumCard")?.closest(".card");
     if (!candidateCard && !referendumCard) return;
     reportsModule.querySelectorAll(".card").forEach((card) => {
       const show =
@@ -568,7 +637,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       candidateId,
       getAllVoters: () => votersContext.getAllVoters(),
       getCurrentUser,
-      getCandidates,
+      getCandidates: () => getCandidatesForActiveElectionView(),
     });
   }
 
@@ -599,7 +668,7 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
     });
 
     // Candidate-level vote result: among pledged voters, how many have voted (per candidate)
-    const candidates = getCandidates();
+    const candidates = getCandidatesForActiveElectionView();
     const votedIds = getVotedVoterIds();
     const candidateResults = candidates
       .map((cand) => {
@@ -621,14 +690,17 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
       .sort((a, b) => b.value - a.value);
     renderBarSet(boxPledgeChart, candidateResults);
 
-    const referendumBuckets = ["yes", "no", "undecided"];
-    const referendumDistribution = referendumBuckets.map((type) => {
-      const count = voters.filter((v) => normalizeReferendumVote(v) === type).length;
+    const persuadableDistribution = PERSUADABLE_REPORT_KEYS.map(({ key, label }) => {
+      const count = voters.filter((v) => normalizePersuadableReportKey(v) === key).length;
       const pct = voters.length === 0 ? 0 : (count / voters.length) * 100;
-      const label = type === "yes" ? "Yes" : type === "no" ? "No" : "Undecided";
-      return { label, value: pct };
+      return {
+        label: `${label} (${count.toLocaleString("en-US")})`,
+        value: pct,
+        fillClass: persuadableBarFillClass(key),
+      };
     });
-    renderBarSet(referendumChart, referendumDistribution);
+    renderBarSet(persuadableBarsEl, persuadableDistribution);
+    renderMetCountDonut(metDonutEl, voters);
 
     renderWinOMeter(winOMeterEl, voters);
 
@@ -664,5 +736,6 @@ export function initReportsModule({ votersContext, pledgesContext, eventsContext
   document.addEventListener("events-updated", recomputeReports);
   document.addEventListener("candidates-updated", recomputeReports);
   document.addEventListener("voted-entries-updated", recomputeReports);
+  document.addEventListener("effective-election-view-changed", recomputeReports);
 }
 

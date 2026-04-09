@@ -21,7 +21,13 @@ const doorToDoorSearchEl = document.getElementById("doorToDoorSearch");
 const doorToDoorSortEl = document.getElementById("doorToDoorSort");
 const doorToDoorFilterStatusEl = document.getElementById("doorToDoorFilterStatus");
 const doorToDoorFilterBoxEl = document.getElementById("doorToDoorFilterBox");
+const doorToDoorFilterAddressEl = document.getElementById("doorToDoorFilterAddress");
+const doorToDoorFilterAddressSearchEl = document.getElementById("doorToDoorFilterAddressSearch");
+const doorToDoorFilterAddressMenuEl = document.getElementById("doorToDoorFilterAddressMenu");
 const doorToDoorGroupByEl = document.getElementById("doorToDoorGroupBy");
+
+/** Sentinel value for voters with no permanent address (must not appear in real data). */
+const DOOR_FILTER_EMPTY_ADDRESS = "__DOOR_EMPTY_ADDRESS__";
 
 let votersContext = null;
 let doorToDoorCurrentPage = 1;
@@ -58,6 +64,7 @@ function getFilteredVoters() {
   const query = (doorToDoorSearchEl?.value || "").toLowerCase().trim();
   const filterStatus = doorToDoorFilterStatusEl?.value || "all";
   const filterBox = doorToDoorFilterBoxEl?.value || "all";
+  const filterAddress = doorToDoorFilterAddressEl?.value || "all";
   const sortBy = doorToDoorSortEl?.value || "sequence";
 
   let list = voters
@@ -65,6 +72,14 @@ function getFilteredVoters() {
     .filter(({ row }) => {
       if (filterStatus !== "all" && (row.pledgeStatus || "undecided") !== filterStatus) return false;
       if (filterBox !== "all" && (row.ballotBox || "").trim() !== filterBox) return false;
+      if (filterAddress !== "all") {
+        const addr = (row.permanentAddress || "").trim();
+        if (filterAddress === DOOR_FILTER_EMPTY_ADDRESS) {
+          if (addr) return false;
+        } else if (addr !== filterAddress) {
+          return false;
+        }
+      }
       if (query) {
         const searchable = [
           row.sequence,
@@ -133,6 +148,163 @@ function syncBallotBoxFilter() {
   doorToDoorFilterBoxEl.innerHTML =
     '<option value="all">All</option>' +
     boxes.map((b) => `<option value="${escapeHtml(b)}"${b === current ? " selected" : ""}>${escapeHtml(b)}</option>`).join("");
+}
+
+function distinctPermanentAddressesForDoor(voters) {
+  const nonEmpty = new Set();
+  let hasEmpty = false;
+  voters.forEach((v) => {
+    const a = (v.permanentAddress || "").trim();
+    if (a) nonEmpty.add(a);
+    else hasEmpty = true;
+  });
+  return {
+    values: [...nonEmpty].sort((a, b) => a.localeCompare(b, "en")),
+    hasEmpty,
+  };
+}
+
+function addressSelectHasValue(sel, val) {
+  if (val === "all") return true;
+  return [...sel.options].some((o) => o.value === val);
+}
+
+function syncAddressFilter() {
+  if (!doorToDoorFilterAddressEl) return;
+  const voters = votersContext ? votersContext.getAllVoters() : [];
+  const { values, hasEmpty } = distinctPermanentAddressesForDoor(voters);
+  const prev = doorToDoorFilterAddressEl.value;
+  let html = '<option value="all">All addresses</option>';
+  if (hasEmpty) {
+    html += `<option value="${DOOR_FILTER_EMPTY_ADDRESS}">(No address)</option>`;
+  }
+  html += values.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
+  doorToDoorFilterAddressEl.innerHTML = html;
+  doorToDoorFilterAddressEl.value = addressSelectHasValue(doorToDoorFilterAddressEl, prev) ? prev : "all";
+  syncDoorAddressComboboxInputFromSelect();
+}
+
+function labelForAddressFilterSelectValue(value) {
+  if (!doorToDoorFilterAddressEl) return "";
+  const opt = [...doorToDoorFilterAddressEl.options].find((o) => o.value === value);
+  return opt ? String(opt.textContent || "").trim() : "";
+}
+
+function syncDoorAddressComboboxInputFromSelect() {
+  if (!doorToDoorFilterAddressSearchEl || !doorToDoorFilterAddressEl) return;
+  const v = doorToDoorFilterAddressEl.value || "all";
+  doorToDoorFilterAddressSearchEl.value = labelForAddressFilterSelectValue(v) || "All addresses";
+}
+
+function hideDoorAddressFilterMenu() {
+  if (doorToDoorFilterAddressMenuEl) doorToDoorFilterAddressMenuEl.style.display = "none";
+}
+
+const DOOR_ADDRESS_MENU_MAX = 80;
+
+function renderDoorAddressFilterMenu() {
+  if (!doorToDoorFilterAddressMenuEl || !doorToDoorFilterAddressEl) return;
+  let q = String(doorToDoorFilterAddressSearchEl?.value || "").trim().toLowerCase();
+  const selVal = doorToDoorFilterAddressEl.value || "all";
+  const currentLabel = labelForAddressFilterSelectValue(selVal).toLowerCase();
+  if (q === currentLabel) q = "";
+  const opts = [...doorToDoorFilterAddressEl.options].map((o) => ({
+    value: o.value,
+    label: String(o.textContent || "").trim(),
+  }));
+  const filtered = opts.filter(
+    (o) =>
+      !q ||
+      o.label.toLowerCase().includes(q) ||
+      String(o.value || "")
+        .toLowerCase()
+        .includes(q)
+  );
+  const list = filtered.slice(0, DOOR_ADDRESS_MENU_MAX);
+  if (!list.length) {
+    doorToDoorFilterAddressMenuEl.innerHTML =
+      '<div class="voter-agent-dropdown__empty">No matching addresses.</div>';
+    doorToDoorFilterAddressMenuEl.style.display = "block";
+    return;
+  }
+  doorToDoorFilterAddressMenuEl.innerHTML = list
+    .map(
+      (o) =>
+        `<button type="button" class="voter-agent-dropdown__item voter-transport-route-item door-to-door-address-menu__item" role="option" data-value="${escapeHtml(
+          o.value
+        )}"><span class="voter-agent-dropdown__main">${escapeHtml(o.label)}</span></button>`
+    )
+    .join("");
+  if (filtered.length > DOOR_ADDRESS_MENU_MAX) {
+    doorToDoorFilterAddressMenuEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="voter-agent-dropdown__empty" style="border-top:1px solid var(--color-border-subtle)">Showing first ${DOOR_ADDRESS_MENU_MAX} matches. Type to narrow.</div>`
+    );
+  }
+  doorToDoorFilterAddressMenuEl.style.display = "block";
+}
+
+function applyDoorAddressFilterFromCombobox(value) {
+  if (!doorToDoorFilterAddressEl) return;
+  if (!addressSelectHasValue(doorToDoorFilterAddressEl, value)) return;
+  doorToDoorFilterAddressEl.value = value;
+  syncDoorAddressComboboxInputFromSelect();
+  hideDoorAddressFilterMenu();
+  doorToDoorFilterAddressEl.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function bindDoorAddressSearchableCombobox() {
+  const root = doorToDoorFilterAddressEl?.closest(".door-to-door-address-combobox");
+  const input = doorToDoorFilterAddressSearchEl;
+  const menu = doorToDoorFilterAddressMenuEl;
+  if (!root || !input || !menu || !doorToDoorFilterAddressEl) return;
+
+  const preventMenuPointerDefault = (e) => {
+    if (e.target.closest(".voter-agent-dropdown__item")) e.preventDefault();
+  };
+
+  let renderTimer = null;
+  const scheduleRenderMenu = () => {
+    if (renderTimer != null) window.clearTimeout(renderTimer);
+    renderTimer = window.setTimeout(() => {
+      renderTimer = null;
+      renderDoorAddressFilterMenu();
+    }, 32);
+  };
+
+  input.addEventListener("focus", () => {
+    renderDoorAddressFilterMenu();
+  });
+  input.addEventListener("input", scheduleRenderMenu);
+
+  menu.addEventListener("mousedown", preventMenuPointerDefault);
+  menu.addEventListener("pointerdown", preventMenuPointerDefault);
+
+  menu.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-value]");
+    if (!btn) return;
+    applyDoorAddressFilterFromCombobox(String(btn.getAttribute("data-value") || "all"));
+  });
+
+  root.addEventListener("focusout", (e) => {
+    const rt = e.relatedTarget;
+    if (rt && root.contains(rt)) return;
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (root && !root.contains(active)) {
+        hideDoorAddressFilterMenu();
+        syncDoorAddressComboboxInputFromSelect();
+      }
+    }, 0);
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      hideDoorAddressFilterMenu();
+      syncDoorAddressComboboxInputFromSelect();
+      input.blur();
+    }
+  });
 }
 
 function renderDoorToDoorTable() {
@@ -390,6 +562,8 @@ function bindDoorToDoorTableHeaderSort() {
 export function initDoorToDoorModule(votersContextParam) {
   votersContext = votersContextParam || null;
   syncBallotBoxFilter();
+  syncAddressFilter();
+  bindDoorAddressSearchableCombobox();
   bindDoorToDoorTableHeaderSort();
   renderDoorToDoorTable();
 
@@ -405,6 +579,10 @@ export function initDoorToDoorModule(votersContextParam) {
     doorToDoorCurrentPage = 1;
     renderDoorToDoorTable();
   });
+  doorToDoorFilterAddressEl?.addEventListener("change", () => {
+    doorToDoorCurrentPage = 1;
+    renderDoorToDoorTable();
+  });
   doorToDoorSortEl?.addEventListener("change", () => {
     doorToDoorCurrentPage = 1;
     renderDoorToDoorTable();
@@ -416,6 +594,7 @@ export function initDoorToDoorModule(votersContextParam) {
 
   document.addEventListener("voters-updated", () => {
     syncBallotBoxFilter();
+    syncAddressFilter();
     renderDoorToDoorTable();
   });
   document.addEventListener("agents-updated", () => {

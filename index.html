@@ -576,6 +576,14 @@
                       <option value="pledge">Pledge status</option>
                     </select>
                   </div>
+                  <div class="field-group field-group--inline">
+                    <label for="voterPageViewType">View</label>
+                    <select id="voterPageViewType" aria-label="Voters list layout">
+                      <option value="table">Table</option>
+                      <option value="list">List</option>
+                      <option value="cards">Cards</option>
+                    </select>
+                  </div>
                   <div class="dropdown-wrap table-view-dropdown" data-table-view-for="votersTable">
                     <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" aria-label="Table view options" aria-haspopup="true" aria-expanded="false" title="Table view">⋮</button>
                     <div class="dropdown-menu" data-table-view-dropdown hidden role="menu" aria-label="Table view">
@@ -587,28 +595,31 @@
                   </div>
                 </div>
               </div>
-              <div class="table-wrapper table-wrapper--sticky-header" style="position: relative;">
-                <div id="votersTableLoader" class="table-loader" hidden aria-hidden="true">
-                  <div class="spinner" aria-hidden="true"></div>
+              <div id="votersListDisplay" class="voters-list-display">
+                <div class="table-wrapper table-wrapper--sticky-header voters-list-display__table" id="votersTableWrapper" style="position: relative;">
+                  <div id="votersTableLoader" class="table-loader" hidden aria-hidden="true">
+                    <div class="spinner" aria-hidden="true"></div>
+                  </div>
+                  <table class="data-table" id="votersTable">
+                    <thead>
+                      <tr>
+                        <th scope="col" class="th-sortable data-table-col--seq" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
+                        <th>Image</th>
+                        <th class="th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
+                        <th class="th-sortable data-table-col--name" data-sort-key="name">Name<span class="sort-indicator"></span></th>
+                        <th class="th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
+                        <th class="th-sortable" data-sort-key="pledge">Pledge<span class="sort-indicator"></span></th>
+                        <th class="th-sortable data-table-col--assigned-agent" data-sort-key="assignedAgent" id="votersThAssignedAgent" hidden>Assigned agent<span class="sort-indicator"></span></th>
+                        <th>Voted</th>
+                      <th scope="col" style="width:1%; text-align:right;">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <!-- Populated by voters module -->
+                    </tbody>
+                  </table>
                 </div>
-                <table class="data-table" id="votersTable">
-                  <thead>
-                    <tr>
-                      <th scope="col" class="th-sortable data-table-col--seq" data-sort-key="sequence">Seq<span class="sort-indicator"></span></th>
-                      <th>Image</th>
-                      <th class="th-sortable" data-sort-key="id">ID Number<span class="sort-indicator"></span></th>
-                      <th class="th-sortable data-table-col--name" data-sort-key="name">Name<span class="sort-indicator"></span></th>
-                      <th class="th-sortable" data-sort-key="address">Permanent Address<span class="sort-indicator"></span></th>
-                      <th class="th-sortable" data-sort-key="pledge">Pledge<span class="sort-indicator"></span></th>
-                      <th class="th-sortable data-table-col--assigned-agent" data-sort-key="assignedAgent" id="votersThAssignedAgent" hidden>Assigned agent<span class="sort-indicator"></span></th>
-                      <th>Voted</th>
-                    <th scope="col" style="width:1%; text-align:right;">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <!-- Populated by voters module -->
-                  </tbody>
-                </table>
+                <div id="votersListAlt" class="voters-list-alt" hidden></div>
               </div>
               <div id="votersPagination" class="pagination-bar"></div>
             </section>
@@ -843,6 +854,37 @@
                     <select id="doorToDoorFilterBox">
                       <option value="all">All</option>
                     </select>
+                  </div>
+                  <div class="field-group field-group--inline field-group--door-address">
+                    <label for="doorToDoorFilterAddressSearch">Permanent address</label>
+                    <div class="voter-agent-dropdown door-to-door-address-combobox">
+                      <input
+                        type="text"
+                        id="doorToDoorFilterAddressSearch"
+                        class="door-to-door-address-combobox__input"
+                        placeholder="Search addresses…"
+                        aria-label="Filter by permanent address"
+                        aria-autocomplete="list"
+                        aria-controls="doorToDoorFilterAddressMenu"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                      <div
+                        id="doorToDoorFilterAddressMenu"
+                        class="voter-agent-dropdown__menu"
+                        role="listbox"
+                        aria-label="Permanent addresses"
+                      ></div>
+                      <select
+                        id="doorToDoorFilterAddress"
+                        class="door-to-door-filter-address-select-hidden"
+                        tabindex="-1"
+                        aria-hidden="true"
+                        title="Address filter"
+                      >
+                        <option value="all">All addresses</option>
+                      </select>
+                    </div>
                   </div>
                   <div class="field-group field-group--inline">
                     <label for="doorToDoorGroupBy">Group by</label>
@@ -1436,14 +1478,23 @@
             <section class="card">
               <header class="card-header card-header--split">
                 <div>
-                  <h2>Referendum pledge results</h2>
-                  <p class="card-subtitle">Yes / No / Undecided (from Pledges → Referendum).</p>
+                  <h2>Persuadable &amp; met (field)</h2>
+                  <p class="card-subtitle">Persuadable (Unknown, Yes, No, 50%) from door-to-door; radial donut = met count.</p>
                 </div>
-                <button type="button" class="ghost-button ghost-button--small" data-report-details="referendum">View details</button>
+                <button type="button" class="ghost-button ghost-button--small" data-report-details="referendum">Referendum voters</button>
               </header>
               <div class="card-body">
-                <div id="reportsReferendumChart" class="chart-row">
-                  <!-- Populated by reports module -->
+                <div id="reportsReferendumCard" class="referendum-fieldwork-card">
+                  <div class="referendum-fieldwork__charts">
+                    <div class="referendum-fieldwork__bars-wrap">
+                      <h3 class="pledge-distribution__chart-title">Persuadable</h3>
+                      <div id="reportsPersuadableBars" class="chart-row"></div>
+                    </div>
+                    <div class="referendum-fieldwork__donut-wrap">
+                      <h3 class="pledge-distribution__chart-title">Met count</h3>
+                      <div id="reportsMetDonut" class="chart-row"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>

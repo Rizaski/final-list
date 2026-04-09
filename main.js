@@ -4,7 +4,7 @@ import {
   initVotersModule,
   getVoterStats,
   getPledgeByBallotBox,
-  refreshVotersFromFirestore,
+  refreshVotersForElectionScope,
   syncCandidateAssignmentsToFirebase,
   updateVoterPhone,
 } from "./voters.js";
@@ -862,7 +862,6 @@ function applyElectionTypeFromCampaign() {
   const config = getCampaignConfig();
   const campaignType = (config.campaignType || "Local Council Election").trim();
   const mapped = ELECTION_TYPE_MAP.find((m) => m.campaign === campaignType) || ELECTION_TYPE_MAP[0];
-  electionTypeSelect.innerHTML = `<option value="${mapped.value}">${mapped.label}</option>`;
   electionTypeSelect.value = mapped.value;
 }
 
@@ -874,17 +873,35 @@ function getDashboardScope() {
 }
 
 function handleScopeChange() {
+  refreshDashboard(getDashboardScope());
+}
+
+/** Header election type: reload voters (LCE = live + LCE2026 archive backup; Presidential/Parliamentary = live server) and refresh dashboard. */
+async function syncVotersAndDashboardForElectionScope() {
   const scope = getDashboardScope();
+  try {
+    await refreshVotersForElectionScope(scope.electionType);
+  } catch (e) {
+    console.error("[App] refreshVotersForElectionScope", e);
+  }
   refreshDashboard(scope);
+  document.dispatchEvent(new CustomEvent("effective-election-view-changed"));
 }
 
 applyElectionTypeFromCampaign();
-electionTypeSelect.addEventListener("change", handleScopeChange);
+electionTypeSelect.addEventListener("change", () => {
+  void syncVotersAndDashboardForElectionScope();
+});
 constituencySelect.addEventListener("change", handleScopeChange);
 
-document.addEventListener("campaign-config-changed", () => {
-  applyElectionTypeFromCampaign();
-  handleScopeChange();
+document.addEventListener("campaign-config-changed", (ev) => {
+  // Only align the header dropdown with Settings when the user saved campaign type there.
+  // Firestore sync and other config updates must not reset the dropdown — otherwise choosing
+  // "Local Council" in the header is immediately overwritten by remote campaignType (e.g. Presidential).
+  if (ev.detail?.alignHeaderElectionType) {
+    applyElectionTypeFromCampaign();
+  }
+  void syncVotersAndDashboardForElectionScope();
   applyPledgesNavVisibility();
 });
 
@@ -1098,9 +1115,9 @@ async function startAppModules(firebaseApi) {
   initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser });
   initZeroDayModule(votersContext, { pledgesContext, updateVoterPhone, getCurrentUser });
   initSettingsModule();
-  syncCampaignConfigFromFirestore();
+  await syncCampaignConfigFromFirestore();
   applyElectionTypeFromCampaign();
-  handleScopeChange();
+  await syncVotersAndDashboardForElectionScope();
   applyPledgesNavVisibility();
 
   const refreshBtn = document.getElementById("refreshButton");
@@ -1116,12 +1133,10 @@ async function startAppModules(firebaseApi) {
       refreshBtn.classList.add("topbar__refresh-btn--spinning");
       try {
         await syncCampaignConfigFromFirestore();
-        applyElectionTypeFromCampaign();
-        handleScopeChange();
+        await syncVotersAndDashboardForElectionScope();
         applyPledgesNavVisibility();
         await syncCandidateAssignmentsToFirebase();
         await Promise.all([
-          refreshVotersFromFirestore(),
           refreshAgentsFromFirestore(),
           refreshCandidatesFromFirestore(),
           refreshEventsFromFirestore(),

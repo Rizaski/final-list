@@ -148,6 +148,25 @@ function zeroDayBallotBoxCellLabel(boxKey) {
 
 const VOTE_MARKING_VIEW_TYPES = ["cards", "list", "compact"];
 
+/** Voted / not-yet voter list modal: table vs dense list vs card grid (localStorage). */
+const ZD_VOTER_LIST_MODAL_VIEW_KEY = "zd-voter-modal-list-view";
+const ZD_VOTER_LIST_MODAL_VIEWS = ["table", "list", "cards"];
+
+function getZdVoterModalListViewPref() {
+  try {
+    const v = localStorage.getItem(ZD_VOTER_LIST_MODAL_VIEW_KEY);
+    if (ZD_VOTER_LIST_MODAL_VIEWS.includes(v)) return v;
+  } catch (_) {}
+  return "table";
+}
+
+function setZdVoterModalListViewPref(v) {
+  if (!ZD_VOTER_LIST_MODAL_VIEWS.includes(v)) return;
+  try {
+    localStorage.setItem(ZD_VOTER_LIST_MODAL_VIEW_KEY, v);
+  } catch (_) {}
+}
+
 /** Apply saved ballot box order (aggregate card stays first). */
 function applyVoteMarkingDisplayOrder(list) {
   const cfg = getCampaignConfig();
@@ -5959,12 +5978,173 @@ function buildTableFromDisplayList(displayList, options = {}) {
   return wrap;
 }
 
+function zdModalVoterAvatarHtml(v) {
+  const rawId = (v.nationalId || v.id || "").toString().trim().replace(/\s+/g, "");
+  const photoSrc = rawId ? "photos/" + rawId + ".jpg" : "";
+  if (photoSrc) {
+    return `<div class="avatar-cell avatar-cell--zd-modal"><img class="avatar-img" src="${escapeHtml(
+      photoSrc
+    )}" alt="" onerror="var s=this.src;if(s.endsWith('.jpg')){this.src=s.slice(0,-4)+'.jpeg';return;}if(s.endsWith('.jpeg')){this.src=s.slice(0,-5)+'.png';return;}this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';"><div class="avatar-circle avatar-circle--fallback" style="display:none">${escapeHtml(
+      (v.fullName || v.id || "?")
+        .toString()
+        .split(/\s+/)
+        .map((part) => part[0]?.toUpperCase() || "")
+        .join("") || "?"
+    )}</div></div>`;
+  }
+  return `<div class="avatar-cell avatar-cell--zd-modal"><div class="avatar-circle">${escapeHtml(
+    (v.fullName || v.id || "?")
+      .toString()
+      .split(/\s+/)
+      .map((part) => part[0]?.toUpperCase() || "")
+      .join("") || "?"
+  )}</div></div>`;
+}
+
+function zdModalPledgePillHtml(v) {
+  const pledgeLabel = getPledgeLabel(v.pledgeStatus);
+  const pledgeClass =
+    v.pledgeStatus === "yes"
+      ? "pledge-pill pledge-pill--pledged"
+      : v.pledgeStatus === "no"
+        ? "pledge-pill pledge-pill--not-pledged"
+        : "pledge-pill pledge-pill--undecided";
+  return `<span class="${pledgeClass}">${escapeHtml(pledgeLabel)}</span>`;
+}
+
+function buildListViewFromDisplayList(displayList, options = {}) {
+  const includeTimeVoted = !!options.includeTimeVoted;
+  const showUnmarkAction = !!options.showUnmarkAction;
+  const wrap = document.createElement("div");
+  wrap.className = "zd-voter-modal-view zd-voter-modal-view--list";
+  const dataRows = displayList.filter((x) => x.type === "row");
+  if (dataRows.length === 0) {
+    const p = document.createElement("p");
+    p.className = "text-muted zd-voter-modal-empty";
+    p.style.cssText = "text-align:center;padding:20px;";
+    p.textContent = "No voters.";
+    wrap.appendChild(p);
+    return wrap;
+  }
+  displayList.forEach((item) => {
+    if (item.type === "group") {
+      const gh = document.createElement("div");
+      gh.className = "zd-voter-modal-group-header";
+      gh.textContent = item.label;
+      wrap.appendChild(gh);
+      return;
+    }
+    const v = item.voter;
+    const agent = getAgentForVoter(v.id);
+    const timeStr = includeTimeVoted ? formatDateTime(v._timeMarked) || "—" : "";
+    const unmark = showUnmarkAction
+      ? `<button type="button" class="ghost-button ghost-button--small" data-unmark-voted="${escapeHtml(
+          String(v.id)
+        )}">Mark not voted</button>`
+      : "";
+    const row = document.createElement("div");
+    row.className = "zd-voter-modal-list-row";
+    row.innerHTML = `
+      <div class="zd-voter-modal-list-row__lead">
+        <span class="zd-voter-modal-list-row__seq">${escapeHtml(sequenceAsImportedFromCsv(v))}</span>
+        ${zdModalVoterAvatarHtml(v)}
+        <div class="zd-voter-modal-list-row__text">
+          <div class="zd-voter-modal-list-row__name">${escapeHtml(v.fullName || "")}</div>
+          <div class="zd-voter-modal-list-row__meta">${escapeHtml(
+            [v.nationalId || v.id || "", v.phone || "", v.permanentAddress || ""].filter(Boolean).join(" · ")
+          )}</div>
+          <div class="zd-voter-modal-list-row__sub">${escapeHtml(
+            [voterBallotBoxLabel(v), agent].filter(Boolean).join(" · ")
+          )}</div>
+        </div>
+      </div>
+      <div class="zd-voter-modal-list-row__tail">
+        ${zdModalPledgePillHtml(v)}
+        ${includeTimeVoted ? `<span class="zd-voter-modal-list-row__time">${escapeHtml(timeStr)}</span>` : ""}
+        ${unmark ? `<div class="zd-voter-modal-list-row__act">${unmark}</div>` : ""}
+      </div>
+    `;
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function buildCardsViewFromDisplayList(displayList, options = {}) {
+  const includeTimeVoted = !!options.includeTimeVoted;
+  const showUnmarkAction = !!options.showUnmarkAction;
+  const wrap = document.createElement("div");
+  wrap.className = "zd-voter-modal-view zd-voter-modal-view--cards";
+  const dataRows = displayList.filter((x) => x.type === "row");
+  if (dataRows.length === 0) {
+    const p = document.createElement("p");
+    p.className = "text-muted zd-voter-modal-empty";
+    p.style.cssText = "text-align:center;padding:20px;";
+    p.textContent = "No voters.";
+    wrap.appendChild(p);
+    return wrap;
+  }
+  const grid = document.createElement("div");
+  grid.className = "zd-voter-modal-cards-grid";
+  displayList.forEach((item) => {
+    if (item.type === "group") {
+      const gh = document.createElement("div");
+      gh.className = "zd-voter-modal-cards-group-title";
+      gh.textContent = item.label;
+      grid.appendChild(gh);
+      return;
+    }
+    const v = item.voter;
+    const agent = getAgentForVoter(v.id);
+    const timeStr = includeTimeVoted ? formatDateTime(v._timeMarked) || "—" : "";
+    const unmark = showUnmarkAction
+      ? `<button type="button" class="ghost-button ghost-button--small zd-voter-modal-card__unmark" data-unmark-voted="${escapeHtml(
+          String(v.id)
+        )}">Mark not voted</button>`
+      : "";
+    const card = document.createElement("article");
+    card.className = "zd-voter-modal-card";
+    card.innerHTML = `
+      <div class="zd-voter-modal-card__top">
+        ${zdModalVoterAvatarHtml(v)}
+        <div class="zd-voter-modal-card__title-block">
+          <span class="zd-voter-modal-card__seq">#${escapeHtml(sequenceAsImportedFromCsv(v))}</span>
+          <h4 class="zd-voter-modal-card__name">${escapeHtml(v.fullName || "")}</h4>
+        </div>
+      </div>
+      <dl class="zd-voter-modal-card__dl">
+        <dt>ID</dt><dd>${escapeHtml(String(v.nationalId || v.id || "—"))}</dd>
+        <dt>Phone</dt><dd>${escapeHtml(String(v.phone || "—"))}</dd>
+        <dt>Address</dt><dd>${escapeHtml(String(v.permanentAddress || "—"))}</dd>
+        <dt>Ballot box</dt><dd>${escapeHtml(voterBallotBoxLabel(v))}</dd>
+        <dt>Agent</dt><dd>${escapeHtml(agent || "—")}</dd>
+        ${includeTimeVoted ? `<dt>Time voted</dt><dd>${escapeHtml(timeStr)}</dd>` : ""}
+      </dl>
+      <div class="zd-voter-modal-card__pledge">${zdModalPledgePillHtml(v)}</div>
+      ${unmark ? `<footer class="zd-voter-modal-card__footer">${unmark}</footer>` : ""}
+    `;
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function buildVoterModalViewFromDisplayList(displayList, viewType, options = {}) {
+  const vt = ZD_VOTER_LIST_MODAL_VIEWS.includes(viewType) ? viewType : "table";
+  if (vt === "table") {
+    const w = buildTableFromDisplayList(displayList, options);
+    return w.firstElementChild || w;
+  }
+  if (vt === "list") return buildListViewFromDisplayList(displayList, options);
+  return buildCardsViewFromDisplayList(displayList, options);
+}
+
 function openBoxVoterListModal(boxKey, kind) {
   const includeTimeVoted = kind === "voted";
   const displayBox =
     isZeroDayAggregateBallotKey(boxKey) ? ZERO_DAY_ALL_BOXES_DISPLAY : boxKey;
   const title =
     kind === "voted" ? `Voted – ${displayBox}` : `Not yet voted – ${displayBox}`;
+  const viewSel = getZdVoterModalListViewPref();
 
   const body = document.createElement("div");
   body.className = "modal-body-inner modal-body-inner--with-maximize";
@@ -6008,6 +6188,14 @@ function openBoxVoterListModal(boxKey, kind) {
           <option value="address">Permanent address</option>
         </select>
       </div>
+      <div class="field-group field-group--inline">
+        <label for="zdModalListViewType">View</label>
+        <select id="zdModalListViewType">
+          <option value="table" ${viewSel === "table" ? "selected" : ""}>Table</option>
+          <option value="list" ${viewSel === "list" ? "selected" : ""}>List</option>
+          <option value="cards" ${viewSel === "cards" ? "selected" : ""}>Cards</option>
+        </select>
+      </div>
       ${
         kind === "voted"
           ? `<div class="field-group field-group--inline">
@@ -6038,7 +6226,7 @@ function openBoxVoterListModal(boxKey, kind) {
   topBar.appendChild(maxBtn);
 
   const tableWrap = document.createElement("div");
-  tableWrap.className = "table-wrapper";
+  tableWrap.className = "table-wrapper zd-voter-modal-table-wrap";
 
   function applySearchFilter(list, query) {
     const q = (query || "").toLowerCase().trim();
@@ -6065,15 +6253,20 @@ function openBoxVoterListModal(boxKey, kind) {
     const filterPledge = (body.querySelector("#zdModalListFilter") || {}).value || "all";
     const sortBy = (body.querySelector("#zdModalListSort") || {}).value || "sequence";
     const groupBy = (body.querySelector("#zdModalListGroupBy") || {}).value || "none";
+    const viewType =
+      (body.querySelector("#zdModalListViewType") || {}).value || getZdVoterModalListViewPref();
     const searchQuery = (body.querySelector("#zdModalListSearch") || {}).value || "";
     let list = applySearchFilter(voters, searchQuery);
     const displayList = getModalListFilteredSortedGrouped(list, filterPledge, sortBy, groupBy);
-    const newTable = buildTableFromDisplayList(displayList, {
+    const opts = {
       includeTimeVoted,
       showUnmarkAction: kind === "voted",
-    });
+    };
+    const built = buildVoterModalViewFromDisplayList(displayList, viewType, opts);
     tableWrap.innerHTML = "";
-    tableWrap.appendChild(newTable.firstElementChild);
+    tableWrap.appendChild(built);
+    tableWrap.classList.toggle("zd-voter-modal-table-wrap--cards", viewType === "cards");
+    tableWrap.classList.toggle("zd-voter-modal-table-wrap--list", viewType === "list");
   }
 
   body.appendChild(topBar);
@@ -6083,6 +6276,13 @@ function openBoxVoterListModal(boxKey, kind) {
   listToolbar.querySelector("#zdModalListFilter").addEventListener("change", render);
   listToolbar.querySelector("#zdModalListSort").addEventListener("change", render);
   listToolbar.querySelector("#zdModalListGroupBy").addEventListener("change", render);
+  const viewTypeEl = listToolbar.querySelector("#zdModalListViewType");
+  if (viewTypeEl) {
+    viewTypeEl.addEventListener("change", () => {
+      setZdVoterModalListViewPref(viewTypeEl.value);
+      render();
+    });
+  }
   const searchEl = listToolbar.querySelector("#zdModalListSearch");
   if (searchEl) searchEl.addEventListener("input", render);
 
