@@ -35,6 +35,18 @@ service cloud.firestore {
       allow create, update, delete: if signedIn() && sizeOk();
     }
 
+    // Multi-campaign workspace metadata + campaign-scoped data tree.
+    // Workspace docs live at /campaignWorkspaces/{workspaceId}
+    // Scoped collections live at /campaignWorkspaces/{workspaceId}/<collection>/<doc>.
+    match /campaignWorkspaces/{workspaceId} {
+      allow read: if signedIn();
+      allow create, update, delete: if signedIn() && sizeOk();
+      match /{document=**} {
+        allow read: if signedIn();
+        allow create, update, delete: if signedIn() && sizeOk();
+      }
+    }
+
     // Voters list — read allowed for any signed-in user so list renders when deployed
     match /voters/{voterId} {
       allow read: if signedIn();

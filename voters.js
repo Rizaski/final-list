@@ -59,7 +59,7 @@ let votersBulkImportInProgress = false;
  */
 const pendingCandidatePledgeEdits = new Map();
 
-/** Mirrors header `#electionType`: `local` merges Firebase live voters with LCE2026 archive backup. */
+/** Header election data scope (`local` | …): from saved campaign type; `local` merges LCE2026 archive backup. */
 let headerElectionScope = "local";
 /** Cached `getArchivedVotersFs` rows for the resolved LCE2026 archive (when scope is local). */
 let lceArchiveVotersCache = null;
@@ -155,17 +155,26 @@ export function getHeaderElectionScope() {
   return headerElectionScope;
 }
 
+function readElectionScopeFromLocalCampaignConfig() {
+  try {
+    const raw = localStorage.getItem("campaign-config");
+    if (!raw) return "local";
+    const parsed = JSON.parse(raw);
+    const ct = String(parsed.campaignType || "").trim();
+    if (ct.includes("Parliamentary")) return "parliamentary";
+    if (ct.includes("Presidential")) return "presidential";
+    return "local";
+  } catch (_) {
+    return "local";
+  }
+}
+
 function effectiveCampaignTypeForHeaderUi() {
   const map = {
     local: "Local Council Election",
     parliamentary: "Parliamentary Election",
     presidential: "Presidential Election",
   };
-  try {
-    const el = typeof document !== "undefined" ? document.getElementById("electionType") : null;
-    const v = el?.value;
-    if (v === "local" || v === "parliamentary" || v === "presidential") return map[v];
-  } catch (_) {}
   return map[headerElectionScope] || map.local;
 }
 
@@ -3594,8 +3603,7 @@ export async function initVotersModule(getCurrentUser, options = {}) {
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
       loadVotersFromStorage();
       try {
-        const sel = document.getElementById("electionType");
-        if (sel && sel.value) setHeaderElectionScope(sel.value);
+        setHeaderElectionScope(readElectionScopeFromLocalCampaignConfig());
         await hydrateLceArchiveCache(api);
       } catch (_) {}
       const initial = await api.getAllVotersFs();

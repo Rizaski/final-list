@@ -9,10 +9,9 @@ import {
   AUTO_SYNC_LOCAL_VOTERS_ONLINE_KEY,
   importCandidatePledgeAgentFromCsvRows,
   getEffectiveVotedAtForVoter,
-  getHeaderElectionScope,
 } from "./voters.js";
 import { openCandidatePledgedVotersModal } from "./candidate-pledged-voters-modal.js";
-import { firebaseInitPromise } from "./firebase.js";
+import { firebaseInitPromise, normalizeWorkspaceCampaignType } from "./firebase.js";
 import {
   AGENTS_STORAGE_KEY,
   filterAgentsForViewer,
@@ -47,7 +46,6 @@ export function applySettingsTabsVisibility() {
       : "Configure system parameters, candidates, data, security, and users.";
   }
   switchSettingsTabFn(isCandidate ? "candidate-csv" : "campaign");
-  initCampaignArchiveUI();
 }
 import { compareBallotSequence, sequenceAsImportedFromCsv } from "./sequence-utils.js";
 
@@ -168,6 +166,28 @@ function saveCampaignConfig() {
   } catch (_) {}
 }
 
+/**
+ * Match sidebar + in-memory config to the active workspace row (same labels as the header Campaign dropdown).
+ */
+async function alignCampaignConfigWithActiveWorkspaceRow(api) {
+  if (!api?.listCampaignWorkspacesFs || !api.getActiveCampaignWorkspaceId) return;
+  try {
+    const activeId = api.getActiveCampaignWorkspaceId();
+    const list = await api.listCampaignWorkspacesFs();
+    const row = Array.isArray(list) ? list.find((w) => String(w.id) === String(activeId)) : null;
+    if (!row) return;
+    const nm = String(row.name || "").trim();
+    if (nm) campaignConfig.campaignName = nm;
+    const isl = String(row.island || "").trim();
+    if (isl) campaignConfig.island = isl;
+    const cons = String(row.constituency || "").trim();
+    if (cons) campaignConfig.constituency = cons;
+    if (row.campaignType != null && String(row.campaignType).trim()) {
+      campaignConfig.campaignType = String(row.campaignType).trim();
+    }
+  } catch (_) {}
+}
+
 async function syncCampaignConfigFromFirestore() {
   try {
     const api = await firebaseInitPromise;
@@ -197,10 +217,14 @@ async function syncCampaignConfigFromFirestore() {
       if (remote.voteMarkingBallotBoxViews && typeof remote.voteMarkingBallotBoxViews === "object") {
         campaignConfig.voteMarkingBallotBoxViews = { ...remote.voteMarkingBallotBoxViews };
       }
-      saveCampaignConfig();
-      applyCampaignToSidebar();
-      document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: { ...campaignConfig } }));
     }
+
+    await alignCampaignConfigWithActiveWorkspaceRow(api);
+
+    saveCampaignConfig();
+    applyCampaignToSidebar();
+    refreshCampaignSettingsFormFields();
+    document.dispatchEvent(new CustomEvent("campaign-config-changed", { detail: { ...campaignConfig } }));
   } catch (_) {}
 }
 
@@ -238,41 +262,28 @@ function applyCampaignToSidebar() {
   }
 }
 
+/** Keep Settings → Campaign inputs aligned with `campaignConfig` after Firestore / workspace sync. */
+function refreshCampaignSettingsFormFields() {
+  const nameEl = document.getElementById("settingsCampaignName");
+  const typeEl = document.getElementById("settingsCampaignType");
+  const constituencyEl = document.getElementById("settingsCampaignConstituency");
+  const islandEl = document.getElementById("settingsCampaignIsland");
+  if (nameEl) nameEl.value = campaignConfig.campaignName;
+  if (typeEl) typeEl.value = campaignConfig.campaignType;
+  if (constituencyEl) constituencyEl.value = campaignConfig.constituency;
+  if (islandEl) islandEl.value = campaignConfig.island;
+}
+
 export function getCampaignConfig() {
   return { ...campaignConfig };
 }
 
-/** Maps top bar `#electionType` value → canonical campaign type string (candidate `electionType`, positions, etc.). */
-const HEADER_SCOPE_TO_CAMPAIGN_TYPE = {
-  local: "Local Council Election",
-  parliamentary: "Parliamentary Election",
-  presidential: "Presidential Election",
-};
-
 /**
- * Campaign config as the user is currently viewing it: `campaignType` follows the header election
- * dropdown so merged Local Council voter data is paired with Local Council candidates/pledges even when
- * Settings / Firestore still store Presidential (e.g. after archive delete + merged list).
- * Use `getCampaignConfig()` only when persisting or editing saved workspace settings.
+ * Effective campaign config for the active workspace: election scope comes from saved
+ * `campaignType` (header workspace switch updates Firestore + reload).
  */
 export function getEffectiveCampaignConfig() {
-  const base = { ...campaignConfig };
-  let scope = null;
-  try {
-    const el = typeof document !== "undefined" ? document.getElementById("electionType") : null;
-    const v = el?.value;
-    if (v === "local" || v === "parliamentary" || v === "presidential") scope = v;
-  } catch (_) {}
-  if (!scope) {
-    try {
-      const s = getHeaderElectionScope();
-      if (s === "local" || s === "parliamentary" || s === "presidential") scope = s;
-    } catch (_) {}
-  }
-  if (!scope) scope = "local";
-  const ct = HEADER_SCOPE_TO_CAMPAIGN_TYPE[scope];
-  if (ct) base.campaignType = ct;
-  return base;
+  return { ...getCampaignConfig() };
 }
 
 /**
@@ -3932,18 +3943,31 @@ function initCampaignArchiveUI() {
 function initCampaignTab() {
   loadCampaignConfig();
   applyCampaignToSidebar();
-  syncCampaignConfigFromFirestore();
+  /** Remote sync is awaited in main.js after initSettingsModule(). */
 
   const nameEl = document.getElementById("settingsCampaignName");
   const typeEl = document.getElementById("settingsCampaignType");
   const constituencyEl = document.getElementById("settingsCampaignConstituency");
   const islandEl = document.getElementById("settingsCampaignIsland");
   const saveBtn = document.getElementById("settingsCampaignSave");
+  const workspaceSelectEl = document.getElementById("settingsWorkspaceSelect");
+  const workspaceNameEl = document.getElementById("settingsWorkspaceName");
+  const workspaceCampaignTypeEl = document.getElementById("settingsWorkspaceCampaignType");
+  const workspaceConstituencyEl = document.getElementById("settingsWorkspaceConstituency");
+  const workspaceIslandEl = document.getElementById("settingsWorkspaceIsland");
+  const workspaceCreateBtn = document.getElementById("settingsWorkspaceCreate");
+  const workspaceSwitchBtn = document.getElementById("settingsWorkspaceSwitch");
+  const workspaceSaveDetailsBtn = document.getElementById("settingsWorkspaceSaveDetails");
+  /** Populated by `renderCampaignWorkspaces` for type dropdown sync. */
+  let workspaceListCache = [];
 
   if (nameEl) nameEl.value = campaignConfig.campaignName;
   if (typeEl) typeEl.value = campaignConfig.campaignType;
   if (constituencyEl) constituencyEl.value = campaignConfig.constituency;
   if (islandEl) islandEl.value = campaignConfig.island;
+  if (workspaceCampaignTypeEl) {
+    workspaceCampaignTypeEl.value = normalizeWorkspaceCampaignType(campaignConfig.campaignType);
+  }
 
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
@@ -3983,7 +4007,185 @@ function initCampaignTab() {
     });
   }
 
-  initCampaignArchiveUI();
+  const syncWorkspaceFieldsFromSelection = () => {
+    if (!workspaceSelectEl) return;
+    const id = workspaceSelectEl.value;
+    const row = workspaceListCache.find((w) => String(w.id) === String(id));
+    if (!row) return;
+    if (workspaceCampaignTypeEl) {
+      workspaceCampaignTypeEl.value = normalizeWorkspaceCampaignType(row.campaignType);
+    }
+    if (workspaceConstituencyEl) {
+      workspaceConstituencyEl.value = String(row.constituency || "").trim();
+    }
+    if (workspaceIslandEl) {
+      workspaceIslandEl.value = String(row.island || "").trim();
+    }
+  };
+
+  const renderCampaignWorkspaces = async () => {
+    if (!workspaceSelectEl) return;
+    try {
+      const api = await firebaseInitPromise;
+      const list = api?.ready && api.listCampaignWorkspacesFs
+        ? await api.listCampaignWorkspacesFs()
+        : [
+            {
+              id: "default",
+              name: "Default campaign",
+              campaignType: normalizeWorkspaceCampaignType(campaignConfig.campaignType),
+              constituency: String(campaignConfig.constituency || "").trim(),
+              island: String(campaignConfig.island || "").trim(),
+            },
+          ];
+      workspaceListCache = Array.isArray(list) ? list : [];
+      const activeId =
+        api?.getActiveCampaignWorkspaceId?.() ||
+        "default";
+      workspaceSelectEl.innerHTML = "";
+      workspaceListCache.forEach((row) => {
+        const opt = document.createElement("option");
+        opt.value = String(row.id || "");
+        opt.textContent = String(row.name || row.id || "");
+        workspaceSelectEl.appendChild(opt);
+      });
+      workspaceSelectEl.value = activeId;
+      syncWorkspaceFieldsFromSelection();
+    } catch (_) {
+      workspaceListCache = [];
+      workspaceSelectEl.innerHTML = "";
+      const opt = document.createElement("option");
+      opt.value = "default";
+      opt.textContent = "Default campaign";
+      workspaceSelectEl.appendChild(opt);
+      workspaceSelectEl.value = "default";
+      syncWorkspaceFieldsFromSelection();
+    }
+  };
+
+  if (workspaceSelectEl) {
+    workspaceSelectEl.addEventListener("change", () => syncWorkspaceFieldsFromSelection());
+  }
+
+  if (workspaceCreateBtn) {
+    workspaceCreateBtn.addEventListener("click", async () => {
+      const name = (workspaceNameEl?.value || "").trim();
+      if (!name) {
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Enter workspace name", meta: "" });
+        }
+        return;
+      }
+      try {
+        const api = await firebaseInitPromise;
+        if (!api?.ready || !api.createCampaignWorkspaceFs || !api.setActiveCampaignWorkspaceFs) return;
+        const created = await api.createCampaignWorkspaceFs({
+          name,
+          campaignType: workspaceCampaignTypeEl?.value || normalizeWorkspaceCampaignType(campaignConfig.campaignType),
+          constituency: (workspaceConstituencyEl?.value ?? "").trim(),
+          island: (workspaceIslandEl?.value ?? "").trim(),
+        });
+        if (!created?.ok) {
+          if (window.appNotifications) {
+            window.appNotifications.push({ title: "Could not create workspace", meta: created?.error || "" });
+          }
+          return;
+        }
+        const switched = await api.setActiveCampaignWorkspaceFs(created.workspaceId);
+        if (!switched?.ok) {
+          if (window.appNotifications) {
+            window.appNotifications.push({ title: "Workspace created", meta: "Could not switch automatically." });
+          }
+          await renderCampaignWorkspaces();
+          return;
+        }
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Workspace created", meta: `${name} is now active.` });
+        }
+        clearLocalCampaignWorkspaceCache();
+        window.location.reload();
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Could not create workspace", meta: err?.message || String(err) });
+        }
+      }
+    });
+  }
+
+  if (workspaceSaveDetailsBtn) {
+    workspaceSaveDetailsBtn.addEventListener("click", async () => {
+      const wid = (workspaceSelectEl?.value || "").trim() || "default";
+      const ct = workspaceCampaignTypeEl?.value;
+      const constituency = (workspaceConstituencyEl?.value ?? "").trim();
+      const island = (workspaceIslandEl?.value ?? "").trim();
+      if (!ct) return;
+      try {
+        const api = await firebaseInitPromise;
+        if (!api?.ready || !api.updateCampaignWorkspaceDetailsFs) return;
+        const res = await api.updateCampaignWorkspaceDetailsFs({
+          workspaceId: wid,
+          campaignType: ct,
+          constituency,
+          island,
+        });
+        if (!res?.ok) {
+          if (window.appNotifications) {
+            window.appNotifications.push({ title: "Could not save workspace", meta: res?.error || "" });
+          }
+          return;
+        }
+        const row = workspaceListCache.find((w) => String(w.id) === String(wid));
+        if (row) {
+          row.campaignType = normalizeWorkspaceCampaignType(ct);
+          row.constituency = constituency;
+          row.island = island;
+        }
+        const active = api.getActiveCampaignWorkspaceId?.() || "default";
+        if (String(active) === String(wid)) {
+          campaignConfig.campaignType = normalizeWorkspaceCampaignType(ct);
+          campaignConfig.constituency = constituency;
+          campaignConfig.island = island;
+          saveCampaignConfig();
+          await syncCampaignConfigToFirestore();
+          applyCampaignToSidebar();
+        }
+        document.dispatchEvent(new CustomEvent("workspaces-metadata-changed"));
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Workspace details saved", meta: `${normalizeWorkspaceCampaignType(ct)} • ${constituency || "—"} • ${island || "—"}` });
+        }
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Could not save workspace", meta: err?.message || String(err) });
+        }
+      }
+    });
+  }
+
+  if (workspaceSwitchBtn) {
+    workspaceSwitchBtn.addEventListener("click", async () => {
+      const selected = (workspaceSelectEl?.value || "").trim() || "default";
+      try {
+        const api = await firebaseInitPromise;
+        if (!api?.ready || !api.setActiveCampaignWorkspaceFs) return;
+        const res = await api.setActiveCampaignWorkspaceFs(selected);
+        if (!res?.ok) {
+          if (window.appNotifications) {
+            window.appNotifications.push({ title: "Could not switch workspace", meta: res?.error || "" });
+          }
+          return;
+        }
+        clearLocalCampaignWorkspaceCache();
+        window.location.reload();
+      } catch (err) {
+        if (window.appNotifications) {
+          window.appNotifications.push({ title: "Could not switch workspace", meta: err?.message || String(err) });
+        }
+      }
+    });
+  }
+
+  void renderCampaignWorkspaces();
+
 }
 
 function initAgentsTab() {

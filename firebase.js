@@ -45,6 +45,62 @@ const TRANSPORT_ROUTES_COLLECTION = "transportRoutes";
 const CAMPAIGN_ARCHIVES_COLLECTION = "campaignArchives";
 /** Matches default label in archiveCampaignSnapshotFs when none provided. */
 const DEFAULT_ARCHIVE_LABEL = "archived campaign";
+const CAMPAIGN_WORKSPACES_COLLECTION = "campaignWorkspaces";
+const ACTIVE_CAMPAIGN_WORKSPACE_STORAGE_KEY = "active-campaign-workspace";
+const LEGACY_CAMPAIGN_WORKSPACE_ID = "default";
+
+/** Canonical strings — must match Settings “Type of campaign” and main.js header mapping. */
+export const WORKSPACE_CAMPAIGN_TYPES = [
+  "Local Council Election",
+  "Parliamentary Election",
+  "Presidential Election",
+];
+
+export function normalizeWorkspaceCampaignType(value) {
+  const s = String(value == null ? "" : value).trim();
+  if (WORKSPACE_CAMPAIGN_TYPES.includes(s)) return s;
+  const lower = s.toLowerCase();
+  if (lower.includes("local council") || lower === "local") return WORKSPACE_CAMPAIGN_TYPES[0];
+  if (lower.includes("parliament")) return WORKSPACE_CAMPAIGN_TYPES[1];
+  if (lower.includes("president")) return WORKSPACE_CAMPAIGN_TYPES[2];
+  return WORKSPACE_CAMPAIGN_TYPES[0];
+}
+
+const UNSCOPED_COLLECTIONS = new Set([
+  MONITORS_COLLECTION,
+  VOTER_LIST_SHARES_COLLECTION,
+  PLEDGED_REPORT_SHARES_COLLECTION,
+  EVENT_PARTICIPANT_SHARES_COLLECTION,
+]);
+
+function normalizeCampaignWorkspaceId(value) {
+  const raw = String(value == null ? "" : value).trim().toLowerCase();
+  if (!raw) return LEGACY_CAMPAIGN_WORKSPACE_ID;
+  const cleaned = raw
+    .replace(/[^a-z0-9-_ ]+/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || LEGACY_CAMPAIGN_WORKSPACE_ID;
+}
+
+export function getActiveCampaignWorkspaceId() {
+  try {
+    return normalizeCampaignWorkspaceId(
+      localStorage.getItem(ACTIVE_CAMPAIGN_WORKSPACE_STORAGE_KEY)
+    );
+  } catch (_) {
+    return LEGACY_CAMPAIGN_WORKSPACE_ID;
+  }
+}
+
+export function setActiveCampaignWorkspaceId(workspaceId) {
+  const normalized = normalizeCampaignWorkspaceId(workspaceId);
+  try {
+    localStorage.setItem(ACTIVE_CAMPAIGN_WORKSPACE_STORAGE_KEY, normalized);
+  } catch (_) {}
+  return normalized;
+}
 
 export const firebaseInitPromise = (async () => {
   try {
@@ -185,6 +241,27 @@ export const firebaseInitPromise = (async () => {
       ok: false,
       error: "Firestore not initialized",
     });
+    let listCampaignWorkspacesFs = async () => [
+      {
+        id: LEGACY_CAMPAIGN_WORKSPACE_ID,
+        name: "Default campaign",
+        campaignType: normalizeWorkspaceCampaignType(WORKSPACE_CAMPAIGN_TYPES[0]),
+        constituency: "",
+        island: "",
+      },
+    ];
+    let createCampaignWorkspaceFs = async (_payload) => ({
+      ok: false,
+      error: "Firestore not initialized",
+    });
+    let updateCampaignWorkspaceDetailsFs = async () => ({
+      ok: false,
+      error: "Firestore not initialized",
+    });
+    let setActiveCampaignWorkspaceFs = async (workspaceId) => ({
+      ok: true,
+      workspaceId: setActiveCampaignWorkspaceId(workspaceId),
+    });
 
     try {
       const firestoreMod = await import(`${SDK_BASE}/firebase-firestore.js`);
@@ -195,12 +272,199 @@ export const firebaseInitPromise = (async () => {
         experimentalForceLongPolling: true,
         ignoreUndefinedProperties: true,
       });
+      const getScopeId = () => getActiveCampaignWorkspaceId();
+      const scopedPath = (...segments) => {
+        if (segments.length && UNSCOPED_COLLECTIONS.has(String(segments[0] || ""))) {
+          return segments;
+        }
+        const scopeId = getScopeId();
+        if (scopeId === LEGACY_CAMPAIGN_WORKSPACE_ID) return segments;
+        return [CAMPAIGN_WORKSPACES_COLLECTION, scopeId, ...segments];
+      };
+      const scopedCollection = (...segments) =>
+        firestoreMod.collection(db, ...scopedPath(...segments));
+      const scopedDoc = (...segments) => firestoreMod.doc(db, ...scopedPath(...segments));
+      const globalCollection = (...segments) => firestoreMod.collection(db, ...segments);
+      const globalDoc = (...segments) => firestoreMod.doc(db, ...segments);
       /** Avoid "Uncaught Error in snapshot listener" when rules/auth deny; log once per path. */
       const onSnapshotSafe = (ref, onNext, label) =>
         firestoreMod.onSnapshot(ref, onNext, (err) => {
           console.warn(`[Firestore] listener ${label}:`, err?.code || "", err?.message || err);
         });
-      const configRef = firestoreMod.doc(db, CAMPAIGN_CONFIG_COLLECTION, CAMPAIGN_CONFIG_DOC);
+      listCampaignWorkspacesFs = async () => {
+        try {
+          let defaultCampaignType = normalizeWorkspaceCampaignType(WORKSPACE_CAMPAIGN_TYPES[0]);
+          let defaultLabel = "Default campaign";
+          let defaultConstituency = "";
+          let defaultIsland = "";
+          try {
+            const defaultCfgRef = firestoreMod.doc(db, CAMPAIGN_CONFIG_COLLECTION, CAMPAIGN_CONFIG_DOC);
+            const defaultSnap = await firestoreMod.getDoc(defaultCfgRef);
+            if (defaultSnap && defaultSnap.exists()) {
+              const d = defaultSnap.data() || {};
+              defaultCampaignType = normalizeWorkspaceCampaignType(d.campaignType);
+              defaultConstituency = String(d.constituency || "").trim();
+              defaultIsland = String(d.island || "").trim();
+              const cn = String(d.campaignName || "").trim();
+              if (cn) defaultLabel = cn;
+            }
+          } catch (_) {}
+
+          const col = globalCollection(CAMPAIGN_WORKSPACES_COLLECTION);
+          const snap = await firestoreMod.getDocs(col);
+          const out = snap.docs.map((d) => {
+            const data = d.data() || {};
+            return {
+              id: d.id,
+              ...data,
+              campaignType: normalizeWorkspaceCampaignType(data.campaignType),
+              constituency: String(data.constituency || "").trim(),
+              island: String(data.island || "").trim(),
+            };
+          });
+          out.sort((a, b) =>
+            String(a.name || a.id).localeCompare(String(b.name || b.id), undefined, {
+              sensitivity: "base",
+            })
+          );
+          return [
+            {
+              id: LEGACY_CAMPAIGN_WORKSPACE_ID,
+              name: defaultLabel,
+              campaignType: defaultCampaignType,
+              constituency: defaultConstituency,
+              island: defaultIsland,
+            },
+            ...out,
+          ];
+        } catch (_) {
+          return [
+            {
+              id: LEGACY_CAMPAIGN_WORKSPACE_ID,
+              name: "Default campaign",
+              campaignType: normalizeWorkspaceCampaignType(WORKSPACE_CAMPAIGN_TYPES[0]),
+              constituency: "",
+              island: "",
+            },
+          ];
+        }
+      };
+      createCampaignWorkspaceFs = async (payload) => {
+        try {
+          const proposedId = normalizeCampaignWorkspaceId(payload?.id || payload?.name);
+          if (!proposedId || proposedId === LEGACY_CAMPAIGN_WORKSPACE_ID) {
+            return { ok: false, error: "Please choose a different campaign id." };
+          }
+          const name = String(payload?.name || proposedId).trim() || proposedId;
+          const campaignType = normalizeWorkspaceCampaignType(payload?.campaignType);
+          const constituency = String(payload?.constituency != null ? payload.constituency : "").trim();
+          const island = String(payload?.island != null ? payload.island : "").trim();
+          const ref = globalDoc(CAMPAIGN_WORKSPACES_COLLECTION, proposedId);
+          const existing = await firestoreMod.getDoc(ref);
+          if (existing && existing.exists()) {
+            return { ok: false, error: "Campaign id already exists." };
+          }
+          const nowIso = new Date().toISOString();
+          await firestoreMod.setDoc(ref, {
+            id: proposedId,
+            name,
+            campaignType,
+            constituency,
+            island,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+          const cfgRef = firestoreMod.doc(
+            db,
+            CAMPAIGN_WORKSPACES_COLLECTION,
+            proposedId,
+            CAMPAIGN_CONFIG_COLLECTION,
+            CAMPAIGN_CONFIG_DOC
+          );
+          await firestoreMod.setDoc(
+            cfgRef,
+            {
+              campaignName: name,
+              campaignType,
+              constituency,
+              island,
+              showPledgesNav: true,
+              voteMonitoringEnabled: false,
+              monitorShareTokens: [],
+            },
+            { merge: true }
+          );
+          return { ok: true, workspaceId: proposedId };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || e || "Could not create campaign") };
+        }
+      };
+      updateCampaignWorkspaceDetailsFs = async (payload = {}) => {
+        const wid = normalizeCampaignWorkspaceId(payload.workspaceId);
+        const ct =
+          payload.campaignType != null
+            ? normalizeWorkspaceCampaignType(payload.campaignType)
+            : null;
+        const constituency =
+          payload.constituency != null ? String(payload.constituency).trim() : null;
+        const island = payload.island != null ? String(payload.island).trim() : null;
+        try {
+          const cfgPatch = {};
+          if (ct != null) cfgPatch.campaignType = ct;
+          if (constituency != null) cfgPatch.constituency = constituency;
+          if (island != null) cfgPatch.island = island;
+
+          if (wid === LEGACY_CAMPAIGN_WORKSPACE_ID) {
+            const cfgRef = firestoreMod.doc(db, CAMPAIGN_CONFIG_COLLECTION, CAMPAIGN_CONFIG_DOC);
+            const snap = await firestoreMod.getDoc(cfgRef);
+            const prev = snap && snap.exists() ? snap.data() || {} : {};
+            await firestoreMod.setDoc(cfgRef, { ...prev, ...cfgPatch }, { merge: true });
+            return { ok: true, workspaceId: wid };
+          }
+          const wref = globalDoc(CAMPAIGN_WORKSPACES_COLLECTION, wid);
+          const wsnap = await firestoreMod.getDoc(wref);
+          if (!wsnap || !wsnap.exists()) {
+            return { ok: false, error: "Campaign workspace not found." };
+          }
+          const wPatch = { updatedAt: new Date().toISOString() };
+          if (ct != null) wPatch.campaignType = ct;
+          if (constituency != null) wPatch.constituency = constituency;
+          if (island != null) wPatch.island = island;
+          await firestoreMod.setDoc(wref, wPatch, { merge: true });
+          const cfgRef = firestoreMod.doc(
+            db,
+            CAMPAIGN_WORKSPACES_COLLECTION,
+            wid,
+            CAMPAIGN_CONFIG_COLLECTION,
+            CAMPAIGN_CONFIG_DOC
+          );
+          const csnap = await firestoreMod.getDoc(cfgRef);
+          const cprev = csnap && csnap.exists() ? csnap.data() || {} : {};
+          await firestoreMod.setDoc(cfgRef, { ...cprev, ...cfgPatch }, { merge: true });
+          return { ok: true, workspaceId: wid };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || e || "Could not update workspace") };
+        }
+      };
+      setActiveCampaignWorkspaceFs = async (workspaceId) => {
+        const next = normalizeCampaignWorkspaceId(workspaceId);
+        if (next === LEGACY_CAMPAIGN_WORKSPACE_ID) {
+          setActiveCampaignWorkspaceId(next);
+          return { ok: true, workspaceId: next };
+        }
+        try {
+          const ref = globalDoc(CAMPAIGN_WORKSPACES_COLLECTION, next);
+          const snap = await firestoreMod.getDoc(ref);
+          if (!snap || !snap.exists()) {
+            return { ok: false, error: "Campaign not found." };
+          }
+          setActiveCampaignWorkspaceId(next);
+          return { ok: true, workspaceId: next };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || e || "Could not switch campaign") };
+        }
+      };
+      const configRef = scopedDoc( CAMPAIGN_CONFIG_COLLECTION, CAMPAIGN_CONFIG_DOC);
       // Read
       getFirestoreCampaignConfig = async () => {
         const snap = await firestoreMod.getDoc(configRef);
@@ -225,26 +489,25 @@ export const firebaseInitPromise = (async () => {
 
       getMonitorByToken = async (token) => {
         if (!token) return null;
-        const ref = firestoreMod.doc(db, MONITORS_COLLECTION, String(token));
+        const ref = scopedDoc( MONITORS_COLLECTION, String(token));
         const snap = await firestoreMod.getDoc(ref);
         if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
         return null;
       };
       setMonitorDoc = async (token, data) => {
         if (!token) return;
-        const ref = firestoreMod.doc(db, MONITORS_COLLECTION, String(token));
+        const ref = scopedDoc( MONITORS_COLLECTION, String(token));
         await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
       };
       getVotedForMonitor = async (token) => {
         if (!token) return [];
-        const ref = firestoreMod.collection(db, MONITORS_COLLECTION, String(token), "voted");
+        const ref = scopedCollection( MONITORS_COLLECTION, String(token), "voted");
         const snap = await firestoreMod.getDocs(ref);
         return snap.docs.map((d) => ({ voterId: d.id, timeMarked: d.data().timeMarked }));
       };
       setVotedForMonitor = async (token, voterId, timeMarked) => {
         if (!token || !voterId) return;
-        const ref = firestoreMod.doc(
-          db,
+        const ref = scopedDoc(
           MONITORS_COLLECTION,
           String(token),
           "voted",
@@ -256,8 +519,7 @@ export const firebaseInitPromise = (async () => {
       };
       deleteVotedForMonitor = async (token, voterId) => {
         if (!token || !voterId) return;
-        const ref = firestoreMod.doc(
-          db,
+        const ref = scopedDoc(
           MONITORS_COLLECTION,
           String(token),
           "voted",
@@ -267,7 +529,7 @@ export const firebaseInitPromise = (async () => {
       };
       onVotedSnapshotForMonitor = (token, handler) => {
         if (!token || typeof handler !== "function") return noopUnsubscribe;
-        const ref = firestoreMod.collection(db, MONITORS_COLLECTION, String(token), "voted");
+        const ref = scopedCollection( MONITORS_COLLECTION, String(token), "voted");
         return onSnapshotSafe(
           ref,
           (snap) => {
@@ -280,8 +542,7 @@ export const firebaseInitPromise = (async () => {
 
       const BALLOT_SESSION_DOC = "settings";
       const ballotSessionDocRef = (token) =>
-        firestoreMod.doc(
-          db,
+        scopedDoc(
           MONITORS_COLLECTION,
           String(token),
           "ballotSession",
@@ -364,13 +625,13 @@ export const firebaseInitPromise = (async () => {
 
       deleteMonitorDoc = async (token) => {
         if (!token) return;
-        const ref = firestoreMod.doc(db, MONITORS_COLLECTION, String(token));
+        const ref = scopedDoc( MONITORS_COLLECTION, String(token));
         await firestoreMod.deleteDoc(ref);
       };
 
       // Voters collection
       const VOTERS_COLLECTION = "voters";
-      const votersColRef = firestoreMod.collection(db, VOTERS_COLLECTION);
+      const votersColRef = scopedCollection( VOTERS_COLLECTION);
 
       /** Page through the whole collection (Firestore has per-response limits on large sets). */
       const fetchAllVoterDocs = async (getDocsImpl) => {
@@ -419,7 +680,7 @@ export const firebaseInitPromise = (async () => {
 
       setVoterFs = async (voter) => {
         if (!voter || !voter.id) return;
-        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voter.id));
+        const ref = scopedDoc( VOTERS_COLLECTION, String(voter.id));
         await firestoreMod.setDoc(ref, voter, { merge: true });
       };
 
@@ -428,7 +689,7 @@ export const firebaseInitPromise = (async () => {
         const cid = String(candidateId);
         const s =
           status === "yes" || status === "no" || status === "undecided" ? status : "undecided";
-        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const ref = scopedDoc( VOTERS_COLLECTION, String(voterId));
         const fieldPath = `candidatePledges.${cid}`;
         await firestoreMod.updateDoc(ref, { [fieldPath]: s });
       };
@@ -448,7 +709,7 @@ export const firebaseInitPromise = (async () => {
             const batch = firestoreMod.writeBatch(db);
             voters.slice(i, i + MAX_BATCH).forEach((v) => {
               if (!v || v.id == null || v.id === "") return;
-              const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(v.id));
+              const ref = scopedDoc( VOTERS_COLLECTION, String(v.id));
               batch.set(ref, sanitize(v), { merge: true });
             });
             await batch.commit();
@@ -460,7 +721,7 @@ export const firebaseInitPromise = (async () => {
           await Promise.all(
             voters.slice(i, i + chunkSize).map((v) => {
               if (!v || !v.id) return Promise.resolve();
-              const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(v.id));
+              const ref = scopedDoc( VOTERS_COLLECTION, String(v.id));
               return firestoreMod.setDoc(ref, sanitize(v), { merge: true });
             })
           );
@@ -469,7 +730,7 @@ export const firebaseInitPromise = (async () => {
 
       setVoterReferendumVoteFs = async (voterId, referendumVote) => {
         if (voterId == null || voterId === "") return;
-        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const ref = scopedDoc( VOTERS_COLLECTION, String(voterId));
         const next =
           referendumVote === "yes" || referendumVote === "no" ? referendumVote : "undecided";
         await firestoreMod.setDoc(ref, { referendumVote: next }, { merge: true });
@@ -477,20 +738,20 @@ export const firebaseInitPromise = (async () => {
 
       setVoterReferendumNotesFs = async (voterId, referendumNotes) => {
         if (voterId == null || voterId === "") return;
-        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const ref = scopedDoc( VOTERS_COLLECTION, String(voterId));
         const text = referendumNotes == null ? "" : String(referendumNotes);
         await firestoreMod.setDoc(ref, { referendumNotes: text }, { merge: true });
       };
 
       setVoterVotedAtFs = async (voterId, timeMarked) => {
         if (!voterId) return;
-        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const ref = scopedDoc( VOTERS_COLLECTION, String(voterId));
         await firestoreMod.setDoc(ref, { votedAt: timeMarked || new Date().toISOString() }, { merge: true });
       };
 
       clearVoterVotedAtFs = async (voterId) => {
         if (!voterId) return;
-        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(voterId));
+        const ref = scopedDoc( VOTERS_COLLECTION, String(voterId));
         const del = firestoreMod.deleteField && firestoreMod.deleteField();
         if (del !== undefined) {
           await firestoreMod.updateDoc(ref, { votedAt: del });
@@ -501,7 +762,7 @@ export const firebaseInitPromise = (async () => {
 
       deleteVoterFs = async (id) => {
         if (!id) return;
-        const ref = firestoreMod.doc(db, VOTERS_COLLECTION, String(id));
+        const ref = scopedDoc( VOTERS_COLLECTION, String(id));
         await firestoreMod.deleteDoc(ref);
       };
 
@@ -540,7 +801,7 @@ export const firebaseInitPromise = (async () => {
 
       // Agents collection
       const AGENTS_COLLECTION = "agents";
-      const agentsColRef = firestoreMod.collection(db, AGENTS_COLLECTION);
+      const agentsColRef = scopedCollection( AGENTS_COLLECTION);
 
       getAllAgentsFs = async () => {
         const snap = await firestoreMod.getDocs(agentsColRef);
@@ -551,7 +812,7 @@ export const firebaseInitPromise = (async () => {
       setAgentFs = async (agent) => {
         if (!agent || agent.id == null || agent.id === "") return;
         const docId = String(agent.id).trim();
-        const ref = firestoreMod.doc(db, AGENTS_COLLECTION, docId);
+        const ref = scopedDoc( AGENTS_COLLECTION, docId);
         // Do not store `id` in document body — only the path id is canonical (avoids mismatch with delete/read).
         const { id: _drop, ...rest } = agent;
         const payload = {};
@@ -563,7 +824,7 @@ export const firebaseInitPromise = (async () => {
 
       deleteAgentFs = async (id) => {
         if (!id) return;
-        const ref = firestoreMod.doc(db, AGENTS_COLLECTION, String(id));
+        const ref = scopedDoc( AGENTS_COLLECTION, String(id));
         await firestoreMod.deleteDoc(ref);
       };
 
@@ -581,7 +842,7 @@ export const firebaseInitPromise = (async () => {
 
       // Candidates collection
       const CANDIDATES_COLLECTION = "candidates";
-      const candidatesColRef = firestoreMod.collection(db, CANDIDATES_COLLECTION);
+      const candidatesColRef = scopedCollection( CANDIDATES_COLLECTION);
 
       getAllCandidatesFs = async () => {
         const snap = await firestoreMod.getDocs(candidatesColRef);
@@ -590,7 +851,7 @@ export const firebaseInitPromise = (async () => {
 
       setCandidateFs = async (candidate) => {
         if (!candidate || candidate.id == null || candidate.id === "") return;
-        const ref = firestoreMod.doc(db, CANDIDATES_COLLECTION, String(candidate.id));
+        const ref = scopedDoc( CANDIDATES_COLLECTION, String(candidate.id));
         // Firestore does not accept undefined; strip or replace so writes succeed.
         const data = {};
         for (const [key, value] of Object.entries(candidate)) {
@@ -601,7 +862,7 @@ export const firebaseInitPromise = (async () => {
 
       deleteCandidateFs = async (id) => {
         if (!id) return;
-        const ref = firestoreMod.doc(db, CANDIDATES_COLLECTION, String(id));
+        const ref = scopedDoc( CANDIDATES_COLLECTION, String(id));
         await firestoreMod.deleteDoc(ref);
       };
 
@@ -618,21 +879,21 @@ export const firebaseInitPromise = (async () => {
       };
 
       // Voter lists (saved lists)
-      const voterListsColRef = firestoreMod.collection(db, VOTER_LISTS_COLLECTION);
+      const voterListsColRef = scopedCollection( VOTER_LISTS_COLLECTION);
       getAllVoterListsFs = async () => {
         const snap = await firestoreMod.getDocs(voterListsColRef);
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       getVoterListFs = async (listId) => {
         if (!listId) return null;
-        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(listId));
+        const ref = scopedDoc( VOTER_LISTS_COLLECTION, String(listId));
         const snap = await firestoreMod.getDoc(ref);
         if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
         return null;
       };
       getVoterListFromServerFs = async (listId) => {
         if (!listId) return null;
-        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(listId));
+        const ref = scopedDoc( VOTER_LISTS_COLLECTION, String(listId));
         const getDocFromServer = firestoreMod.getDocFromServer || firestoreMod.getDoc;
         const snap = await getDocFromServer(ref);
         if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
@@ -640,14 +901,14 @@ export const firebaseInitPromise = (async () => {
       };
       setVoterListFs = async (list) => {
         if (!list || !list.id) return;
-        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(list.id));
+        const ref = scopedDoc( VOTER_LISTS_COLLECTION, String(list.id));
         const data = { ...list, updatedAt: new Date().toISOString() };
         delete data.id;
         await firestoreMod.setDoc(ref, data, { merge: true });
       };
       deleteVoterListFs = async (listId) => {
         if (!listId) return;
-        const ref = firestoreMod.doc(db, VOTER_LISTS_COLLECTION, String(listId));
+        const ref = scopedDoc( VOTER_LISTS_COLLECTION, String(listId));
         await firestoreMod.deleteDoc(ref);
       };
       onVoterListsSnapshotFs = (handler) => {
@@ -664,58 +925,57 @@ export const firebaseInitPromise = (async () => {
       // Shared list (candidate link) – doc id = token
       getListShareByToken = async (token) => {
         if (!token) return null;
-        const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token));
+        const ref = scopedDoc( VOTER_LIST_SHARES_COLLECTION, String(token));
         const snap = await firestoreMod.getDoc(ref);
         if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
         return null;
       };
       setListShareFs = async (token, data) => {
         if (!token) return;
-        const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token));
+        const ref = scopedDoc( VOTER_LIST_SHARES_COLLECTION, String(token));
         await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
       };
       getPledgedReportShareByTokenFs = async (token) => {
         if (!token) return null;
-        const ref = firestoreMod.doc(db, PLEDGED_REPORT_SHARES_COLLECTION, String(token));
+        const ref = scopedDoc( PLEDGED_REPORT_SHARES_COLLECTION, String(token));
         const snap = await firestoreMod.getDoc(ref);
         if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
         return null;
       };
       setPledgedReportShareFs = async (token, data) => {
         if (!token) return;
-        const ref = firestoreMod.doc(db, PLEDGED_REPORT_SHARES_COLLECTION, String(token));
+        const ref = scopedDoc( PLEDGED_REPORT_SHARES_COLLECTION, String(token));
         await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
       };
       // Event participants share (doc id = token, collaborative row edits in subcollection)
       getEventParticipantShareByTokenFs = async (token) => {
         if (!token) return null;
-        const ref = firestoreMod.doc(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token));
+        const ref = scopedDoc( EVENT_PARTICIPANT_SHARES_COLLECTION, String(token));
         const snap = await firestoreMod.getDoc(ref);
         if (snap && snap.exists()) return { id: snap.id, ...snap.data() };
         return null;
       };
       setEventParticipantShareFs = async (token, data) => {
         if (!token) return;
-        const ref = firestoreMod.doc(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token));
+        const ref = scopedDoc( EVENT_PARTICIPANT_SHARES_COLLECTION, String(token));
         await firestoreMod.setDoc(ref, { ...data, updatedAt: new Date().toISOString() }, { merge: true });
       };
       getEventParticipantRowsFs = async (token) => {
         if (!token) return [];
-        const ref = firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
+        const ref = scopedCollection( EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
         const snap = await firestoreMod.getDocs(ref);
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       getEventParticipantRowsFromServerFs = async (token) => {
         if (!token) return [];
-        const ref = firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
+        const ref = scopedCollection( EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
         const getDocsFromServer = firestoreMod.getDocsFromServer || firestoreMod.getDocs;
         const snap = await getDocsFromServer(ref);
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       setEventParticipantRowFs = async (token, rowId, data) => {
         if (!token || !rowId) return;
-        const ref = firestoreMod.doc(
-          db,
+        const ref = scopedDoc(
           EVENT_PARTICIPANT_SHARES_COLLECTION,
           String(token),
           "rows",
@@ -725,8 +985,7 @@ export const firebaseInitPromise = (async () => {
       };
       deleteEventParticipantRowFs = async (token, rowId) => {
         if (!token || !rowId) return;
-        const ref = firestoreMod.doc(
-          db,
+        const ref = scopedDoc(
           EVENT_PARTICIPANT_SHARES_COLLECTION,
           String(token),
           "rows",
@@ -736,7 +995,7 @@ export const firebaseInitPromise = (async () => {
       };
       onEventParticipantRowsSnapshotFs = (token, handler) => {
         if (!token || typeof handler !== "function") return noopUnsubscribe;
-        const ref = firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
+        const ref = scopedCollection( EVENT_PARTICIPANT_SHARES_COLLECTION, String(token), "rows");
         return onSnapshotSafe(
           ref,
           (snap) => {
@@ -745,12 +1004,12 @@ export const firebaseInitPromise = (async () => {
           `eventParticipantShares/${String(token)}/rows`
         );
       };
-      const campaignUsersColRef = firestoreMod.collection(db, CAMPAIGN_USERS_COLLECTION);
+      const campaignUsersColRef = scopedCollection( CAMPAIGN_USERS_COLLECTION);
       getCampaignUserByEmailFs = async (email) => {
         if (!email) return null;
         const id = String(email).toLowerCase().trim();
         if (!id) return null;
-        const ref = firestoreMod.doc(db, CAMPAIGN_USERS_COLLECTION, id);
+        const ref = scopedDoc( CAMPAIGN_USERS_COLLECTION, id);
         const snap = await firestoreMod.getDoc(ref);
         if (snap && snap.exists()) return { email: id, ...snap.data() };
         return null;
@@ -763,7 +1022,7 @@ export const firebaseInitPromise = (async () => {
         if (!user || !user.email) return;
         const id = String(user.email).toLowerCase().trim();
         if (!id) return;
-        const ref = firestoreMod.doc(db, CAMPAIGN_USERS_COLLECTION, id);
+        const ref = scopedDoc( CAMPAIGN_USERS_COLLECTION, id);
         await firestoreMod.setDoc(ref, {
           email: id,
           displayName: user.displayName || "",
@@ -776,23 +1035,23 @@ export const firebaseInitPromise = (async () => {
         if (!email) return;
         const id = String(email).toLowerCase().trim();
         if (!id) return;
-        const ref = firestoreMod.doc(db, CAMPAIGN_USERS_COLLECTION, id);
+        const ref = scopedDoc( CAMPAIGN_USERS_COLLECTION, id);
         await firestoreMod.deleteDoc(ref);
       };
       setListShareStatusFs = async (token, voterId, status) => {
         if (!token || !voterId) return;
-        const ref = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status", String(voterId));
+        const ref = scopedDoc( VOTER_LIST_SHARES_COLLECTION, String(token), "status", String(voterId));
         await firestoreMod.setDoc(ref, { status: status || "", updatedAt: new Date().toISOString() });
       };
       getListShareStatusFs = async (token) => {
         if (!token) return [];
-        const ref = firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status");
+        const ref = scopedCollection( VOTER_LIST_SHARES_COLLECTION, String(token), "status");
         const snap = await firestoreMod.getDocs(ref);
         return snap.docs.map((d) => ({ voterId: d.id, ...d.data() }));
       };
       onListShareStatusSnapshotFs = (token, handler) => {
         if (!token || typeof handler !== "function") return noopUnsubscribe;
-        const ref = firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION, String(token), "status");
+        const ref = scopedCollection( VOTER_LIST_SHARES_COLLECTION, String(token), "status");
         return onSnapshotSafe(
           ref,
           (snap) => {
@@ -808,7 +1067,7 @@ export const firebaseInitPromise = (async () => {
           const list = listDoc.data();
           const shareToken = list.shareToken;
           if (!shareToken) continue;
-          const statusRef = firestoreMod.doc(db, VOTER_LIST_SHARES_COLLECTION, shareToken, "status", String(voterId));
+          const statusRef = scopedDoc( VOTER_LIST_SHARES_COLLECTION, shareToken, "status", String(voterId));
           const statusSnap = await firestoreMod.getDoc(statusRef);
           if (statusSnap && statusSnap.exists()) {
             out.push({ listId: listDoc.id, listName: list.name, shareToken, ...statusSnap.data() });
@@ -818,19 +1077,19 @@ export const firebaseInitPromise = (async () => {
       };
 
       // Events collection
-      const eventsColRef = firestoreMod.collection(db, EVENTS_COLLECTION);
+      const eventsColRef = scopedCollection( EVENTS_COLLECTION);
       getAllEventsFs = async () => {
         const snap = await firestoreMod.getDocs(eventsColRef);
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       setEventFs = async (id, data) => {
         if (!id) return;
-        const ref = firestoreMod.doc(db, EVENTS_COLLECTION, String(id));
+        const ref = scopedDoc( EVENTS_COLLECTION, String(id));
         await firestoreMod.setDoc(ref, { ...data }, { merge: true });
       };
       deleteEventFs = async (id) => {
         if (!id) return;
-        const ref = firestoreMod.doc(db, EVENTS_COLLECTION, String(id));
+        const ref = scopedDoc( EVENTS_COLLECTION, String(id));
         await firestoreMod.deleteDoc(ref);
       };
       onEventsSnapshotFs = (handler) => {
@@ -845,7 +1104,7 @@ export const firebaseInitPromise = (async () => {
       };
 
       // Zero Day transport trips
-      const transportTripsColRef = firestoreMod.collection(db, TRANSPORT_TRIPS_COLLECTION);
+      const transportTripsColRef = scopedCollection( TRANSPORT_TRIPS_COLLECTION);
       getAllTransportTripsFs = async () => {
         const snap = await firestoreMod.getDocs(transportTripsColRef);
         return snap.docs.map((d) => {
@@ -856,7 +1115,7 @@ export const firebaseInitPromise = (async () => {
       };
       setTransportTripFs = async (trip) => {
         if (!trip || trip.id == null) return;
-        const ref = firestoreMod.doc(db, TRANSPORT_TRIPS_COLLECTION, String(trip.id));
+        const ref = scopedDoc( TRANSPORT_TRIPS_COLLECTION, String(trip.id));
         const data = {
           tripType: trip.tripType,
           route: trip.route,
@@ -885,7 +1144,7 @@ export const firebaseInitPromise = (async () => {
       };
       deleteTransportTripFs = async (tripId) => {
         if (tripId == null) return;
-        const ref = firestoreMod.doc(db, TRANSPORT_TRIPS_COLLECTION, String(tripId));
+        const ref = scopedDoc( TRANSPORT_TRIPS_COLLECTION, String(tripId));
         await firestoreMod.deleteDoc(ref);
       };
       onTransportTripsSnapshotFs = (handler) => {
@@ -903,14 +1162,14 @@ export const firebaseInitPromise = (async () => {
         );
       };
 
-      const transportRoutesColRef = firestoreMod.collection(db, TRANSPORT_ROUTES_COLLECTION);
+      const transportRoutesColRef = scopedCollection( TRANSPORT_ROUTES_COLLECTION);
       getAllTransportRoutesFs = async () => {
         const snap = await firestoreMod.getDocs(transportRoutesColRef);
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       setTransportRouteFs = async (route) => {
         if (!route || route.id == null) return;
-        const ref = firestoreMod.doc(db, TRANSPORT_ROUTES_COLLECTION, String(route.id));
+        const ref = scopedDoc( TRANSPORT_ROUTES_COLLECTION, String(route.id));
         const data = {
           tripIds: Array.isArray(route.tripIds) ? route.tripIds.map((x) => (typeof x === "number" ? x : Number(x))) : [],
           createdAt:
@@ -939,7 +1198,7 @@ export const firebaseInitPromise = (async () => {
       };
       deleteTransportRouteFs = async (routeId) => {
         if (routeId == null) return;
-        const ref = firestoreMod.doc(db, TRANSPORT_ROUTES_COLLECTION, String(routeId));
+        const ref = scopedDoc( TRANSPORT_ROUTES_COLLECTION, String(routeId));
         await firestoreMod.deleteDoc(ref);
       };
       onTransportRoutesSnapshotFs = (handler) => {
@@ -973,10 +1232,9 @@ export const firebaseInitPromise = (async () => {
         if (!token) return;
         const t = String(token);
         await deleteCollectionDocs(
-          firestoreMod.collection(db, MONITORS_COLLECTION, t, "voted")
+          scopedCollection( MONITORS_COLLECTION, t, "voted")
         );
-        const bsRef = firestoreMod.doc(
-          db,
+        const bsRef = scopedDoc(
           MONITORS_COLLECTION,
           t,
           "ballotSession",
@@ -997,8 +1255,7 @@ export const firebaseInitPromise = (async () => {
           const batch = firestoreMod.writeBatch(db);
           valid.slice(i, i + 450).forEach((item) => {
             const docId = String(item[field]);
-            const ref = firestoreMod.doc(
-              db,
+            const ref = scopedDoc(
               CAMPAIGN_ARCHIVES_COLLECTION,
               archiveId,
               segment,
@@ -1027,7 +1284,7 @@ export const firebaseInitPromise = (async () => {
         };
         try {
           report(0, "Preparing archive…");
-          const archivesCol = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION);
+          const archivesCol = scopedCollection( CAMPAIGN_ARCHIVES_COLLECTION);
           const archiveRef = firestoreMod.doc(archivesCol);
           const archiveId = archiveRef.id;
           const nowIso = new Date().toISOString();
@@ -1083,8 +1340,7 @@ export const firebaseInitPromise = (async () => {
             );
             chunk.forEach((v) => {
               const vid = String(v.id);
-              const ref = firestoreMod.doc(
-                db,
+              const ref = scopedDoc(
                 CAMPAIGN_ARCHIVES_COLLECTION,
                 archiveId,
                 "voters",
@@ -1123,8 +1379,7 @@ export const firebaseInitPromise = (async () => {
             );
             const mon = await getMonitorByToken(tok);
             if (!mon) continue;
-            const mref = firestoreMod.doc(
-              db,
+            const mref = scopedDoc(
               CAMPAIGN_ARCHIVES_COLLECTION,
               archiveId,
               "archivedMonitors",
@@ -1137,8 +1392,7 @@ export const firebaseInitPromise = (async () => {
             for (let i = 0; i < votedEntries.length; i += 450) {
               const batch = firestoreMod.writeBatch(db);
               votedEntries.slice(i, i + 450).forEach((e) => {
-                const ref = firestoreMod.doc(
-                  db,
+                const ref = scopedDoc(
                   CAMPAIGN_ARCHIVES_COLLECTION,
                   archiveId,
                   "archivedMonitors",
@@ -1152,8 +1406,7 @@ export const firebaseInitPromise = (async () => {
             }
 
             const sess = await getBallotSessionFs(tok);
-            const bsRef = firestoreMod.doc(
-              db,
+            const bsRef = scopedDoc(
               CAMPAIGN_ARCHIVES_COLLECTION,
               archiveId,
               "archivedMonitors",
@@ -1188,7 +1441,7 @@ export const firebaseInitPromise = (async () => {
       const readArchivedFlatSegment = async (archiveId, segment) => {
         if (!archiveId || !ARCHIVED_FLAT_SEGMENTS.has(segment)) return [];
         try {
-          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, segment);
+          const col = scopedCollection( CAMPAIGN_ARCHIVES_COLLECTION, archiveId, segment);
           const snap = await firestoreMod.getDocs(col);
           return snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
         } catch (e) {
@@ -1200,7 +1453,7 @@ export const firebaseInitPromise = (async () => {
       getArchivedArchiveRootFs = async (archiveId) => {
         if (!archiveId) return null;
         try {
-          const ref = firestoreMod.doc(db, CAMPAIGN_ARCHIVES_COLLECTION, String(archiveId));
+          const ref = scopedDoc( CAMPAIGN_ARCHIVES_COLLECTION, String(archiveId));
           const snap = await firestoreMod.getDoc(ref);
           if (!snap || !snap.exists()) return null;
           return { id: snap.id, ...snap.data() };
@@ -1217,7 +1470,7 @@ export const firebaseInitPromise = (async () => {
       getArchivedMonitorsFs = async (archiveId) => {
         if (!archiveId) return [];
         try {
-          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, "archivedMonitors");
+          const col = scopedCollection( CAMPAIGN_ARCHIVES_COLLECTION, archiveId, "archivedMonitors");
           const snap = await firestoreMod.getDocs(col);
           return snap.docs.map((d) => {
             const data = d.data() || {};
@@ -1233,7 +1486,7 @@ export const firebaseInitPromise = (async () => {
         if (!archiveId) return { ok: false };
         try {
           const segDelete = async (segment) => {
-            const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, segment);
+            const col = scopedCollection( CAMPAIGN_ARCHIVES_COLLECTION, archiveId, segment);
             await deleteCollectionDocs(col);
           };
           await segDelete("voters");
@@ -1243,13 +1496,12 @@ export const firebaseInitPromise = (async () => {
           await segDelete("transportTrips");
           await segDelete("transportRoutes");
           await segDelete("voterLists");
-          const monCol = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId, "archivedMonitors");
+          const monCol = scopedCollection( CAMPAIGN_ARCHIVES_COLLECTION, archiveId, "archivedMonitors");
           const monSnap = await firestoreMod.getDocs(monCol);
           for (const md of monSnap.docs) {
             const tok = md.id;
             await deleteCollectionDocs(
-              firestoreMod.collection(
-                db,
+              scopedCollection(
                 CAMPAIGN_ARCHIVES_COLLECTION,
                 archiveId,
                 "archivedMonitors",
@@ -1257,8 +1509,7 @@ export const firebaseInitPromise = (async () => {
                 "voted"
               )
             );
-            const bsRef = firestoreMod.doc(
-              db,
+            const bsRef = scopedDoc(
               CAMPAIGN_ARCHIVES_COLLECTION,
               archiveId,
               "archivedMonitors",
@@ -1271,7 +1522,7 @@ export const firebaseInitPromise = (async () => {
             } catch (_) {}
             await firestoreMod.deleteDoc(md.ref);
           }
-          await firestoreMod.deleteDoc(firestoreMod.doc(db, CAMPAIGN_ARCHIVES_COLLECTION, archiveId));
+          await firestoreMod.deleteDoc(scopedDoc( CAMPAIGN_ARCHIVES_COLLECTION, archiveId));
           return { ok: true };
         } catch (e) {
           console.warn("[Firebase] deleteCampaignArchiveFs", e);
@@ -1290,7 +1541,7 @@ export const firebaseInitPromise = (async () => {
             if (t !== 0) return t;
             return String(b.id).localeCompare(String(a.id));
           };
-          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION);
+          const col = scopedCollection( CAMPAIGN_ARCHIVES_COLLECTION);
           const snap = await firestoreMod.getDocs(col);
           const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           const toDelete = new Set();
@@ -1345,7 +1596,7 @@ export const firebaseInitPromise = (async () => {
       listCampaignArchivesFs = async () => {
         try {
           await pruneDuplicateCampaignArchivesFs(null);
-          const col = firestoreMod.collection(db, CAMPAIGN_ARCHIVES_COLLECTION);
+          const col = scopedCollection( CAMPAIGN_ARCHIVES_COLLECTION);
           const snap = await firestoreMod.getDocs(col);
           const out = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           out.sort((a, b) => String(b.archivedAt || "").localeCompare(String(a.archivedAt || "")));
@@ -1446,7 +1697,7 @@ export const firebaseInitPromise = (async () => {
 
           report(86, "Removing shared list links…");
           const sharesSnap = await firestoreMod.getDocs(
-            firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION)
+            scopedCollection( VOTER_LIST_SHARES_COLLECTION)
           );
           const shareDocs = sharesSnap.docs;
           for (let si = 0; si < shareDocs.length; si++) {
@@ -1461,21 +1712,21 @@ export const firebaseInitPromise = (async () => {
                 : "Clearing voter list shares…"
             );
             await deleteCollectionDocs(
-              firestoreMod.collection(db, VOTER_LIST_SHARES_COLLECTION, token, "status")
+              scopedCollection( VOTER_LIST_SHARES_COLLECTION, token, "status")
             );
             await firestoreMod.deleteDoc(d.ref);
           }
           if (!shareDocs.length) report(91, "No voter list shares to clear.");
           report(92, "Removing pledged report shares…");
           const pledgedSnap = await firestoreMod.getDocs(
-            firestoreMod.collection(db, PLEDGED_REPORT_SHARES_COLLECTION)
+            scopedCollection( PLEDGED_REPORT_SHARES_COLLECTION)
           );
           for (const d of pledgedSnap.docs) {
             await firestoreMod.deleteDoc(d.ref);
           }
           report(95, "Removing event participant shares…");
           const evPartSnap = await firestoreMod.getDocs(
-            firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION)
+            scopedCollection( EVENT_PARTICIPANT_SHARES_COLLECTION)
           );
           const evDocs = evPartSnap.docs;
           for (let ei = 0; ei < evDocs.length; ei++) {
@@ -1489,7 +1740,7 @@ export const firebaseInitPromise = (async () => {
                 : "Clearing event shares…"
             );
             await deleteCollectionDocs(
-              firestoreMod.collection(db, EVENT_PARTICIPANT_SHARES_COLLECTION, d.id, "rows")
+              scopedCollection( EVENT_PARTICIPANT_SHARES_COLLECTION, d.id, "rows")
             );
             await firestoreMod.deleteDoc(d.ref);
           }
@@ -1540,6 +1791,11 @@ export const firebaseInitPromise = (async () => {
       // Never set `sitekey` — the SDK loads the project key via Identity Toolkit.
       createRecaptchaVerifier: (containerId, parameters) =>
         new authMod.RecaptchaVerifier(auth, containerId, parameters || {}),
+      getActiveCampaignWorkspaceId,
+      setActiveCampaignWorkspaceFs,
+      listCampaignWorkspacesFs,
+      createCampaignWorkspaceFs,
+      updateCampaignWorkspaceDetailsFs,
       getFirestoreCampaignConfig,
       setFirestoreCampaignConfig,
       updateFirestoreCampaignConfig,

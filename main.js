@@ -30,6 +30,7 @@ import {
 } from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
 import { initTableViewMenus } from "./table-view-menu.js";
+import { clearLocalCampaignWorkspaceCache } from "./archive-helpers.js";
 
 /** Firestore ballot session — same doc as ballot-box.html (`monitors/{token}/ballotSession/settings`). */
 function getMonitorBallotSessionOpts(api, monitorToken) {
@@ -857,17 +858,48 @@ const ELECTION_TYPE_MAP = [
   { campaign: "Presidential Election", value: "presidential", label: "Presidential" },
 ];
 
-function applyElectionTypeFromCampaign() {
+/**
+ * Top bar `#electionType`: lists campaign workspaces; value is workspace id (`default` or custom).
+ * Election scope for data (LCE merge, etc.) comes from `getCampaignConfig().campaignType`.
+ */
+async function rebuildHeaderWorkspaceSelect() {
   if (!electionTypeSelect) return;
-  const config = getCampaignConfig();
-  const campaignType = (config.campaignType || "Local Council Election").trim();
-  const mapped = ELECTION_TYPE_MAP.find((m) => m.campaign === campaignType) || ELECTION_TYPE_MAP[0];
-  electionTypeSelect.value = mapped.value;
+  const api = await firebaseInitPromise;
+  const activeId = api?.getActiveCampaignWorkspaceId?.() || "default";
+  let list = [];
+  try {
+    if (api?.ready && api.listCampaignWorkspacesFs) {
+      list = await api.listCampaignWorkspacesFs();
+    }
+  } catch (e) {
+    console.warn("[App] rebuildHeaderWorkspaceSelect", e);
+  }
+  electionTypeSelect.innerHTML = "";
+  if (!Array.isArray(list) || list.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "default";
+    opt.textContent = "Default campaign";
+    electionTypeSelect.appendChild(opt);
+  } else {
+    list.forEach((w) => {
+      const opt = document.createElement("option");
+      opt.value = String(w.id || "");
+      opt.textContent = String(w.name || w.id || "Campaign");
+      electionTypeSelect.appendChild(opt);
+    });
+  }
+  const pick = [...electionTypeSelect.options].some((o) => o.value === activeId)
+    ? activeId
+    : electionTypeSelect.options[0]?.value;
+  if (pick) electionTypeSelect.value = pick;
 }
 
 function getDashboardScope() {
+  const cfg = getCampaignConfig();
+  const cType = (cfg.campaignType || "Local Council Election").trim();
+  const mapped = ELECTION_TYPE_MAP.find((m) => m.campaign === cType) || ELECTION_TYPE_MAP[0];
   return {
-    electionType: electionTypeSelect ? electionTypeSelect.value : "local",
+    electionType: mapped.value,
     constituency: constituencySelect ? constituencySelect.value : "",
   };
 }
@@ -888,21 +920,47 @@ async function syncVotersAndDashboardForElectionScope() {
   document.dispatchEvent(new CustomEvent("effective-election-view-changed"));
 }
 
-applyElectionTypeFromCampaign();
-electionTypeSelect.addEventListener("change", () => {
-  void syncVotersAndDashboardForElectionScope();
+electionTypeSelect.addEventListener("change", async () => {
+  const next = electionTypeSelect.value;
+  let cur = "default";
+  try {
+    const api = await firebaseInitPromise;
+    cur = api?.getActiveCampaignWorkspaceId?.() || "default";
+    if (String(next) === String(cur)) {
+      void syncVotersAndDashboardForElectionScope();
+      return;
+    }
+    if (!api?.setActiveCampaignWorkspaceFs) return;
+    const res = await api.setActiveCampaignWorkspaceFs(next);
+    if (!res?.ok) {
+      if (window.showAppToast) {
+        window.showAppToast({
+          title: "Could not switch campaign",
+          meta: res?.error || "",
+          variant: "error",
+        });
+      }
+      electionTypeSelect.value = cur;
+      return;
+    }
+    clearLocalCampaignWorkspaceCache();
+    window.location.reload();
+  } catch (e) {
+    console.error("[App] workspace switch", e);
+    electionTypeSelect.value = cur;
+  }
 });
 constituencySelect.addEventListener("change", handleScopeChange);
 
-document.addEventListener("campaign-config-changed", (ev) => {
-  // Only align the header dropdown with Settings when the user saved campaign type there.
-  // Firestore sync and other config updates must not reset the dropdown — otherwise choosing
-  // "Local Council" in the header is immediately overwritten by remote campaignType (e.g. Presidential).
-  if (ev.detail?.alignHeaderElectionType) {
-    applyElectionTypeFromCampaign();
-  }
+document.addEventListener("campaign-config-changed", async () => {
+  await rebuildHeaderWorkspaceSelect();
   void syncVotersAndDashboardForElectionScope();
   applyPledgesNavVisibility();
+});
+
+document.addEventListener("workspaces-metadata-changed", async () => {
+  await rebuildHeaderWorkspaceSelect();
+  void syncVotersAndDashboardForElectionScope();
 });
 
 // Keep dashboard stats and charts up to date when data changes in other modules.
@@ -1093,6 +1151,10 @@ async function startAppModules(firebaseApi) {
   startAppModules._started = true;
   console.log("[App] Starting application modules…");
 
+  initSettingsModule();
+  await syncCampaignConfigFromFirestore();
+  await rebuildHeaderWorkspaceSelect();
+
   const votersContext = await initVotersModule(getCurrentUser, { openAddAgentModal });
   const monitorToken = new URLSearchParams(window.location.search).get("monitor");
 
@@ -1114,9 +1176,6 @@ async function startAppModules(firebaseApi) {
   const callsContext = initCallsModule(votersContext);
   initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser });
   initZeroDayModule(votersContext, { pledgesContext, updateVoterPhone, getCurrentUser });
-  initSettingsModule();
-  await syncCampaignConfigFromFirestore();
-  applyElectionTypeFromCampaign();
   await syncVotersAndDashboardForElectionScope();
   applyPledgesNavVisibility();
 
@@ -1133,6 +1192,7 @@ async function startAppModules(firebaseApi) {
       refreshBtn.classList.add("topbar__refresh-btn--spinning");
       try {
         await syncCampaignConfigFromFirestore();
+        await rebuildHeaderWorkspaceSelect();
         await syncVotersAndDashboardForElectionScope();
         applyPledgesNavVisibility();
         await syncCandidateAssignmentsToFirebase();
@@ -1144,10 +1204,7 @@ async function startAppModules(firebaseApi) {
           refreshTransportRoutesFromFirestore(),
         ]);
         await syncVotedFromFirestore();
-        const scope = {
-          electionType: electionTypeSelect.value,
-          constituency: constituencySelect.value,
-        };
+        const scope = getDashboardScope();
         refreshDashboard(scope);
         document.dispatchEvent(new CustomEvent("zero-day-refresh"));
         refreshStatusEl.textContent = isAuto ? "Auto-sync completed" : "Syncing completed";
@@ -1462,5 +1519,9 @@ async function boot() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", boot);
+document.addEventListener("DOMContentLoaded", () => {
+  const loginYearEl = document.getElementById("loginYear");
+  if (loginYearEl) loginYearEl.textContent = String(new Date().getFullYear());
+  boot();
+});
 
