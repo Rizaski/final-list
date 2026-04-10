@@ -15,152 +15,104 @@
   <script src="https://www.google.com/recaptcha/api.js" async defer></script>
 </head>
   <body>
-   <!-- Enterprise split login: election-themed hero (left) + sign-in (right) -->
+   <!-- Login view (shown for authenticated app shell; hidden for ballot-box links) -->
   <div id="login-view" class="login-view" hidden>
-    <div class="login-shell">
-      <aside class="login-hero" aria-hidden="true">
-        <div class="login-hero__mesh" aria-hidden="true"></div>
-        <div class="login-hero__orbs" aria-hidden="true">
-          <span class="login-hero__orb login-hero__orb--a"></span>
-          <span class="login-hero__orb login-hero__orb--b"></span>
-          <span class="login-hero__orb login-hero__orb--c"></span>
+    <div class="login-view__bg" aria-hidden="true">
+      <div class="login-view__orb login-view__orb--a"></div>
+      <div class="login-view__orb login-view__orb--b"></div>
+      <div class="login-view__mesh"></div>
+    </div>
+    <div class="login-view__content">
+      <header class="login-brand">
+        <div class="brand-mark login-brand__mark">MV</div>
+        <div class="login-brand__lockup">
+          <p class="login-brand__name">Dhuvaafaru</p>
+          <p class="login-brand__tagline">Campaign Portal · Maldives</p>
         </div>
-        <div class="login-hero__content">
-          <p class="login-hero__eyebrow">Election operations platform</p>
-          <h1 class="login-hero__title">Run your campaign with clarity and control</h1>
-          <p class="login-hero__lead">
-            Voter lists, pledges, field teams, and reporting — secured for authorised staff.
-          </p>
-          <div class="login-hero__viz" aria-hidden="true">
-            <div class="login-hero__ballot-wrap">
-              <svg class="login-hero__ballot-svg" viewBox="0 0 120 140" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <rect x="18" y="12" width="84" height="100" rx="8" stroke="rgba(255,255,255,0.35)" stroke-width="2.5"/>
-                <rect x="28" y="28" width="64" height="10" rx="2" class="login-hero__ballot-slot login-hero__ballot-slot--1"/>
-                <rect x="28" y="46" width="64" height="10" rx="2" class="login-hero__ballot-slot login-hero__ballot-slot--2"/>
-                <rect x="28" y="64" width="64" height="10" rx="2" class="login-hero__ballot-slot login-hero__ballot-slot--3"/>
-                <path class="login-hero__check" d="M38 98l14 14 32-36" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-                <rect x="42" y="118" width="36" height="12" rx="3" fill="rgba(255,255,255,0.12)"/>
-              </svg>
-            </div>
-            <div class="login-hero__bars">
-              <span class="login-hero__bar" style="--h: 38%"></span>
-              <span class="login-hero__bar" style="--h: 62%"></span>
-              <span class="login-hero__bar" style="--h: 48%"></span>
-              <span class="login-hero__bar" style="--h: 88%"></span>
-              <span class="login-hero__bar" style="--h: 72%"></span>
-            </div>
-            <div class="login-hero__rings" aria-hidden="true">
-              <span class="login-hero__ring"></span>
-              <span class="login-hero__ring"></span>
-            </div>
-          </div>
-          <ul class="login-hero__bullets">
-            <li>Role-based access</li>
-            <li>Audit-friendly sign-in</li>
-            <li>Workspace isolation</li>
-          </ul>
-        </div>
-      </aside>
-
-      <div class="login-panel">
-        <div class="login-panel__scroll">
-          <div class="login-panel__inner">
-            <header class="login-panel__header">
-              <div class="login-panel__logo" aria-hidden="true">
-                <span class="login-panel__logo-mark">MV</span>
-              </div>
-              <div class="login-panel__titles">
-                <p class="login-panel__product">Campaign Console</p>
-                <p class="login-panel__scope">Dhuvaafaru Campaign Portal</p>
-              </div>
-            </header>
-
-            <div class="login-card">
-              <div id="loginStepCredentials" class="login-step">
-                <h2 class="login-card__heading">Sign in</h2>
-                <p class="login-card__subheading">Use your organisation email and password. SSO may be enabled by your administrator.</p>
-                <form id="loginForm" class="login-form" autocomplete="on">
-                  <div class="form-group">
-                    <label for="loginEmail">Work email</label>
-                    <input
-                      id="loginEmail"
-                      class="login-input"
-                      type="email"
-                      required
-                      autocomplete="email"
-                      placeholder="name@organisation.mv"
-                    >
-                  </div>
-                  <div class="form-group">
-                    <label for="loginPassword">Password</label>
-                    <input
-                      id="loginPassword"
-                      class="login-input"
-                      type="password"
-                      required
-                      autocomplete="current-password"
-                      placeholder="Enter your password"
-                    >
-                  </div>
-                  <div class="login-form__meta">
-                    <p class="login-helper">Your sign-in may be logged for security and compliance.</p>
-                  </div>
-                  <p id="loginError" class="login-error" aria-live="polite"></p>
-                  <button id="loginSubmit" type="submit" class="primary-button primary-button--login">
-                    <span class="btn__text">Continue</span>
-                  </button>
-                  <div class="login-form__meta-helper login-form__meta-helper--muted">
-                    <p class="login-helper-muted">Need help? Contact your campaign administrator.</p>
-                  </div>
-                </form>
-              </div>
-
-              <div id="loginStepMfa" class="login-step login-step--mfa" hidden>
-                <h2 class="login-card__heading">Verify your identity</h2>
-                <p class="login-card__subheading">Enter the SMS code sent to your enrolled device.</p>
-                <p id="loginMfaHint" class="login-helper login-mfa-hint" aria-live="polite"></p>
-                <div id="loginMfaRecaptcha" class="login-mfa-recaptcha" aria-label="Security check"></div>
+      </header>
+      <div class="login-card">
+        <div id="loginStepCredentials" class="login-step">
+              <p class="login-card__kicker">Campaign Console</p>
+              <h2 class="login-card__heading">Sign in</h2>
+              <p class="login-card__subheading">Enter the credentials provided by your campaign administrator.</p>
+              <form id="loginForm" class="login-form" autocomplete="on">
                 <div class="form-group">
-                  <label for="loginMfaCode">Verification code</label>
+                  <label for="loginEmail">Email</label>
                   <input
-                    id="loginMfaCode"
+                    id="loginEmail"
                     class="login-input"
-                    type="text"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    maxlength="8"
-                    placeholder="Enter code"
+                    type="email"
+                    required
+                    autocomplete="email"
+                    placeholder="you@organisation.mv"
                   >
                 </div>
-                <p id="loginMfaError" class="login-error" aria-live="polite"></p>
-                <p id="loginMfaStatus" class="login-error login-error--info" aria-live="polite"></p>
-                <button type="button" id="loginMfaVerify" class="primary-button primary-button--login">
-                  <span class="btn__text">Verify &amp; continue</span>
+                <div class="form-group">
+                  <label for="loginPassword">Password</label>
+                  <input
+                    id="loginPassword"
+                    class="login-input"
+                    type="password"
+                    required
+                    autocomplete="current-password"
+                    placeholder="••••••••"
+                  >
+                </div>
+                <div class="login-form__meta">
+                  <p class="login-helper">Sessions may be monitored for security and compliance.</p>
+                </div>
+                <p id="loginError" class="login-error" aria-live="polite"></p>
+                <button id="loginSubmit" type="submit" class="primary-button primary-button--login">
+                  <span class="btn__text">Continue</span>
                 </button>
-                <button type="button" id="loginMfaResend" class="ghost-button--login">Resend code</button>
-                <button type="button" id="loginMfaCancel" class="ghost-button--login">Back to sign in</button>
-                <details class="login-mfa-troubleshoot">
-                  <summary>If the code is never sent (server error)</summary>
-                  <p class="login-helper">The app cannot fix SMS delivery. A project admin must use <strong>Firebase Console</strong>:</p>
-                  <ol>
-                    <li><strong>Authentication → Settings → Authorized domains</strong> — include this site’s hostname.</li>
-                    <li><strong>Authentication → SMS / multi-factor</strong> — allow the <strong>SMS region</strong> for the phone number’s country; confirm billing / Identity Platform if SMS is required.</li>
-                    <li>Or open <strong>Authentication → Users</strong>, select the user, and <strong>remove the SMS second factor</strong> so sign-in is email/password only until SMS works again.</li>
-                    <li>Persistent <code>mfaSignIn:start</code> HTTP 500 — contact <strong>Firebase Support</strong> with project ID <code id="loginMfaProjectId">—</code>.</li>
-                  </ol>
-                  <p class="login-mfa-troubleshoot__actions">
-                    <a id="loginMfaConsoleUsers" href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer">Authentication → Users</a>
-                    <span aria-hidden="true"> · </span>
-                    <a id="loginMfaConsoleSettings" href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer">Authentication → Settings</a>
-                  </p>
-                </details>
+                <div class="login-form__meta-helper login-form__meta-helper--muted">
+                  <p class="login-helper-muted">Need help? Contact your campaign administrator.</p>
+                </div>
+              </form>
+        </div>
+        <div id="loginStepMfa" class="login-step login-step--mfa" hidden>
+              <p class="login-card__kicker login-card__kicker--accent">Second step</p>
+              <h2 class="login-card__heading">SMS verification</h2>
+              <p class="login-card__subheading">Enter the code sent to your enrolled phone number to finish signing in.</p>
+              <p id="loginMfaHint" class="login-helper login-mfa-hint" aria-live="polite"></p>
+              <div id="loginMfaRecaptcha" class="login-mfa-recaptcha" aria-label="Security check"></div>
+              <div class="form-group">
+                <label for="loginMfaCode">SMS code</label>
+                <input
+                  id="loginMfaCode"
+                  class="login-input"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  maxlength="8"
+                  placeholder="6-digit code"
+                >
               </div>
-            </div>
-
-            <p class="login-panel__footer">© <span id="loginYear"></span> Campaign operations. All rights reserved.</p>
-          </div>
+              <p id="loginMfaError" class="login-error" aria-live="polite"></p>
+              <p id="loginMfaStatus" class="login-error login-error--info" aria-live="polite"></p>
+              <button type="button" id="loginMfaVerify" class="primary-button primary-button--login">
+                <span class="btn__text">Verify &amp; continue</span>
+              </button>
+              <button type="button" id="loginMfaResend" class="ghost-button--login">Resend code</button>
+              <button type="button" id="loginMfaCancel" class="ghost-button--login">Back to sign in</button>
+              <details class="login-mfa-troubleshoot">
+                <summary>If the code is never sent (server error)</summary>
+                <p class="login-helper">The app cannot fix SMS delivery. A project admin must use <strong>Firebase Console</strong>:</p>
+                <ol>
+                  <li><strong>Authentication → Settings → Authorized domains</strong> — include this site’s hostname.</li>
+                  <li><strong>Authentication → SMS / multi-factor</strong> — allow the <strong>SMS region</strong> for the phone number’s country; confirm billing / Identity Platform if SMS is required.</li>
+                  <li>Or open <strong>Authentication → Users</strong>, select the user, and <strong>remove the SMS second factor</strong> so sign-in is email/password only until SMS works again.</li>
+                  <li>Persistent <code>mfaSignIn:start</code> HTTP 500 — contact <strong>Firebase Support</strong> with project ID <code id="loginMfaProjectId">—</code>.</li>
+                </ol>
+                <p class="login-mfa-troubleshoot__actions">
+                  <a id="loginMfaConsoleUsers" href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer">Authentication → Users</a>
+                  <span aria-hidden="true"> · </span>
+                  <a id="loginMfaConsoleSettings" href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer">Authentication → Settings</a>
+                </p>
+              </details>
         </div>
       </div>
+      <p class="login-main__footer">Secure session · Dhuvaafaru Campaign Portal</p>
     </div>
   </div>
 

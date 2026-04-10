@@ -1519,9 +1519,5 @@ async function boot() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  const loginYearEl = document.getElementById("loginYear");
-  if (loginYearEl) loginYearEl.textContent = String(new Date().getFullYear());
-  boot();
-});
+document.addEventListener("DOMContentLoaded", boot);
 
