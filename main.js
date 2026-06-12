@@ -39,7 +39,7 @@ import {
 } from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
 import { initTableViewMenus } from "./table-view-menu.js";
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                import { clearLocalCampaignWorkspaceCache } from "./archive-helpers.js";
+import { clearLocalCampaignWorkspaceCache } from "./archive-helpers.js";
 
 /** Firestore ballot session — same doc as ballot-box.html (`monitors/{token}/ballotSession/settings`). */
 function getMonitorBallotSessionOpts(api, monitorToken) {
@@ -102,6 +102,55 @@ const activeSidebarFeatureByModule = new Map();
 const SETTINGS_MODULE_KEY = "settings";
 const ADMIN_EMAIL = "alirixamv@gmail.com";
 const AUTH_STORAGE_KEY = "campaign-auth-user";
+const AUTH_PROJECT_KEY = "campaign-auth-firebase-project";
+
+function setLoginAlert(el, message) {
+  if (!el) return;
+  if (!message) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.textContent = message;
+}
+
+function setLoginAuthStatus(state, message) {
+  const box = document.getElementById("loginAuthStatus");
+  const text = document.getElementById("loginAuthStatusText");
+  if (!box || !text) return;
+  box.classList.remove(
+    "login-auth-status--loading",
+    "login-auth-status--ready",
+    "login-auth-status--error"
+  );
+  box.classList.add(`login-auth-status--${state}`);
+  text.textContent = message;
+}
+
+function syncAuthProjectCache(projectId) {
+  if (!projectId) return;
+  try {
+    const stored = localStorage.getItem(AUTH_PROJECT_KEY);
+    if (stored && stored !== projectId) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+    localStorage.setItem(AUTH_PROJECT_KEY, projectId);
+  } catch (_) {}
+}
+
+function wireLoginPasswordToggle() {
+  const input = document.getElementById("loginPassword");
+  const btn = document.getElementById("loginPasswordToggle");
+  if (!input || !btn) return;
+  btn.addEventListener("click", () => {
+    const isPassword = input.type === "password";
+    input.type = isPassword ? "text" : "password";
+    btn.textContent = isPassword ? "Hide" : "Show";
+    btn.setAttribute("aria-label", isPassword ? "Hide password" : "Show password");
+    btn.setAttribute("aria-pressed", isPassword ? "true" : "false");
+  });
+}
 
 /** Log Firebase Auth errors with server payload (internal-error often hides detail in customData). */
 function logFirebaseAuthError(context, err, opts = {}) {
@@ -150,7 +199,32 @@ function authErrorMessageForUi(err, opts = {}) {
   const code = err.code || "";
   const msg = err.message.trim();
 
+  if (code === "auth/unauthorized-domain") {
+    const host =
+      typeof window !== "undefined" && window.location.hostname
+        ? window.location.hostname
+        : "this site";
+    return `Sign-in is blocked on ${host}. Add it under Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
+  if (code && String(code).startsWith("auth/requests-from-referer")) {
+    return (
+      "Firebase rejected sign-in from this site. In Google Cloud Console → APIs & Services → Credentials, " +
+      "edit your Browser API key and add this hostname to HTTP referrer restrictions."
+    );
+  }
   if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+    const host =
+      typeof window !== "undefined" && window.location.hostname
+        ? window.location.hostname
+        : "";
+    const onLocalhost = !host || host === "localhost" || host === "127.0.0.1";
+    if (!onLocalhost) {
+      return (
+        "Incorrect email or password. If the same credentials work on localhost, add " +
+        host +
+        " under Firebase Console → Authentication → Authorized domains, and allow this origin on your Browser API key."
+      );
+    }
     return "Incorrect email or password.";
   }
   if (code === "auth/user-not-found") {
@@ -188,6 +262,102 @@ function authErrorMessageForUi(err, opts = {}) {
     );
   }
   return err.message;
+}
+
+/** Clarify invalid-credential: missing user vs wrong password (Firebase hides user-not-found). */
+async function explainLoginFailure(firebaseApi, email, err) {
+  const base = authErrorMessageForUi(err) || "Sign-in failed. Check your credentials.";
+  const code = err?.code || "";
+  if (
+    code !== "auth/invalid-credential" &&
+    code !== "auth/wrong-password" &&
+    code !== "auth/user-not-found"
+  ) {
+    return base;
+  }
+  const projectId = firebaseApi?.projectId ? String(firebaseApi.projectId) : "this Firebase project";
+  if (!firebaseApi?.fetchSignInMethodsForEmail || !email) {
+    return `${base} Use an account created in Firebase project “${projectId}”.`;
+  }
+  try {
+    const methods = await firebaseApi.fetchSignInMethodsForEmail(email);
+    if (!methods || methods.length === 0) {
+      return (
+        `No Firebase account for ${email} in project “${projectId}”. ` +
+        "An admin must add this user under Firebase Console → Authentication → Users (Add user), " +
+        "then try again with that password."
+      );
+    }
+    if (methods.includes("password")) {
+      return `Incorrect password for ${email}. Reset it in Firebase Console → Authentication → Users if needed.`;
+    }
+    return (
+      `${email} is registered but not with email/password in “${projectId}” ` +
+      `(methods: ${methods.join(", ")}).`
+    );
+  } catch (_) {
+    return `${base} Confirm the account exists in Firebase project “${projectId}”.`;
+  }
+}
+
+function isLocalhostHostname(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return !host || host === "localhost" || host === "127.0.0.1";
+}
+
+function wireLoginDeploymentTroubleshooting(firebaseApi) {
+  const host = window.location.hostname;
+  const projectId = firebaseApi?.projectId ? String(firebaseApi.projectId) : "";
+  const projectEl = document.getElementById("loginProjectId");
+  const mfaProjectEl = document.getElementById("loginMfaProjectId");
+  if (projectEl && projectId) projectEl.textContent = projectId;
+  if (mfaProjectEl && projectId) mfaProjectEl.textContent = projectId;
+  if (isLocalhostHostname(host)) return;
+  const troubleshoot = document.getElementById("loginAuthTroubleshoot");
+  const hostnameEl = document.getElementById("loginAuthHostname");
+  if (hostnameEl) hostnameEl.textContent = host;
+  if (troubleshoot) troubleshoot.hidden = false;
+  if (projectId) {
+    const base = `https://console.firebase.google.com/project/${encodeURIComponent(projectId)}`;
+    const domainsLink = document.getElementById("loginAuthDomainsLink");
+    const usersLink = document.getElementById("loginAuthUsersLink");
+    if (domainsLink) domainsLink.href = `${base}/authentication/settings`;
+    if (usersLink) usersLink.href = `${base}/authentication/users`;
+  }
+}
+
+/** Surface auth/unauthorized-domain before the user tries to sign in on a new host. */
+async function probeFirebaseAuthDomain(firebaseApi) {
+  if (!firebaseApi?.fetchSignInMethodsForEmail) {
+    setLoginAuthStatus("ready", "Firebase connected — ready to sign in");
+    return;
+  }
+  const host = window.location.hostname;
+  setLoginAuthStatus(
+    "loading",
+    isLocalhostHostname(host)
+      ? "Connecting to Firebase…"
+      : `Checking sign-in for ${host}…`
+  );
+  const loginError = document.getElementById("loginError");
+  const troubleshoot = document.getElementById("loginAuthTroubleshoot");
+  try {
+    await firebaseApi.fetchSignInMethodsForEmail("auth-domain-probe@invalid.example");
+    setLoginAuthStatus(
+      "ready",
+      isLocalhostHostname(host)
+        ? "Firebase connected — ready to sign in"
+        : `Ready to sign in on ${host}`
+    );
+  } catch (err) {
+    if (err?.code === "auth/unauthorized-domain") {
+      setLoginAuthStatus("error", `${host} is not an authorized Firebase domain`);
+      setLoginAlert(loginError, authErrorMessageForUi(err));
+      if (troubleshoot) troubleshoot.open = true;
+      return;
+    }
+    setLoginAuthStatus("ready", "Firebase connected — ready to sign in");
+  }
 }
 
 /**
@@ -297,9 +467,9 @@ function resetLoginStepsUi() {
   const mfaCode = document.getElementById("loginMfaCode");
   if (mfaCode) mfaCode.value = "";
   const mfaErr = document.getElementById("loginMfaError");
-  if (mfaErr) mfaErr.textContent = "";
+  setLoginAlert(mfaErr, "");
   const mfaStatus = document.getElementById("loginMfaStatus");
-  if (mfaStatus) mfaStatus.textContent = "";
+  setLoginAlert(mfaStatus, "");
   const mfaHint = document.getElementById("loginMfaHint");
   if (mfaHint) mfaHint.textContent = "";
 }
@@ -322,29 +492,29 @@ function showLoginMfaStep(resolver, firebaseApi) {
 }
 
 async function sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl, errorEl } = {}) {
-  if (errorEl) errorEl.textContent = "";
+  setLoginAlert(errorEl, "");
   const resolver = mfaLoginState.resolver;
   if (!resolver || !Array.isArray(resolver.hints) || resolver.hints.length === 0) {
-    if (errorEl) errorEl.textContent = "No SMS second factor is enrolled for this account.";
+    setLoginAlert(errorEl, "No SMS second factor is enrolled for this account.");
     return false;
   }
   if (resolver.session == null || typeof resolver.session !== "object") {
-    if (errorEl) {
-      errorEl.textContent =
-        "Multi-factor session is missing or invalid. Return to email/password and sign in again.";
-    }
+    setLoginAlert(
+      errorEl,
+      "Multi-factor session is missing or invalid. Return to email/password and sign in again."
+    );
     return false;
   }
   const hint = pickPhoneMultiFactorHint(resolver, firebaseApi && firebaseApi.PhoneAuthProvider);
   if (!hint) {
-    if (errorEl) {
-      errorEl.textContent =
-        "No phone second factor found in this sign-in challenge. If you use another factor type, use an account with SMS MFA enrolled.";
-    }
+    setLoginAlert(
+      errorEl,
+      "No phone second factor found in this sign-in challenge. If you use another factor type, use an account with SMS MFA enrolled."
+    );
     return false;
   }
   if (!firebaseApi || !firebaseApi.auth) {
-    if (errorEl) errorEl.textContent = "Authentication is not initialized.";
+    setLoginAlert(errorEl, "Authentication is not initialized.");
     return false;
   }
 
@@ -354,7 +524,7 @@ async function sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl, errorEl } = {}
   };
 
   try {
-    if (statusEl) statusEl.textContent = "Sending code…";
+    setLoginAlert(statusEl, "Sending code…");
     await teardownMfaRecaptchaVerifier();
     mfaLoginState.recaptchaWidgetId = null;
     const mountEl = document.getElementById(MFA_RECAPTCHA_CONTAINER_ID);
@@ -369,29 +539,29 @@ async function sendMfaSmsToEnrolledPhone(firebaseApi, { statusEl, errorEl } = {}
       phoneInfoOptions,
       mfaLoginState.recaptchaVerifier
     );
-    if (statusEl) statusEl.textContent = "Code sent. Enter it below.";
+    setLoginAlert(statusEl, "Code sent. Enter it below.");
     return true;
   } catch (err) {
     logFirebaseAuthError("[Auth] MFA send SMS failed", err, { mfaSignInStart: true });
     await teardownMfaRecaptchaVerifier();
-    if (errorEl) {
-      errorEl.textContent =
-        authErrorMessageForUi(err, { mfaSignInStart: true }) || "Could not send SMS code. Try again.";
-    }
-    if (statusEl) statusEl.textContent = "";
+    setLoginAlert(
+      errorEl,
+      authErrorMessageForUi(err, { mfaSignInStart: true }) || "Could not send SMS code. Try again."
+    );
+    setLoginAlert(statusEl, "");
     return false;
   }
 }
 
 async function completeMfaSignIn(firebaseApi, verifyBtn, codeInput, errorEl) {
-  if (errorEl) errorEl.textContent = "";
+  setLoginAlert(errorEl, "");
   const code = codeInput && codeInput.value ? codeInput.value.trim() : "";
   if (!code) {
-    if (errorEl) errorEl.textContent = "Enter the SMS code.";
+    setLoginAlert(errorEl, "Enter the SMS code.");
     return;
   }
   if (!mfaLoginState.verificationId || !mfaLoginState.resolver) {
-    if (errorEl) errorEl.textContent = "Session expired. Go back and sign in again.";
+    setLoginAlert(errorEl, "Session expired. Go back and sign in again.");
     return;
   }
   const btnText = verifyBtn.querySelector(".btn__text");
@@ -409,9 +579,7 @@ async function completeMfaSignIn(firebaseApi, verifyBtn, codeInput, errorEl) {
     await mfaLoginState.resolver.resolveSignIn(assertion);
   } catch (err) {
     logFirebaseAuthError("[Auth] MFA verification failed", err);
-    if (errorEl) {
-      errorEl.textContent = authErrorMessageForUi(err) || "Invalid code. Try again.";
-    }
+    setLoginAlert(errorEl, authErrorMessageForUi(err) || "Invalid code. Try again.");
   } finally {
     verifyBtn.classList.remove("btn--loading");
     const sp = verifyBtn.querySelector(".spinner--btn");
@@ -1442,6 +1610,7 @@ async function handleAuthenticatedUser(firebaseApi, fbUser) {
       } catch (_) {}
     }
     const user = { email, name, isAdmin, role, candidateId };
+    syncAuthProjectCache(firebaseApi.projectId);
     setCurrentUser(user);
     applyUserToShell(user);
     switchModule(user?.role === "candidate" && user?.candidateId ? "voters" : "dashboard");
@@ -1482,8 +1651,10 @@ async function boot() {
       loginView.style.display = "";
     }
     if (loginError) {
-      loginError.textContent =
-        "Firebase failed to initialize. Please check your network connection and Firebase configuration, then reload this page.";
+      setLoginAlert(
+        loginError,
+        "Firebase failed to initialize. Please check your network connection and Firebase configuration, then reload this page."
+      );
     }
     return;
   }
@@ -1499,6 +1670,10 @@ async function boot() {
     if (usersLink) usersLink.href = `${base}/authentication/users`;
     if (settingsLink) settingsLink.href = `${base}/authentication/settings`;
   }
+  wireLoginDeploymentTroubleshooting(firebaseApi);
+  wireLoginPasswordToggle();
+  syncAuthProjectCache(firebaseApi.projectId);
+  void probeFirebaseAuthDomain(firebaseApi);
 
   const monitorToken = new URLSearchParams(window.location.search).get("monitor");
   if (monitorToken) {
@@ -1524,34 +1699,26 @@ async function boot() {
   const loginError = document.getElementById("loginError");
   const loginSubmit = document.getElementById("loginSubmit");
   const appLoaderBoot = document.getElementById("appLoaderOverlay");
-  const cachedUser = getCurrentUser();
 
-  if (cachedUser && cachedUser.email) {
-    if (appShell) {
-      appShell.hidden = false;
-      appShell.style.display = "";
-    }
-    if (loginView) {
-      loginView.hidden = true;
-      loginView.style.display = "none";
-    }
-    applyUserToShell(cachedUser);
-    if (appLoaderBoot) appLoaderBoot.hidden = false;
-  } else {
-    if (appShell) {
-      appShell.hidden = true;
-      appShell.style.display = "none";
-    }
-    if (loginView) {
-      loginView.hidden = false;
-      loginView.style.display = "";
-    }
+  // Always show login until Firebase auth state is known (avoids stale localStorage flash).
+  if (appShell) {
+    appShell.hidden = true;
+    appShell.style.display = "none";
   }
+  if (loginView) {
+    loginView.hidden = false;
+    loginView.style.display = "";
+  }
+  if (appLoaderBoot) appLoaderBoot.hidden = true;
 
-  // React to auth state
+  let authStateResolved = false;
   if (firebaseApi.onAuthStateChanged) {
     firebaseApi.onAuthStateChanged(async (fbUser) => {
       console.log("[Auth] onAuthStateChanged fired", fbUser && fbUser.email);
+      if (!authStateResolved) {
+        authStateResolved = true;
+        if (appLoaderBoot) appLoaderBoot.hidden = true;
+      }
       if (fbUser) {
         await handleAuthenticatedUser(firebaseApi, fbUser);
       } else {
@@ -1573,13 +1740,11 @@ async function boot() {
     loginForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       console.log("[Auth] Login form submitted");
-      if (loginError) {
-        loginError.textContent = "";
-      }
-      const email = loginEmail?.value.trim();
+      setLoginAlert(loginError, "");
+      const email = loginEmail?.value.trim().toLowerCase();
       const password = loginPassword?.value || "";
       if (!email || !password) {
-        if (loginError) loginError.textContent = "Enter email and password.";
+        setLoginAlert(loginError, "Enter email and password.");
         console.warn("[Auth] Login blocked: email or password missing");
         return;
       }
@@ -1613,10 +1778,10 @@ async function boot() {
               resolver.session == null ||
               typeof resolver.session !== "object"
             ) {
-              if (loginError) {
-                loginError.textContent =
-                  "This account needs SMS as a second factor, but the sign-in challenge did not include a valid phone factor. Sign in again or contact your administrator.";
-              }
+              setLoginAlert(
+                loginError,
+                "This account needs SMS as a second factor, but the sign-in challenge did not include a valid phone factor. Sign in again or contact your administrator."
+              );
             } else {
               showLoginMfaStep(resolver, firebaseApi);
               const statusEl = document.getElementById("loginMfaStatus");
@@ -1626,14 +1791,23 @@ async function boot() {
             }
           } catch (mfaErr) {
             logFirebaseAuthError("[Auth] MFA flow failed", mfaErr);
-            if (loginError) {
-              loginError.textContent =
-                authErrorMessageForUi(mfaErr) || "Could not start SMS verification.";
-            }
+            setLoginAlert(
+              loginError,
+              authErrorMessageForUi(mfaErr) || "Could not start SMS verification."
+            );
           }
-        } else if (loginError) {
-          loginError.textContent =
-            authErrorMessageForUi(err) || "Sign-in failed. Check your credentials.";
+        } else {
+          const message = await explainLoginFailure(firebaseApi, email, err);
+          setLoginAlert(loginError, err?.code ? `${message} (${err.code})` : message);
+          if (
+            err?.code === "auth/unauthorized-domain" ||
+            err?.code === "auth/invalid-credential" ||
+            err?.code === "auth/wrong-password" ||
+            err?.code === "auth/user-not-found"
+          ) {
+            const troubleshoot = document.getElementById("loginAuthTroubleshoot");
+            if (troubleshoot) troubleshoot.open = true;
+          }
         }
       } finally {
         if (loginSubmit) {

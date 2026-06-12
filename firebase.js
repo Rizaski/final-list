@@ -106,9 +106,18 @@ export const firebaseInitPromise = (async () => {
   try {
     const appMod = await import(`${SDK_BASE}/firebase-app.js`);
     const authMod = await import(`${SDK_BASE}/firebase-auth.js`);
-    const app = appMod.getApps().length
-      ? appMod.getApp()
-      : appMod.initializeApp(firebaseConfig);
+    let app;
+    const existingApps = appMod.getApps();
+    if (existingApps.length) {
+      app = appMod.getApp();
+      const existingProjectId = app.options && app.options.projectId;
+      if (existingProjectId && existingProjectId !== firebaseConfig.projectId) {
+        await appMod.deleteApp(app);
+        app = appMod.initializeApp(firebaseConfig);
+      }
+    } else {
+      app = appMod.initializeApp(firebaseConfig);
+    }
     const auth = authMod.getAuth(app);
     // Localize Auth UI, reCAPTCHA, and SMS where supported (Firebase Auth i18n).
     if (typeof authMod.useDeviceLanguage === "function") {
@@ -268,10 +277,19 @@ export const firebaseInitPromise = (async () => {
       // Prefer long-polling over WebChannel when QUIC/WebChannel fails (e.g. net::ERR_QUIC_PROTOCOL_ERROR,
       // Listen 400) on some networks, VPNs, or proxies. Must use initializeFirestore (not getFirestore)
       // so this runs before any Firestore use.
-      db = firestoreMod.initializeFirestore(app, {
-        experimentalForceLongPolling: true,
-        ignoreUndefinedProperties: true,
-      });
+      try {
+        db = firestoreMod.initializeFirestore(app, {
+          experimentalForceLongPolling: true,
+          ignoreUndefinedProperties: true,
+        });
+      } catch (firestoreInitErr) {
+        const msg = String(firestoreInitErr?.message || firestoreInitErr || "");
+        if (/already been/i.test(msg)) {
+          db = firestoreMod.getFirestore(app);
+        } else {
+          throw firestoreInitErr;
+        }
+      }
       const getScopeId = () => getActiveCampaignWorkspaceId();
       const scopedPath = (...segments) => {
         if (segments.length && UNSCOPED_COLLECTIONS.has(String(segments[0] || ""))) {
@@ -1766,12 +1784,10 @@ export const firebaseInitPromise = (async () => {
         }
       };
     } catch (fsErr) {
-      // Make Firestore mandatory as well – if this fails, fail overall Firebase init.
       console.error(
-        "[Firebase] Firestore initialization failed. App cannot run without Firestore.",
+        "[Firebase] Firestore initialization failed. Sign-in will still work; data sync needs Firestore.",
         fsErr
       );
-      throw fsErr;
     }
 
     return {
@@ -1783,6 +1799,7 @@ export const firebaseInitPromise = (async () => {
       onAuthStateChanged: authMod.onAuthStateChanged.bind(null, auth),
       signOut: () => authMod.signOut(auth),
       signInWithEmailAndPassword: authMod.signInWithEmailAndPassword.bind(null, auth),
+      fetchSignInMethodsForEmail: authMod.fetchSignInMethodsForEmail.bind(null, auth),
       createUserWithEmailAndPassword: authMod.createUserWithEmailAndPassword.bind(null, auth),
       sendEmailVerification: authMod.sendEmailVerification,
       /** SMS MFA after email/password (users must enroll a phone factor in Firebase). */
