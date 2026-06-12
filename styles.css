@@ -24,6 +24,10 @@
   --sidebar-nav-hover: rgba(148, 163, 184, 0.12);
   --sidebar-nav-active-bg: rgba(0, 156, 156, 0.2);
   --sidebar-nav-active-border: rgba(0, 156, 156, 0.42);
+  --sidebar-glass-top: rgba(15, 23, 42, 0.9);
+  --sidebar-glass-mid: rgba(12, 19, 36, 0.84);
+  --sidebar-glass-bottom: rgba(7, 11, 20, 0.9);
+  --sidebar-ambient-speed: 16s;
   --topbar-height: 64px;
   /* Touch & notched devices (used in mobile block at end of file) */
   --touch-target-min: 44px;
@@ -455,15 +459,37 @@ body {
   flex-direction: column;
   position: relative;
   z-index: 1;
+  overflow: hidden;
   background:
     linear-gradient(165deg, rgba(0, 156, 156, 0.07) 0%, transparent 42%),
-    linear-gradient(180deg, var(--sidebar-bg-top) 0%, var(--sidebar-bg-mid) 48%, var(--sidebar-bg-bottom) 100%);
+    linear-gradient(180deg, var(--sidebar-glass-top) 0%, var(--sidebar-glass-mid) 48%, var(--sidebar-glass-bottom) 100%);
   color: #e2e8f0;
   padding: 0;
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
   box-shadow:
     4px 0 32px rgba(0, 0, 0, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   border-right: 1px solid rgba(15, 23, 42, 0.85);
+}
+
+.sidebar::after {
+  content: "";
+  position: absolute;
+  inset: -20% -30% -20% -30%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(45, 212, 191, 0.14) 0%, transparent 42%),
+    radial-gradient(circle at 78% 84%, rgba(6, 182, 212, 0.12) 0%, transparent 48%),
+    radial-gradient(circle at 60% 8%, rgba(14, 165, 233, 0.1) 0%, transparent 44%);
+  opacity: 0.65;
+  animation: sidebarAmbientShift var(--sidebar-ambient-speed) ease-in-out infinite alternate;
+}
+
+.sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .sidebar::before {
@@ -480,6 +506,21 @@ body {
   );
   pointer-events: none;
   border-radius: 0 1px 1px 0;
+}
+
+@keyframes sidebarAmbientShift {
+  0% {
+    transform: translate3d(-2.5%, -1.5%, 0) scale(1);
+    filter: hue-rotate(0deg) saturate(1);
+  }
+  50% {
+    transform: translate3d(1.5%, 2.5%, 0) scale(1.03);
+    filter: hue-rotate(8deg) saturate(1.06);
+  }
+  100% {
+    transform: translate3d(3.5%, -2%, 0) scale(1.05);
+    filter: hue-rotate(-6deg) saturate(1.02);
+  }
 }
 
 .sidebar__brand {
@@ -603,11 +644,27 @@ body.sidebar-collapsed .sidebar__collapse-btn .icon-svg {
   padding: 6px 8px 4px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 156, 156, 0.35) transparent;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-group--hidden {
+  display: none !important;
+}
+
+.nav-group__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .sidebar__nav::-webkit-scrollbar {
@@ -647,6 +704,88 @@ body.sidebar-collapsed .sidebar__collapse-btn .icon-svg {
     box-shadow 0.18s ease;
 }
 
+.nav-group__row .nav-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-group__toggle {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: #9fb3cd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.nav-group__toggle:hover {
+  background: rgba(0, 156, 156, 0.18);
+  border-color: rgba(0, 156, 156, 0.42);
+  color: #dffaf8;
+}
+
+.nav-group__toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 156, 156, 0.4);
+}
+
+.nav-group--expanded .nav-group__toggle .icon-svg {
+  transform: rotate(90deg);
+}
+
+.nav-group__submenu {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 2px 36px;
+  padding: 4px 0 4px 8px;
+  border-left: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.nav-group--expanded > .nav-group__submenu {
+  display: flex;
+}
+
+.nav-group__submenu[hidden] {
+  display: none !important;
+}
+
+.nav-subitem {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9fb3cd;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.nav-subitem:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: #e5edf7;
+}
+
+.nav-subitem.nav-subitem--active {
+  background: rgba(0, 156, 156, 0.18);
+  border-color: rgba(0, 156, 156, 0.35);
+  color: #f5fffe;
+}
+
+.nav-subitem:focus-visible {
+  outline: none;
+  border-color: rgba(0, 156, 156, 0.48);
+  box-shadow: 0 0 0 1px rgba(0, 156, 156, 0.28);
+}
+
 /* Pledges visibility (Settings → Security); must beat .nav-item { display:flex } after style resets */
 .nav-item.nav-item--hidden-sidebar {
   display: none !important;
@@ -660,6 +799,11 @@ body.sidebar-collapsed .nav-item {
   justify-content: center;
   padding-left: 8px;
   padding-right: 8px;
+}
+
+body.sidebar-collapsed .nav-group__toggle,
+body.sidebar-collapsed .nav-group__submenu {
+  display: none !important;
 }
 
 .nav-item:hover {
@@ -822,11 +966,15 @@ body.sidebar-collapsed .sidebar__tool {
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar,
+  .sidebar::after,
   .sidebar__collapse-btn,
   .nav-item,
   .sidebar__tool,
   .sidebar-overlay {
     transition-duration: 0.01ms !important;
+  }
+  .sidebar::after {
+    animation: none !important;
   }
 }
 
@@ -1169,6 +1317,58 @@ body.sidebar-collapsed .sidebar__tool {
 .dropdown-menu__item.table-view-dropdown__option.is-active {
   font-weight: 600;
   color: var(--color-primary);
+}
+
+/* Fixed-position right-click menu (see ui.js showContextMenu) */
+.context-menu {
+  position: fixed;
+  z-index: 10050;
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 6px 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+}
+
+.context-menu__item {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  text-align: left;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.context-menu__item:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.context-menu__item--danger {
+  color: var(--color-danger, #b42318);
+}
+
+.context-menu__item--danger:hover:not(:disabled) {
+  background: rgba(180, 35, 24, 0.1);
+  color: var(--color-danger, #b42318);
+}
+
+.context-menu__item:disabled,
+.context-menu__item--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-menu__divider {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--color-border-subtle);
 }
 
 /* Table view density (⋮ menus) */
@@ -7663,6 +7863,42 @@ textarea.voter-detail-referendum-notes:focus {
   vertical-align: middle;
 }
 
+/* Zero Day → Transportation routes: column widths — Trips is the primary text column */
+#zeroDayRoutesTable {
+  table-layout: auto;
+  width: 100%;
+}
+#zeroDayRoutesTable th[data-route-col="routeNum"],
+#zeroDayRoutesTable td[data-route-col="routeNum"] {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+#zeroDayRoutesTable th[data-route-col="trips"],
+#zeroDayRoutesTable td[data-route-col="trips"] {
+  min-width: min(20rem, 42vw);
+  width: 26%;
+  vertical-align: top;
+}
+#zeroDayRoutesTable .transport-route-trips-cell--routes-table {
+  max-width: none; /* override global .transport-route-trips-cell 280px cap for this table */
+  hyphens: auto;
+}
+#zeroDayRoutesTable .transport-route-trips-cell--routes-table .transport-route-trip-line--one-row {
+  max-width: 100%;
+}
+#zeroDayRoutesTable th[data-route-col="voters"],
+#zeroDayRoutesTable td[data-route-col="voters"] {
+  width: 1%;
+  white-space: nowrap;
+}
+#zeroDayRoutesTable th[data-route-col="status"],
+#zeroDayRoutesTable td[data-route-col="status"] {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 /* Zero Day → Transportation routes table (same cell treatment as trips) */
 #zeroDayRoutesTable .transport-trips-table__meta-cell {
   padding: 10px 12px;
@@ -7717,6 +7953,50 @@ textarea.voter-detail-referendum-notes:focus {
 }
 #zeroDayRoutesTable .input--trip-table-meta::placeholder {
   color: var(--color-text-muted);
+}
+
+/* Zero Day → Transportation trips table: column widths — Trip / Route is the primary text column */
+#zeroDayTripsTable {
+  table-layout: auto;
+  width: 100%;
+}
+#zeroDayTripsTable th[data-trip-col="type"],
+#zeroDayTripsTable td[data-trip-col="type"] {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+#zeroDayTripsTable th[data-trip-col="route"],
+#zeroDayTripsTable td[data-trip-col="route"] {
+  min-width: min(18rem, 40vw);
+  width: 24%;
+  vertical-align: middle;
+}
+#zeroDayTripsTable .transport-trips-table__route-name-cell {
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  font-size: 13px;
+}
+#zeroDayTripsTable th[data-trip-col="voters"],
+#zeroDayTripsTable td[data-trip-col="voters"] {
+  width: 1%;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+#zeroDayTripsTable th[data-trip-col="status"],
+#zeroDayTripsTable td[data-trip-col="status"] {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.transport-trips-table__actions-col,
+.transport-routes-table__actions-col {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 /* Zero Day → Transportation Management: rate & amount (brand-aligned) */
@@ -7792,6 +8072,12 @@ textarea.voter-detail-referendum-notes:focus {
 
 .transport-trips-table__actions .ghost-button {
   margin: 2px 0 2px 4px;
+}
+
+.transport-trips-table__actions--context {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .modal-body-inner .table-wrapper {

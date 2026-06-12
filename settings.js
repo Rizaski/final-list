@@ -1,4 +1,4 @@
-import { openModal, closeModal, confirmDialog } from "./ui.js";
+import { openModal, closeModal, confirmDialog, showContextMenu, copyTextToClipboard } from "./ui.js";
 import {
   importVotersFromTemplateRows,
   getVoterImageSrc,
@@ -428,6 +428,7 @@ let agents = [];
 let settingsAgentDuplicateAgentsByPrimaryId = new Map();
 let campaignUsers = [];
 let unsubscribeAgentsFs = null;
+let unsubscribeCandidatesFs = null;
 
 function renderCandidatesTable() {
   if (!candidatesTableBody) return;
@@ -4102,8 +4103,8 @@ function initCampaignTab() {
         if (window.appNotifications) {
           window.appNotifications.push({ title: "Workspace created", meta: `${name} is now active.` });
         }
-        clearLocalCampaignWorkspaceCache();
-        window.location.reload();
+        const { refreshAppAfterCampaignWorkspaceChange } = await import("./main.js");
+        await refreshAppAfterCampaignWorkspaceChange();
       } catch (err) {
         if (window.appNotifications) {
           window.appNotifications.push({ title: "Could not create workspace", meta: err?.message || String(err) });
@@ -4174,8 +4175,8 @@ function initCampaignTab() {
           }
           return;
         }
-        clearLocalCampaignWorkspaceCache();
-        window.location.reload();
+        const { refreshAppAfterCampaignWorkspaceChange } = await import("./main.js");
+        await refreshAppAfterCampaignWorkspaceChange();
       } catch (err) {
         if (window.appNotifications) {
           window.appNotifications.push({ title: "Could not switch workspace", meta: err?.message || String(err) });
@@ -4489,47 +4490,119 @@ function initUsersTab() {
   if (addBtn) addBtn.addEventListener("click", () => openAddUserModal());
 }
 
+function bindSettingsDataContextMenus() {
+  const candidatesTable = document.getElementById("candidatesTable");
+  if (candidatesTable && !candidatesTable.dataset.contextMenuBound) {
+    candidatesTable.dataset.contextMenuBound = "1";
+    candidatesTable.addEventListener("contextmenu", (e) => {
+      const tr = e.target.closest("tbody tr[data-candidate-id]");
+      if (!tr) return;
+      const id = tr.getAttribute("data-candidate-id");
+      const cand = candidates.find((c) => String(c.id) === String(id));
+      if (!cand) return;
+      e.preventDefault();
+      showContextMenu(e, [
+        { label: "Edit candidate…", onSelect: () => openCandidateForm(cand) },
+        {
+          label: "Pledged voters…",
+          onSelect: () => {
+            const ctx = getVotersContextForStandalone();
+            openCandidatePledgedVotersModal({
+              candidateId: String(cand.id),
+              getAllVoters: () => ctx.getAllVoters(),
+              getCurrentUser: () => parseViewerFromStorage(),
+              getCandidates,
+            });
+          },
+        },
+        { separator: true },
+        { label: "Copy name", onSelect: () => copyTextToClipboard(String(cand.name || "")) },
+        {
+          label: "Copy candidate no.",
+          onSelect: () => copyTextToClipboard(String(cand.candidateNumber ?? "")),
+        },
+        { separator: true },
+        {
+          label: "Delete…",
+          danger: true,
+          onSelect: async () => {
+            const safeName = escapeHtml(String(cand.name || cand.id || ""));
+            const ok = await confirmDialog({
+              title: "Delete candidate",
+              message: `Remove ${safeName} from the candidate list? Agents or pledges scoped to this candidate may need updating. This cannot be undone.`,
+              confirmText: "Delete",
+              cancelText: "Cancel",
+              danger: true,
+            });
+            if (!ok) return;
+            await deleteCandidateRecord(cand);
+          },
+        },
+      ]);
+    });
+  }
+
+  const agentsTable = document.getElementById("settingsAgentsTable");
+  if (agentsTable && !agentsTable.dataset.contextMenuBound) {
+    agentsTable.dataset.contextMenuBound = "1";
+    agentsTable.addEventListener("contextmenu", (e) => {
+      const tr = e.target.closest("tbody tr[data-agent-id]");
+      if (!tr) return;
+      const aid = tr.getAttribute("data-agent-id");
+      if (aid == null || aid === "") return;
+      const agent = agents.find((a) => String(a.id) === String(aid));
+      if (!agent) return;
+      e.preventDefault();
+      const viewer = parseViewerFromStorage();
+      const showEdit = viewer.isAdmin;
+      const dups = settingsAgentDuplicateAgentsByPrimaryId.get(String(aid)) || [];
+      const items = [
+        { label: "View details…", onSelect: () => openAgentViewModal(agent) },
+        { label: "Assigned voters…", onSelect: () => void openAgentAssignedVotersModal(agent) },
+      ];
+      if (dups.length) {
+        items.push({
+          label: "Other candidate scopes…",
+          onSelect: () => openOtherCandidateScopesModal(agent, dups),
+        });
+      }
+      items.push(
+        { separator: true },
+        { label: "Copy name", onSelect: () => copyTextToClipboard(String(agent.name || "")) },
+        { label: "Copy phone", onSelect: () => copyTextToClipboard(String(agent.phone || "")) },
+        { label: "Copy national ID", onSelect: () => copyTextToClipboard(String(agent.nationalId || "")) }
+      );
+      if (showEdit) {
+        items.push(
+          { separator: true },
+          { label: "Edit agent…", onSelect: () => openAgentModal(agent, {}) },
+          {
+            label: "Delete…",
+            danger: true,
+            onSelect: async () => {
+              const safeName = escapeHtml(agent.name || aid);
+              const ok = await confirmDialog({
+                title: "Delete agent",
+                message: `Delete agent ${safeName} (ID ${escapeHtml(String(agent.id))})? This cannot be undone.`,
+                confirmText: "Delete",
+                cancelText: "Cancel",
+                danger: true,
+              });
+              if (!ok) return;
+              await deleteAgentRecord(agent);
+            },
+          }
+        );
+      }
+      showContextMenu(e, items);
+    });
+  }
+}
+
 export function initSettingsModule() {
   initSettingsTabs();
   initCampaignTab();
   initSecurityTab();
-
-  // Load candidates from Firebase first (source of truth), fall back to cache on error or when Firebase not ready
-  (async () => {
-    try {
-      const api = await firebaseInitPromise;
-      if (api.ready && api.getAllCandidatesFs) {
-        const items = await api.getAllCandidatesFs();
-        if (Array.isArray(items)) {
-          candidates = items;
-          saveCandidatesToStorage();
-          renderCandidatesTable();
-          document.dispatchEvent(
-            new CustomEvent("candidates-updated", {
-              detail: { candidates: [...candidates] },
-            })
-          );
-          return;
-        }
-      }
-      loadCandidatesFromStorage();
-      renderCandidatesTable();
-      document.dispatchEvent(
-        new CustomEvent("candidates-updated", {
-          detail: { candidates: [...candidates] },
-        })
-      );
-    } catch (err) {
-      console.error("Candidate load failed:", err);
-      loadCandidatesFromStorage();
-      renderCandidatesTable();
-      document.dispatchEvent(
-        new CustomEvent("candidates-updated", {
-          detail: { candidates: [...candidates] },
-        })
-      );
-    }
-  })();
 
   initAgentsTab();
   initUsersTab();
@@ -5193,7 +5266,7 @@ export function initSettingsModule() {
           renderCandidatesTable();
         }
 
-        api.onCandidatesSnapshotFs((items) => {
+        unsubscribeCandidatesFs = api.onCandidatesSnapshotFs((items) => {
           if (!Array.isArray(items)) return;
           candidates = items;
           saveCandidatesToStorage();
@@ -5214,6 +5287,94 @@ export function initSettingsModule() {
       renderCandidatesTable();
     }
   })();
+
+  bindSettingsDataContextMenus();
+}
+
+/**
+ * Detach Firestore listeners (previous workspace) and re-attach for the active campaign without a full page reload.
+ */
+export async function rebindAgentsAndCandidatesFirestoreAfterWorkspaceChange() {
+  if (typeof unsubscribeAgentsFs === "function" && unsubscribeAgentsFs) {
+    try {
+      unsubscribeAgentsFs();
+    } catch (_) {}
+    unsubscribeAgentsFs = null;
+  }
+  if (typeof unsubscribeCandidatesFs === "function" && unsubscribeCandidatesFs) {
+    try {
+      unsubscribeCandidatesFs();
+    } catch (_) {}
+    unsubscribeCandidatesFs = null;
+  }
+  const api = await firebaseInitPromise;
+  if (!api?.ready) return;
+  if (api.getAllAgentsFs && api.onAgentsSnapshotFs) {
+    const initial = await api.getAllAgentsFs();
+    if (Array.isArray(initial)) {
+      agents = mergeAgentsSnapshotWithLocal(initial, []);
+      saveAgentsToStorage();
+      renderAgentsTable();
+      try {
+        window.agentsCached = [...agents];
+      } catch (_) {}
+      document.dispatchEvent(
+        new CustomEvent("agents-updated", {
+          detail: { agents: [...agents] },
+        })
+      );
+    } else {
+      loadAgentsFromStorage();
+      renderAgentsTable();
+    }
+    unsubscribeAgentsFs = api.onAgentsSnapshotFs((items) => {
+      if (!Array.isArray(items)) return;
+      agents = mergeAgentsSnapshotWithLocal(items, agents);
+      saveAgentsToStorage();
+      renderAgentsTable();
+      try {
+        window.agentsCached = [...agents];
+      } catch (_) {}
+      document.dispatchEvent(
+        new CustomEvent("agents-updated", {
+          detail: { agents: [...agents] },
+        })
+      );
+    });
+  } else {
+    loadAgentsFromStorage();
+    renderAgentsTable();
+  }
+  if (api.getAllCandidatesFs && api.onCandidatesSnapshotFs) {
+    const initial = await api.getAllCandidatesFs();
+    if (Array.isArray(initial)) {
+      candidates = initial;
+      saveCandidatesToStorage();
+      renderCandidatesTable();
+      document.dispatchEvent(
+        new CustomEvent("candidates-updated", {
+          detail: { candidates: [...candidates] },
+        })
+      );
+    } else {
+      loadCandidatesFromStorage();
+      renderCandidatesTable();
+    }
+    unsubscribeCandidatesFs = api.onCandidatesSnapshotFs((items) => {
+      if (!Array.isArray(items)) return;
+      candidates = items;
+      saveCandidatesToStorage();
+      renderCandidatesTable();
+      document.dispatchEvent(
+        new CustomEvent("candidates-updated", {
+          detail: { candidates: [...candidates] },
+        })
+      );
+    });
+  } else {
+    loadCandidatesFromStorage();
+    renderCandidatesTable();
+  }
 }
 
 /**

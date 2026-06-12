@@ -1,4 +1,4 @@
-import { openModal, closeModal, confirmDialog } from "./ui.js";
+import { openModal, closeModal, confirmDialog, showContextMenu, copyTextToClipboard } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import {
   getVotedTimeMarked,
@@ -3598,6 +3598,83 @@ export async function initVotersModule(getCurrentUser, options = {}) {
     });
   }
 
+  if (votersClickRoot) {
+    votersClickRoot.addEventListener("contextmenu", (e) => {
+      const tr = e.target.closest("tr[data-voter-id], [data-voter-row-id]");
+      if (!tr) return;
+      const idRaw = tr.dataset.voterId || tr.dataset.voterRowId;
+      if (idRaw == null || idRaw === "") return;
+      const voter = findVoterById(idRaw);
+      if (!voter) return;
+      e.preventDefault();
+      const ctx = getCandidateContext();
+      const timeMarked = voter.votedAt || getVotedTimeMarked(voter.id);
+      const items = [
+        {
+          label: "Select voter",
+          onSelect: () => {
+            selectVoter(voter.id);
+          },
+        },
+      ];
+      if (!ctx) {
+        items.push(
+          { label: "Edit…", onSelect: () => openVoterForm(voter) },
+          { separator: true },
+          { label: "Copy name", onSelect: () => copyTextToClipboard(String(voter.fullName || "")) },
+          {
+            label: "Copy national ID",
+            onSelect: () => copyTextToClipboard(String(voter.nationalId || voter.id || "")),
+          },
+          { label: "Copy address", onSelect: () => copyTextToClipboard(String(voter.permanentAddress || "")) }
+        );
+        if (timeMarked) {
+          items.push({
+            label: "Mark not voted…",
+            onSelect: () => {
+              (async () => {
+                const ok = await confirmDialog({
+                  title: "Mark not voted",
+                  message: `Mark "${escapeHtml(
+                    voter.fullName || voter.nationalId || idRaw
+                  )}" as not voted? This will clear their voted status across the app.`,
+                  confirmText: "Mark not voted",
+                  cancelText: "Cancel",
+                  danger: true,
+                });
+                if (!ok) return;
+                voter.votedAt = "";
+                await clearVotedForVoter(voter.id);
+                saveVotersToStorage();
+                renderVotersTable();
+                if (sameVoterId(selectedVoterId, voter.id)) renderVoterDetails(voter);
+                document.dispatchEvent(new CustomEvent("voters-updated"));
+              })();
+            },
+          });
+        }
+        items.push(
+          { separator: true },
+          {
+            label: "Delete…",
+            danger: true,
+            onSelect: () => deleteVoter(voter.id),
+          }
+        );
+      } else {
+        items.push(
+          { separator: true },
+          { label: "Copy name", onSelect: () => copyTextToClipboard(String(voter.fullName || "")) },
+          {
+            label: "Copy national ID",
+            onSelect: () => copyTextToClipboard(String(voter.nationalId || voter.id || "")),
+          }
+        );
+      }
+      showContextMenu(e, items);
+    });
+  }
+
   try {
     const api = await firebaseInitPromise;
     if (api.ready && api.getAllVotersFs && api.onVotersSnapshotFs) {
@@ -3666,6 +3743,62 @@ export async function initVotersModule(getCurrentUser, options = {}) {
   return {
     getAllVoters: () => [...currentVoters],
   };
+}
+
+/**
+ * Unsubscribe from the previous workspace’s voters collection and re-listen for the active workspace.
+ * Call after `setActiveCampaignWorkspaceId` and `clearLocalCampaignWorkspaceCache`, following `syncCampaignConfigFromFirestore`.
+ */
+export async function rebindVotersFirestoreAfterWorkspaceChange() {
+  if (typeof unsubscribeVotersFs === "function" && unsubscribeVotersFs) {
+    try {
+      unsubscribeVotersFs();
+    } catch (_) {}
+    unsubscribeVotersFs = null;
+  }
+  selectedVoterId = null;
+  currentVoters = [];
+  const api = await firebaseInitPromise;
+  if (!api?.ready || !api.getAllVotersFs || !api.onVotersSnapshotFs) {
+    loadVotersFromStorage();
+    renderVotersTable();
+    renderVoterDetails(null);
+    document.dispatchEvent(new CustomEvent("voters-updated"));
+    return;
+  }
+  try {
+    setHeaderElectionScope(readElectionScopeFromLocalCampaignConfig());
+    await hydrateLceArchiveCache(api);
+  } catch (_) {}
+  try {
+    const initial = await api.getAllVotersFs();
+    if (Array.isArray(initial)) {
+      const initialMerged = applyLceArchiveMergeToItems(initial);
+      currentVoters = mergeVotersFromSnapshot([], initialMerged).map(normalizeVoterCandidateFields);
+      saveVotersToStorage();
+      mergeVotedAtFromVoters(initialMerged);
+    } else {
+      loadVotersFromStorage();
+    }
+  } catch (err) {
+    console.error("[Voters] rebind workspace voters load", err);
+    loadVotersFromStorage();
+  }
+  renderVotersTable();
+  renderVoterDetails(null);
+  unsubscribeVotersFs = api.onVotersSnapshotFs((items) => {
+    if (votersBulkImportInProgress) return;
+    if (Array.isArray(items)) {
+      const mergedSnap = applyLceArchiveMergeToItems(items);
+      currentVoters = mergeVotersFromSnapshot(currentVoters, mergedSnap).map(normalizeVoterCandidateFields);
+      mergeVotedAtFromVoters(mergedSnap);
+      renderVotersTable();
+      const selected = selectedVoterId && findVoterById(selectedVoterId);
+      renderVoterDetails(selected || null);
+      document.dispatchEvent(new CustomEvent("voters-updated"));
+    }
+  });
+  document.dispatchEvent(new CustomEvent("voters-updated"));
 }
 
 /** Reload voters from storage and re-render; dispatches voters-updated for pledges etc. */

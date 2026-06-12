@@ -1,4 +1,4 @@
-import { openModal, closeModal } from "./ui.js";
+import { openModal, closeModal, showContextMenu, copyTextToClipboard } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import {
   compareBallotSequence,
@@ -1055,6 +1055,32 @@ export function initEventsModule() {
     }
   });
 
+  eventsTableBody.addEventListener("contextmenu", (e) => {
+    const tr = e.target.closest("tr[data-event-id]");
+    if (!tr) return;
+    const id = Number(tr.dataset.eventId);
+    const ev = events.find((x) => Number(x.id) === id);
+    if (!ev) return;
+    e.preventDefault();
+    showContextMenu(e, [
+      { label: "Edit event…", onSelect: () => openEventForm(ev) },
+      {
+        label: "Participants…",
+        onSelect: () => openEventParticipantsModal(ev),
+      },
+      { separator: true },
+      { label: "Copy event name", onSelect: () => copyTextToClipboard(String(ev.name || "")) },
+      {
+        label: "Copy location",
+        onSelect: () => copyTextToClipboard(String(ev.location || "")),
+      },
+      {
+        label: "Copy date/time (ISO)",
+        onSelect: () => copyTextToClipboard(String(ev.dateTime || "")),
+      },
+    ]);
+  });
+
   addEventButton.addEventListener("click", () => {
     openEventForm(null);
   });
@@ -1078,6 +1104,67 @@ export function getUpcomingEventsSummary(scope) {
     scope: ev.scope,
     team: ev.team,
   }));
+}
+
+/** Re-attach events listener for the active campaign workspace (avoids full page reload). */
+export async function rebindEventsFirestoreAfterWorkspaceChange() {
+  if (typeof eventsUnsubscribe === "function" && eventsUnsubscribe) {
+    try {
+      eventsUnsubscribe();
+    } catch (_) {}
+    eventsUnsubscribe = null;
+  }
+  const api = await firebaseInitPromise;
+  if (!api?.ready || !api.getAllEventsFs || !api.onEventsSnapshotFs) {
+    events = [];
+    renderEventsTable();
+    renderEventsTimeline();
+    return;
+  }
+  try {
+    const initial = await api.getAllEventsFs();
+    events = Array.isArray(initial)
+      ? initial.map((ev) => ({
+          id: ev.id,
+          name: ev.name || "",
+          location: ev.location || "",
+          scope: ev.scope || "",
+          dateTime: ev.dateTime || new Date().toISOString(),
+          team: ev.team || "",
+          expectedAttendees: ev.expectedAttendees ?? 0,
+          participantsShareToken: ev.participantsShareToken || "",
+          participantCount: Number(ev.participantCount || 0),
+        }))
+      : [];
+    renderEventsTable();
+    renderEventsTimeline();
+    document.dispatchEvent(
+      new CustomEvent("events-updated", { detail: { events: [...events] } })
+    );
+    eventsUnsubscribe = api.onEventsSnapshotFs((items) => {
+      events = items.map((ev) => ({
+        id: ev.id,
+        name: ev.name || "",
+        location: ev.location || "",
+        scope: ev.scope || "",
+        dateTime: ev.dateTime || new Date().toISOString(),
+        team: ev.team || "",
+        expectedAttendees: ev.expectedAttendees ?? 0,
+        participantsShareToken: ev.participantsShareToken || "",
+        participantCount: Number(ev.participantCount || 0),
+      }));
+      renderEventsTable();
+      renderEventsTimeline();
+      document.dispatchEvent(
+        new CustomEvent("events-updated", { detail: { events: [...events] } })
+      );
+    });
+  } catch (e) {
+    console.error("[Events] rebind workspace events", e);
+    events = [];
+    renderEventsTable();
+    renderEventsTimeline();
+  }
 }
 
 export async function refreshEventsFromFirestore() {

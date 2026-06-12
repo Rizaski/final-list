@@ -170,3 +170,135 @@ document.addEventListener("keydown", (e) => {
   closeModal();
 });
 
+/** Right-click menu root (single instance). */
+let contextMenuEl = null;
+let contextMenuTeardown = null;
+
+export function closeContextMenu() {
+  if (typeof contextMenuTeardown === "function") {
+    try {
+      contextMenuTeardown();
+    } catch (_) {}
+    contextMenuTeardown = null;
+  }
+  if (contextMenuEl && contextMenuEl.parentNode) {
+    contextMenuEl.parentNode.removeChild(contextMenuEl);
+  }
+  contextMenuEl = null;
+}
+
+/**
+ * @typedef {{ label: string, onSelect?: () => void, disabled?: boolean, danger?: boolean, separator?: boolean }} ContextMenuItem
+ * @param {MouseEvent} event
+ * @param {ContextMenuItem[]} items
+ */
+export function showContextMenu(event, items) {
+  if (!event || !Array.isArray(items) || items.length === 0) return;
+  const usable = items.filter(
+    (x) => x && (x.separator === true || (typeof x.label === "string" && x.label.trim()))
+  );
+  if (!usable.length) return;
+  event.preventDefault();
+  closeContextMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.setAttribute("role", "menu");
+
+  for (const item of usable) {
+    if (item.separator) {
+      const d = document.createElement("div");
+      d.className = "context-menu__divider";
+      menu.appendChild(d);
+      continue;
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "context-menu__item" + (item.danger ? " context-menu__item--danger" : "");
+    btn.setAttribute("role", "menuitem");
+    btn.textContent = item.label;
+    if (item.disabled) {
+      btn.disabled = true;
+      btn.classList.add("context-menu__item--disabled");
+    } else {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeContextMenu();
+        try {
+          item.onSelect && item.onSelect();
+        } catch (err) {
+          console.error("[ContextMenu] action failed", err);
+        }
+      });
+    }
+    menu.appendChild(btn);
+  }
+
+  document.body.appendChild(menu);
+  contextMenuEl = menu;
+
+  const place = () => {
+    const rect = menu.getBoundingClientRect();
+    let left = event.clientX;
+    let top = event.clientY;
+    if (left + rect.width > window.innerWidth - 8) left = window.innerWidth - rect.width - 8;
+    if (top + rect.height > window.innerHeight - 8) top = window.innerHeight - rect.height - 8;
+    if (left < 8) left = 8;
+    if (top < 8) top = 8;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  };
+  requestAnimationFrame(place);
+
+  const onDown = (ev) => {
+    if (menu.contains(ev.target)) return;
+    closeContextMenu();
+  };
+  const onKey = (ev) => {
+    if (ev.key === "Escape") closeContextMenu();
+  };
+  setTimeout(() => {
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", onDown, true);
+  }, 0);
+  contextMenuTeardown = () => {
+    document.removeEventListener("mousedown", onDown, true);
+    document.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("scroll", onDown, true);
+  };
+}
+
+/**
+ * Copy text; shows a short in-app notice when `window.appNotifications` exists.
+ */
+export async function copyTextToClipboard(text) {
+  const t = String(text ?? "");
+  if (!t) return;
+  try {
+    await navigator.clipboard.writeText(t);
+    if (window.appNotifications) {
+      const meta = t.length > 72 ? t.slice(0, 69) + "…" : t;
+      window.appNotifications.push({ title: "Copied", meta });
+    }
+  } catch (err) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = t;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      if (window.appNotifications) {
+        window.appNotifications.push({ title: "Copied", meta: "To clipboard" });
+      }
+    } catch (e) {
+      console.warn("[copyTextToClipboard] fallback failed", e);
+    }
+  }
+}
+

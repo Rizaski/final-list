@@ -1,4 +1,5 @@
 import * as votersApi from "./voters.js";
+import { showContextMenu, copyTextToClipboard } from "./ui.js";
 import { getCandidatesForActiveElectionView, openAddAgentModal } from "./settings.js";
 import { getAgentsFromStorage } from "./agents-context.js";
 import { initPledgesTableViewInColumnMenu } from "./table-view-menu.js";
@@ -859,6 +860,33 @@ export function initPledgesModule(votersContext) {
     const row = pledgeRows.find((r) => String(r.voterId) === String(voterId));
     renderPledgesDetailsPanel(row || null);
     renderPledgesTable(); // ensure selection highlight updates
+  });
+
+  pledgesTableBody?.addEventListener("contextmenu", (e) => {
+    if (e.target.closest("select.door-to-door-pledge")) return;
+    const tr = e.target.closest("tr[data-voter-id]");
+    if (!tr) return;
+    const voterId = tr.dataset.voterId;
+    const row = pledgeRows.find((r) => String(r.voterId) === String(voterId));
+    if (!row) return;
+    e.preventDefault();
+    showContextMenu(e, [
+      {
+        label: "Show in details panel",
+        onSelect: () => {
+          selectedPledgeVoterId = String(voterId);
+          renderPledgesDetailsPanel(row);
+          renderPledgesTable();
+        },
+      },
+      { separator: true },
+      { label: "Copy name", onSelect: () => copyTextToClipboard(String(row.name || "")) },
+      { label: "Copy national ID", onSelect: () => copyTextToClipboard(String(row.nationalId || "")) },
+      {
+        label: "Copy ballot box",
+        onSelect: () => copyTextToClipboard(String(row.ballotBox || "")),
+      },
+    ]);
   });
 
   return {

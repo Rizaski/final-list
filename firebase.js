@@ -631,10 +631,12 @@ export const firebaseInitPromise = (async () => {
 
       // Voters collection
       const VOTERS_COLLECTION = "voters";
-      const votersColRef = scopedCollection( VOTERS_COLLECTION);
+      /** Collection path must follow `getActiveCampaignWorkspaceId()`; do not cache a single ref across workspace switches. */
+      const getVotersColRef = () => scopedCollection( VOTERS_COLLECTION);
 
       /** Page through the whole collection (Firestore has per-response limits on large sets). */
       const fetchAllVoterDocs = async (getDocsImpl) => {
+        const colRef = getVotersColRef();
         const PAGE = 500;
         const out = [];
         let lastDoc = null;
@@ -643,7 +645,7 @@ export const firebaseInitPromise = (async () => {
           for (;;) {
             const parts = [firestoreMod.orderBy(docId), firestoreMod.limit(PAGE)];
             if (lastDoc) parts.push(firestoreMod.startAfter(lastDoc));
-            const q = firestoreMod.query(votersColRef, ...parts);
+            const q = firestoreMod.query(colRef, ...parts);
             const snap = await getDocsImpl(q);
             if (snap.empty) break;
             out.push(...snap.docs);
@@ -652,7 +654,7 @@ export const firebaseInitPromise = (async () => {
           }
         } catch (err) {
           console.warn("[Firestore] Paged voters fetch failed; trying single collection read", err?.message || err);
-          const snap = await getDocsImpl(votersColRef);
+          const snap = await getDocsImpl(getVotersColRef());
           return snap.docs || [];
         }
         return out;
@@ -790,7 +792,7 @@ export const firebaseInitPromise = (async () => {
       onVotersSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
-          votersColRef,
+          getVotersColRef(),
           (snap) => {
             const items = snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
             handler(items);
@@ -801,10 +803,10 @@ export const firebaseInitPromise = (async () => {
 
       // Agents collection
       const AGENTS_COLLECTION = "agents";
-      const agentsColRef = scopedCollection( AGENTS_COLLECTION);
+      const getAgentsColRef = () => scopedCollection( AGENTS_COLLECTION);
 
       getAllAgentsFs = async () => {
-        const snap = await firestoreMod.getDocs(agentsColRef);
+        const snap = await firestoreMod.getDocs(getAgentsColRef());
         // Document id must win — stored `id` field in data would overwrite d.id and break delete/update.
         return snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
       };
@@ -831,7 +833,7 @@ export const firebaseInitPromise = (async () => {
       onAgentsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
-          agentsColRef,
+          getAgentsColRef(),
           (snap) => {
             const items = snap.docs.map((d) => ({ ...(d.data() || {}), id: d.id }));
             handler(items);
@@ -842,10 +844,10 @@ export const firebaseInitPromise = (async () => {
 
       // Candidates collection
       const CANDIDATES_COLLECTION = "candidates";
-      const candidatesColRef = scopedCollection( CANDIDATES_COLLECTION);
+      const getCandidatesColRef = () => scopedCollection( CANDIDATES_COLLECTION);
 
       getAllCandidatesFs = async () => {
-        const snap = await firestoreMod.getDocs(candidatesColRef);
+        const snap = await firestoreMod.getDocs(getCandidatesColRef());
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
 
@@ -869,7 +871,7 @@ export const firebaseInitPromise = (async () => {
       onCandidatesSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
-          candidatesColRef,
+          getCandidatesColRef(),
           (snap) => {
             const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
             handler(items);
@@ -879,9 +881,9 @@ export const firebaseInitPromise = (async () => {
       };
 
       // Voter lists (saved lists)
-      const voterListsColRef = scopedCollection( VOTER_LISTS_COLLECTION);
+      const getVoterListsColRef = () => scopedCollection( VOTER_LISTS_COLLECTION);
       getAllVoterListsFs = async () => {
-        const snap = await firestoreMod.getDocs(voterListsColRef);
+        const snap = await firestoreMod.getDocs(getVoterListsColRef());
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       getVoterListFs = async (listId) => {
@@ -914,7 +916,7 @@ export const firebaseInitPromise = (async () => {
       onVoterListsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
-          voterListsColRef,
+          getVoterListsColRef(),
           (snap) => {
             handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
           },
@@ -1004,7 +1006,7 @@ export const firebaseInitPromise = (async () => {
           `eventParticipantShares/${String(token)}/rows`
         );
       };
-      const campaignUsersColRef = scopedCollection( CAMPAIGN_USERS_COLLECTION);
+      const getCampaignUsersColRef = () => scopedCollection( CAMPAIGN_USERS_COLLECTION);
       getCampaignUserByEmailFs = async (email) => {
         if (!email) return null;
         const id = String(email).toLowerCase().trim();
@@ -1015,7 +1017,7 @@ export const firebaseInitPromise = (async () => {
         return null;
       };
       getAllCampaignUsersFs = async () => {
-        const snap = await firestoreMod.getDocs(campaignUsersColRef);
+        const snap = await firestoreMod.getDocs(getCampaignUsersColRef());
         return snap.docs.map((d) => ({ email: d.id, ...d.data() }));
       };
       setCampaignUserFs = async (user) => {
@@ -1061,7 +1063,7 @@ export const firebaseInitPromise = (async () => {
         );
       };
       getListStatusByVoterIdFs = async (voterId) => {
-        const lists = await firestoreMod.getDocs(voterListsColRef);
+        const lists = await firestoreMod.getDocs(getVoterListsColRef());
         const out = [];
         for (const listDoc of lists.docs) {
           const list = listDoc.data();
@@ -1077,9 +1079,9 @@ export const firebaseInitPromise = (async () => {
       };
 
       // Events collection
-      const eventsColRef = scopedCollection( EVENTS_COLLECTION);
+      const getEventsColRef = () => scopedCollection( EVENTS_COLLECTION);
       getAllEventsFs = async () => {
-        const snap = await firestoreMod.getDocs(eventsColRef);
+        const snap = await firestoreMod.getDocs(getEventsColRef());
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       setEventFs = async (id, data) => {
@@ -1095,7 +1097,7 @@ export const firebaseInitPromise = (async () => {
       onEventsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
-          eventsColRef,
+          getEventsColRef(),
           (snap) => {
             handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
           },
@@ -1104,9 +1106,9 @@ export const firebaseInitPromise = (async () => {
       };
 
       // Zero Day transport trips
-      const transportTripsColRef = scopedCollection( TRANSPORT_TRIPS_COLLECTION);
+      const getTransportTripsColRef = () => scopedCollection( TRANSPORT_TRIPS_COLLECTION);
       getAllTransportTripsFs = async () => {
-        const snap = await firestoreMod.getDocs(transportTripsColRef);
+        const snap = await firestoreMod.getDocs(getTransportTripsColRef());
         return snap.docs.map((d) => {
           const id = Number(d.id);
           const data = d.data();
@@ -1150,7 +1152,7 @@ export const firebaseInitPromise = (async () => {
       onTransportTripsSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
-          transportTripsColRef,
+          getTransportTripsColRef(),
           (snap) => {
             handler(snap.docs.map((d) => {
               const id = Number(d.id);
@@ -1162,9 +1164,9 @@ export const firebaseInitPromise = (async () => {
         );
       };
 
-      const transportRoutesColRef = scopedCollection( TRANSPORT_ROUTES_COLLECTION);
+      const getTransportRoutesColRef = () => scopedCollection( TRANSPORT_ROUTES_COLLECTION);
       getAllTransportRoutesFs = async () => {
-        const snap = await firestoreMod.getDocs(transportRoutesColRef);
+        const snap = await firestoreMod.getDocs(getTransportRoutesColRef());
         return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       };
       setTransportRouteFs = async (route) => {
@@ -1204,7 +1206,7 @@ export const firebaseInitPromise = (async () => {
       onTransportRoutesSnapshotFs = (handler) => {
         if (typeof handler !== "function") return noopUnsubscribe;
         return onSnapshotSafe(
-          transportRoutesColRef,
+          getTransportRoutesColRef(),
           (snap) => {
             handler(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
           },

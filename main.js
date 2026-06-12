@@ -5,11 +5,17 @@ import {
   getVoterStats,
   getPledgeByBallotBox,
   refreshVotersForElectionScope,
+  rebindVotersFirestoreAfterWorkspaceChange,
   syncCandidateAssignmentsToFirebase,
   updateVoterPhone,
 } from "./voters.js";
 import { initPledgesModule, getPledgeStatsFromPledges } from "./pledges.js";
-import { initEventsModule, getUpcomingEventsSummary, refreshEventsFromFirestore } from "./events.js";
+import {
+  initEventsModule,
+  getUpcomingEventsSummary,
+  refreshEventsFromFirestore,
+  rebindEventsFirestoreAfterWorkspaceChange,
+} from "./events.js";
 import { initReportsModule } from "./reports.js";
 import {
   initSettingsModule,
@@ -17,6 +23,7 @@ import {
   syncCampaignConfigFromFirestore,
   refreshAgentsFromFirestore,
   refreshCandidatesFromFirestore,
+  rebindAgentsAndCandidatesFirestoreAfterWorkspaceChange,
   openAddAgentModal,
   applySettingsTabsVisibility,
 } from "./settings.js";
@@ -27,10 +34,12 @@ import {
   syncVotedFromFirestore,
   refreshTransportTripsFromFirestore,
   refreshTransportRoutesFromFirestore,
+  rebindTransportFirestoreAfterWorkspaceChange,
+  resubscribeZeroDayVotedRealtime,
 } from "./zeroDay.js";
 import { initDoorToDoorModule } from "./doorToDoor.js";
 import { initTableViewMenus } from "./table-view-menu.js";
-import { clearLocalCampaignWorkspaceCache } from "./archive-helpers.js";
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                import { clearLocalCampaignWorkspaceCache } from "./archive-helpers.js";
 
 /** Firestore ballot session — same doc as ballot-box.html (`monitors/{token}/ballotSession/settings`). */
 function getMonitorBallotSessionOpts(api, monitorToken) {
@@ -59,7 +68,37 @@ const modulesMap = {
   settings: document.getElementById("module-settings"),
 };
 
-const navButtons = Array.from(document.querySelectorAll(".nav-item"));
+const navButtons = Array.from(document.querySelectorAll(".sidebar__nav .nav-item"));
+const SIDEBAR_FEATURES_BY_MODULE = {
+  voters: [
+    { id: "voters-table", label: "Voters table", selector: "#votersTable" },
+    { id: "voter-notes", label: "Notes panel", selector: "#saveVoterNotesButton" },
+  ],
+  pledges: [{ id: "pledges-table", label: "Pledges table", selector: "#pledgesTable" }],
+  "door-to-door": [{ id: "d2d-table", label: "Field table", selector: "#doorToDoorTable" }],
+  calls: [{ id: "calls-table", label: "Calls table", selector: "#callsTable" }],
+  "zero-day": [
+    { id: "vote-marking", label: "Vote marking", clickSelector: "#zero-day-tab-btn-vote" },
+    { id: "monitors", label: "Manage monitors", clickSelector: "#zero-day-tab-btn-monitors" },
+  ],
+  transportation: [
+    { id: "trips", label: "Trips table", clickSelector: "#transportTabTrips", selector: "#zeroDayTripsTable" },
+    { id: "routes", label: "Routes table", clickSelector: "#transportTabRoutes", selector: "#zeroDayRoutesTable" },
+  ],
+  events: [{ id: "events-table", label: "Events table", selector: "#eventsTable" }],
+  reports: [
+    { id: "pledge-chart", label: "Pledge chart", selector: "#reportsPledgeChart" },
+    { id: "referendum", label: "Referendum", selector: "#reportsReferendumCard" },
+  ],
+  settings: [
+    { id: "campaign", label: "Campaign", clickSelector: "#settings-tab-btn-campaign" },
+    { id: "candidates", label: "Candidates", clickSelector: "#settings-tab-btn-candidates", selector: "#candidatesTable" },
+    { id: "agents", label: "Agents", clickSelector: "#settings-tab-btn-agents", selector: "#settingsAgentsTable" },
+    { id: "users", label: "Users", clickSelector: "#settings-tab-btn-users", selector: "#settingsUsersTable" },
+  ],
+};
+const sidebarExpandedModules = new Set();
+const activeSidebarFeatureByModule = new Map();
 const SETTINGS_MODULE_KEY = "settings";
 const ADMIN_EMAIL = "alirixamv@gmail.com";
 const AUTH_STORAGE_KEY = "campaign-auth-user";
@@ -407,10 +446,13 @@ function applyPledgesNavVisibility() {
   const isCandidateOnly = user?.role === "candidate" && user?.candidateId;
   const pledgesBtn = document.querySelector('.nav-item[data-module="pledges"]');
   if (!pledgesBtn) return;
+  const pledgesGroup = pledgesBtn.closest(".nav-group");
   const cfg = getCampaignConfig();
   const show = cfg.showPledgesNav !== false;
   /** Class + !important survives applyUserToShell clearing inline display on other nav items */
-  pledgesBtn.classList.toggle("nav-item--hidden-sidebar", isCandidateOnly || !show);
+  const hidden = isCandidateOnly || !show;
+  pledgesBtn.classList.toggle("nav-item--hidden-sidebar", hidden);
+  if (pledgesGroup) pledgesGroup.classList.toggle("nav-group--hidden", hidden);
   pledgesBtn.style.removeProperty("display");
   const activePledges = document.querySelector(
     '.nav-item.nav-item--active[data-module="pledges"]'
@@ -420,6 +462,99 @@ function applyPledgesNavVisibility() {
   } else if (!show && !isCandidateOnly && activePledges) {
     switchModule("dashboard");
   }
+}
+
+function setSidebarGroupExpanded(moduleKey, expanded) {
+  const group = document.querySelector(`.nav-group[data-module="${moduleKey}"]`);
+  if (!group) return;
+  const submenu = group.querySelector(".nav-group__submenu");
+  const toggle = group.querySelector(".nav-group__toggle");
+  if (!submenu || !toggle) return;
+  submenu.hidden = !expanded;
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  group.classList.toggle("nav-group--expanded", expanded);
+  if (expanded) sidebarExpandedModules.add(moduleKey);
+  else sidebarExpandedModules.delete(moduleKey);
+}
+
+function syncSidebarFeatureHighlights(moduleKey) {
+  document.querySelectorAll(".nav-subitem").forEach((el) => {
+    const active =
+      el.getAttribute("data-module") === moduleKey &&
+      el.getAttribute("data-feature-id") === activeSidebarFeatureByModule.get(moduleKey);
+    el.classList.toggle("nav-subitem--active", !!active);
+  });
+}
+
+function openSidebarFeature(moduleKey, feature) {
+  if (!feature) return;
+  if (feature.clickSelector) {
+    const clickEl = document.querySelector(feature.clickSelector);
+    if (clickEl) clickEl.click();
+  }
+  const selector = feature.selector;
+  if (!selector) return;
+  const scrollToFeature = () => {
+    const target = document.querySelector(selector);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  requestAnimationFrame(() => setTimeout(scrollToFeature, 80));
+}
+
+function buildSidebarCollapsibleMenus() {
+  const nav = document.querySelector(".sidebar__nav");
+  if (!nav || nav.dataset.collapsibleReady === "1") return;
+  nav.dataset.collapsibleReady = "1";
+  Array.from(nav.querySelectorAll(":scope > .nav-item")).forEach((btn) => {
+    const moduleKey = btn.dataset.module;
+    if (!moduleKey) return;
+    const features = SIDEBAR_FEATURES_BY_MODULE[moduleKey] || [];
+    const group = document.createElement("div");
+    group.className = "nav-group";
+    group.dataset.module = moduleKey;
+    btn.replaceWith(group);
+    const row = document.createElement("div");
+    row.className = "nav-group__row";
+    row.appendChild(btn);
+    group.appendChild(row);
+    if (!features.length) return;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "nav-group__toggle";
+    toggle.setAttribute("aria-label", `Toggle ${moduleKey} menu`);
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.innerHTML =
+      '<svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    row.appendChild(toggle);
+    const submenu = document.createElement("div");
+    submenu.className = "nav-group__submenu";
+    submenu.hidden = true;
+    features.forEach((feature) => {
+      const subBtn = document.createElement("button");
+      subBtn.type = "button";
+      subBtn.className = "nav-subitem";
+      subBtn.setAttribute("data-module", moduleKey);
+      subBtn.setAttribute("data-feature-id", feature.id);
+      subBtn.textContent = feature.label;
+      subBtn.addEventListener("click", () => {
+        switchModule(moduleKey);
+        activeSidebarFeatureByModule.set(moduleKey, feature.id);
+        setSidebarGroupExpanded(moduleKey, true);
+        syncSidebarFeatureHighlights(moduleKey);
+        openSidebarFeature(moduleKey, feature);
+        closeSidebar();
+      });
+      submenu.appendChild(subBtn);
+    });
+    group.appendChild(submenu);
+    toggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      setSidebarGroupExpanded(moduleKey, !expanded);
+    });
+  });
 }
 
 function setCurrentUser(user) {
@@ -558,6 +693,11 @@ function switchModule(key) {
       btn.dataset.module === key
     );
   });
+  const activeGroup = document.querySelector(`.nav-group[data-module="${key}"]`);
+  if (activeGroup?.querySelector(".nav-group__submenu")) {
+    setSidebarGroupExpanded(key, true);
+  }
+  syncSidebarFeatureHighlights(key);
   // Sync voted data from Firestore when opening Voters so Ballot Box link marks show in Voted column
   if (key === "voters") syncVotedFromFirestore().catch(() => {});
 }
@@ -596,9 +736,23 @@ function toggleSidebar() {
   }
 }
 
+buildSidebarCollapsibleMenus();
+
 navButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
     const key = btn.dataset.module;
+    const group = btn.closest(".nav-group");
+    const hasSubmenu = !!group?.querySelector(".nav-group__submenu");
+    const isActive = btn.classList.contains("nav-item--active");
+
+    if (isActive && hasSubmenu) {
+      const expanded = group.classList.contains("nav-group--expanded");
+      setSidebarGroupExpanded(key, !expanded);
+      return;
+    }
+
+    activeSidebarFeatureByModule.delete(key);
+    setSidebarGroupExpanded(key, true);
     switchModule(key);
     closeSidebar();
   });
@@ -904,6 +1058,38 @@ function getDashboardScope() {
   };
 }
 
+/**
+ * After `setActiveCampaignWorkspaceFs` succeeds, reload scoped data in-process instead of `location.reload()`.
+ * Avoids re-fetching the Firebase SDK and a full app boot (often 1+ minutes on large campaigns).
+ */
+export async function refreshAppAfterCampaignWorkspaceChange() {
+  const appLoader = document.getElementById("appLoaderOverlay");
+  if (appLoader) appLoader.hidden = false;
+  try {
+    clearLocalCampaignWorkspaceCache();
+    await syncCampaignConfigFromFirestore();
+    await Promise.all([
+      rebindVotersFirestoreAfterWorkspaceChange(),
+      rebindAgentsAndCandidatesFirestoreAfterWorkspaceChange(),
+      rebindEventsFirestoreAfterWorkspaceChange(),
+      rebindTransportFirestoreAfterWorkspaceChange(),
+    ]);
+    await rebuildHeaderWorkspaceSelect();
+    const scope = getDashboardScope();
+    refreshDashboard(scope);
+    document.dispatchEvent(new CustomEvent("effective-election-view-changed"));
+    applyPledgesNavVisibility();
+    await syncCandidateAssignmentsToFirebase();
+    await syncVotedFromFirestore();
+    resubscribeZeroDayVotedRealtime();
+    document.dispatchEvent(new CustomEvent("zero-day-refresh"));
+  } catch (e) {
+    console.error("[App] refreshAppAfterCampaignWorkspaceChange", e);
+  } finally {
+    if (appLoader) appLoader.hidden = true;
+  }
+}
+
 function handleScopeChange() {
   refreshDashboard(getDashboardScope());
 }
@@ -943,8 +1129,7 @@ electionTypeSelect.addEventListener("change", async () => {
       electionTypeSelect.value = cur;
       return;
     }
-    clearLocalCampaignWorkspaceCache();
-    window.location.reload();
+    await refreshAppAfterCampaignWorkspaceChange();
   } catch (e) {
     console.error("[App] workspace switch", e);
     electionTypeSelect.value = cur;
@@ -1152,8 +1337,8 @@ async function startAppModules(firebaseApi) {
   console.log("[App] Starting application modules…");
 
   initSettingsModule();
-  await syncCampaignConfigFromFirestore();
-  await rebuildHeaderWorkspaceSelect();
+  // Run in parallel: both hit Firestore but are independent (config doc vs workspace list + default row).
+  await Promise.all([syncCampaignConfigFromFirestore(), rebuildHeaderWorkspaceSelect()]);
 
   const votersContext = await initVotersModule(getCurrentUser, { openAddAgentModal });
   const monitorToken = new URLSearchParams(window.location.search).get("monitor");
@@ -1176,8 +1361,15 @@ async function startAppModules(firebaseApi) {
   const callsContext = initCallsModule(votersContext);
   initReportsModule({ votersContext, pledgesContext, eventsContext, getCurrentUser });
   initZeroDayModule(votersContext, { pledgesContext, updateVoterPhone, getCurrentUser });
-  await syncVotersAndDashboardForElectionScope();
+  // initVotersModule already did hydrateLceArchiveCache + getAllVotersFs + LCE merge; do not run
+  // syncVotersAndDashboardForElectionScope here — that would paged-read the full collection again
+  // with fromServer: true and roughly double load time.
   applyPledgesNavVisibility();
+  {
+    const scope = getDashboardScope();
+    refreshDashboard(scope);
+  }
+  document.dispatchEvent(new CustomEvent("effective-election-view-changed"));
 
   const refreshBtn = document.getElementById("refreshButton");
   const refreshStatusEl = document.getElementById("refreshStatus");
@@ -1191,8 +1383,7 @@ async function startAppModules(firebaseApi) {
       refreshBtn.disabled = true;
       refreshBtn.classList.add("topbar__refresh-btn--spinning");
       try {
-        await syncCampaignConfigFromFirestore();
-        await rebuildHeaderWorkspaceSelect();
+        await Promise.all([syncCampaignConfigFromFirestore(), rebuildHeaderWorkspaceSelect()]);
         await syncVotersAndDashboardForElectionScope();
         applyPledgesNavVisibility();
         await syncCandidateAssignmentsToFirebase();

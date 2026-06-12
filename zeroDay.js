@@ -3,7 +3,7 @@
  * Election day transport trips and voter vote-marking.
  */
 
-import { openModal, closeModal, confirmDialog } from "./ui.js";
+import { openModal, closeModal, confirmDialog, showContextMenu } from "./ui.js";
 import { firebaseInitPromise } from "./firebase.js";
 import { getAgents, getCampaignConfig, mergeLocalCampaignConfig } from "./settings.js";
 import { sequenceAsImportedFromCsv, compareVotersByBallotSequenceThenName } from "./sequence-utils.js";
@@ -40,8 +40,18 @@ const TRIP_TABLE_COLUMN_DEFS = [
   { key: "amount", label: "Amount", sortKey: "amount" },
   { key: "remarks", label: "Remarks", sortKey: "remarks" },
 ];
-const TRIP_COLUMN_DEFAULT_KEYS = TRIP_TABLE_COLUMN_DEFS.map((c) => c.key);
-let transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_KEYS.slice();
+const TRIP_COLUMN_ALL_KEYS = TRIP_TABLE_COLUMN_DEFS.map((c) => c.key);
+/** Shown for new users / empty prefs — omits rate, amount, remarks so Trip / Route has more room. */
+const TRIP_COLUMN_DEFAULT_VISIBLE_KEYS = [
+  "type",
+  "route",
+  "vehicle",
+  "driver",
+  "pickup",
+  "voters",
+  "status",
+];
+let transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_VISIBLE_KEYS.slice();
 const PAGE_SIZE = 15;
 const MONITORS_STORAGE_KEY = "zero-day-monitors";
 const VOTED_STORAGE_KEY = "zero-day-voted";
@@ -79,8 +89,18 @@ const ROUTE_TABLE_EDITABLE_FIELDS = new Set([
   "remarks",
 ]);
 const ROUTES_VISIBLE_COLS_KEY = "zero-day-routes-visible-columns";
-const ROUTE_COLUMN_DEFAULT_KEYS = ROUTE_TABLE_COLUMN_DEFS.map((c) => c.key);
-let transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_KEYS.slice();
+const ROUTE_COLUMN_ALL_KEYS = ROUTE_TABLE_COLUMN_DEFS.map((c) => c.key);
+/** Shown for new users / empty prefs — omits rate, amount, remarks so the Trips column has more room. */
+const ROUTE_COLUMN_DEFAULT_VISIBLE_KEYS = [
+  "routeNum",
+  "trips",
+  "vehicle",
+  "driver",
+  "pickup",
+  "voters",
+  "status",
+];
+let transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_VISIBLE_KEYS.slice();
 /** localStorage key prefix for ballot session when Firestore is unavailable */
 const MONITOR_BALLOT_SESSION_PREFIX = "monitor_ballot_session_";
 
@@ -1793,6 +1813,70 @@ export async function syncVotedFromFirestore() {
   }
 }
 
+/**
+ * Rebind transport collection listeners to the active campaign workspace (path changes per workspace; avoids full reload).
+ */
+export async function rebindTransportFirestoreAfterWorkspaceChange() {
+  if (typeof transportTripsUnsubscribe === "function" && transportTripsUnsubscribe) {
+    try {
+      transportTripsUnsubscribe();
+    } catch (_) {}
+    transportTripsUnsubscribe = null;
+  }
+  if (typeof transportRoutesUnsubscribe === "function" && transportRoutesUnsubscribe) {
+    try {
+      transportRoutesUnsubscribe();
+    } catch (_) {}
+    transportRoutesUnsubscribe = null;
+  }
+  const api = await firebaseInitPromise;
+  if (!api?.ready) return;
+  zeroDayTrips = [];
+  if (api.getAllTransportTripsFs) {
+    try {
+      const remote = await api.getAllTransportTripsFs();
+      if (Array.isArray(remote)) {
+        zeroDayTrips = remote.map(normalizeTrip);
+      }
+    } catch (_) {}
+  }
+  saveTrips();
+  renderZeroDayTripsTable();
+  renderTransportRoutesTable();
+  if (api.onTransportTripsSnapshotFs) {
+    transportTripsUnsubscribe = api.onTransportTripsSnapshotFs((items) => {
+      if (!Array.isArray(items)) return;
+      const remote = items.map(normalizeTrip);
+      zeroDayTrips = mergeTransportTripLists(zeroDayTrips, remote);
+      saveTrips();
+      renderZeroDayTripsTable();
+      renderTransportRoutesTable();
+    });
+  }
+  zeroDayTransportRoutes = [];
+  if (api.getAllTransportRoutesFs) {
+    try {
+      const remote = await api.getAllTransportRoutesFs();
+      if (Array.isArray(remote)) {
+        zeroDayTransportRoutes = remote.map(normalizeTransportRoute);
+      }
+    } catch (_) {}
+  }
+  saveTransportRoutes();
+  renderTransportRoutesTable();
+  if (api.onTransportRoutesSnapshotFs) {
+    transportRoutesUnsubscribe = api.onTransportRoutesSnapshotFs((items) => {
+      if (!Array.isArray(items)) return;
+      zeroDayTransportRoutes = mergeTransportRouteLists(
+        zeroDayTransportRoutes,
+        items.map(normalizeTransportRoute)
+      );
+      saveTransportRoutes();
+      renderTransportRoutesTable();
+    });
+  }
+}
+
 /** One-shot pull of transport trips from Firestore (e.g. header hard refresh). Merges with localStorage, then pushes merged trips to Firestore. */
 export async function refreshTransportTripsFromFirestore() {
   try {
@@ -1871,6 +1955,12 @@ function subscribeVotedRealtime() {
     })
     .catch(() => {});
 }
+
+/** Rebuild `voted` subcollection listeners after switching campaign workspace (keeps real-time monitor updates aligned). */
+export function resubscribeZeroDayVotedRealtime() {
+  subscribeVotedRealtime();
+}
+
 /** Returns set of voter IDs that have been marked as voted (for reports). */
 export function getVotedVoterIds() {
   loadVotedEntries();
@@ -2285,14 +2375,16 @@ function initTransportVisibleColumns() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length) {
-        const valid = new Set(TRIP_COLUMN_DEFAULT_KEYS);
+        const valid = new Set(TRIP_COLUMN_ALL_KEYS);
         transportVisibleColumnKeys = parsed.filter((k) => valid.has(k));
-        if (transportVisibleColumnKeys.length === 0) transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_KEYS.slice();
+        if (transportVisibleColumnKeys.length === 0) {
+          transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_VISIBLE_KEYS.slice();
+        }
         return;
       }
     }
   } catch (_) {}
-  transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_KEYS.slice();
+  transportVisibleColumnKeys = TRIP_COLUMN_DEFAULT_VISIBLE_KEYS.slice();
 }
 
 function initTransportRoutesVisibleColumns() {
@@ -2301,16 +2393,16 @@ function initTransportRoutesVisibleColumns() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length) {
-        const valid = new Set(ROUTE_COLUMN_DEFAULT_KEYS);
+        const valid = new Set(ROUTE_COLUMN_ALL_KEYS);
         transportRouteVisibleColumnKeys = parsed.filter((k) => valid.has(k));
         if (transportRouteVisibleColumnKeys.length === 0) {
-          transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_KEYS.slice();
+          transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_VISIBLE_KEYS.slice();
         }
         return;
       }
     }
   } catch (_) {}
-  transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_KEYS.slice();
+  transportRouteVisibleColumnKeys = ROUTE_COLUMN_DEFAULT_VISIBLE_KEYS.slice();
 }
 
 function getTransportVisibleColumnDefs() {
@@ -2331,9 +2423,11 @@ function syncTransportTableHeader() {
       ? ` class="th-sortable" data-sort-key="${escapeHtml(col.sortKey)}"`
       : "";
     const ind = col.sortKey ? `<span class="sort-indicator"></span>` : "";
-    return `<th scope="col"${sortable}>${escapeHtml(col.label)}${ind}</th>`;
+    return `<th scope="col" data-trip-col="${escapeHtml(col.key)}"${sortable}>${escapeHtml(col.label)}${ind}</th>`;
   });
-  ths.push(`<th scope="col"><span class="sr-only">Actions</span></th>`);
+  ths.push(
+    `<th scope="col" class="transport-trips-table__actions-col"><span class="sr-only">Menu — use ⋮ or right-click the row</span></th>`
+  );
   theadRow.innerHTML = ths.join("");
 }
 
@@ -2345,40 +2439,57 @@ function buildTripDataCellsHtml(trip) {
   const tid = trip.id;
   return defs
     .map((col) => {
+      const dattr = ` data-trip-col="${escapeHtml(col.key)}"`;
       switch (col.key) {
         case "type":
-          return `<td><span class="badge badge--unknown">${escapeHtml(typeLabel)}</span></td>`;
+          return `<td${dattr}><span class="badge badge--unknown">${escapeHtml(typeLabel)}</span></td>`;
         case "route":
-          return `<td>${escapeHtml(trip.route)}</td>`;
+          return `<td${dattr} class="transport-trips-table__route-name-cell">${escapeHtml(trip.route)}</td>`;
         case "vehicle":
-          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--vehicle"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="vehicle" data-trip-id="${tid}" value="${escapeHtml(trip.vehicle || "")}" placeholder="—" aria-label="Vessel or flight number" title="Vessel / flight no."></td>`;
+          return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--vehicle"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="vehicle" data-trip-id="${tid}" value="${escapeHtml(trip.vehicle || "")}" placeholder="—" aria-label="Vessel or flight number" title="Vessel / flight no."></td>`;
         case "driver":
-          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--driver"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="driver" data-trip-id="${tid}" value="${escapeHtml(trip.driver || "")}" placeholder="—" aria-label="Driver, pilot, or captain" title="Driver / captain"></td>`;
+          return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--driver"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="driver" data-trip-id="${tid}" value="${escapeHtml(trip.driver || "")}" placeholder="—" aria-label="Driver, pilot, or captain" title="Driver / captain"></td>`;
         case "pickup":
-          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--pickup"><input type="datetime-local" class="input input--trip-table-meta input--trip-pickup-local" data-trip-meta-field="pickupTime" data-trip-id="${tid}" value="${escapeHtml(toDatetimeLocalValue(trip.pickupTime))}" aria-label="Pickup time" title="Pickup time"></td>`;
+          return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--pickup"><input type="datetime-local" class="input input--trip-table-meta input--trip-pickup-local" data-trip-meta-field="pickupTime" data-trip-id="${tid}" value="${escapeHtml(toDatetimeLocalValue(trip.pickupTime))}" aria-label="Pickup time" title="Pickup time"></td>`;
         case "voters":
-          return `<td>${count}</td>`;
+          return `<td${dattr}>${count}</td>`;
         case "status":
-          return `<td><span class="${escapeHtml(statusClass)}">${escapeHtml(trip.status)}</span></td>`;
+          return `<td${dattr}><span class="${escapeHtml(statusClass)}">${escapeHtml(trip.status)}</span></td>`;
         case "rate":
-          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="rate" data-trip-id="${tid}" value="${escapeHtml(trip.rate || "")}" placeholder="—" aria-label="Route rate" title="Rate for this route"></td>`;
+          return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="rate" data-trip-id="${tid}" value="${escapeHtml(trip.rate || "")}" placeholder="—" aria-label="Route rate" title="Rate for this route"></td>`;
         case "amount":
-          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="amount" data-trip-id="${tid}" value="${escapeHtml(trip.amount || "")}" placeholder="—" aria-label="Route amount" title="Amount for this route"></td>`;
+          return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount"><input type="text" class="input input--trip-table-meta" data-trip-meta-field="amount" data-trip-id="${tid}" value="${escapeHtml(trip.amount || "")}" placeholder="—" aria-label="Route amount" title="Amount for this route"></td>`;
         case "remarks":
-          return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks"><input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-trip-meta-field="remarks" data-trip-id="${tid}" value="${escapeHtml(trip.remarks || "")}" placeholder="Notes / remarks" aria-label="Route remarks" title="Remarks for this route"></td>`;
+          return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks"><input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-trip-meta-field="remarks" data-trip-id="${tid}" value="${escapeHtml(trip.remarks || "")}" placeholder="Notes / remarks" aria-label="Route remarks" title="Remarks for this route"></td>`;
         default:
-          return "<td></td>";
+          return `<td${dattr}></td>`;
       }
     })
     .join("");
 }
 
+function getTransportTripContextMenuItems(trip) {
+  if (!trip) return [];
+  const id = String(trip.id);
+  return [
+    { label: "Change status…", onSelect: () => openTripStatusModal(id) },
+    { label: "View voters…", onSelect: () => openTripVotersModal(trip) },
+    { label: "Edit trip…", onSelect: () => openTripForm(trip) },
+    { separator: true },
+    { label: "Delete…", danger: true, onSelect: () => void deleteTrip(id) },
+  ];
+}
+
+function openTransportTripContextMenuAt(clientX, clientY, trip) {
+  const items = getTransportTripContextMenuItems(trip);
+  if (!items.length) return;
+  showContextMenu({ clientX, clientY, preventDefault: () => {} }, items);
+}
+
 function buildTripActionsCellHtml(trip) {
-  return `<td class="transport-trips-table__actions">
-        <button type="button" class="ghost-button ghost-button--small" data-trip-status="${trip.id}" title="Change status" aria-label="Change status">Status</button>
-        <button type="button" class="ghost-button ghost-button--small" data-view-trip-voters="${trip.id}" title="View voters">Voters</button>
-        <button type="button" class="ghost-button ghost-button--small" data-edit-trip="${trip.id}">Edit</button>
-        <button type="button" class="ghost-button ghost-button--small" data-delete-trip="${trip.id}" aria-label="Delete">Delete</button>
+  const tid = escapeHtml(String(trip.id));
+  return `<td class="transport-trips-table__actions transport-trips-table__actions--context">
+        <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" data-trip-menu="${tid}" aria-label="Trip actions" aria-haspopup="true" title="Trip actions (or right-click row)">⋮</button>
       </td>`;
 }
 
@@ -2404,9 +2515,11 @@ function syncTransportRoutesTableHeader() {
       col.headerTitle != null && String(col.headerTitle).trim()
         ? ` title="${escapeHtml(String(col.headerTitle))}"`
         : "";
-    return `<th scope="col"${sortable}${titleAttr}>${escapeHtml(col.label)}${ind}</th>`;
+    return `<th scope="col" data-route-col="${escapeHtml(col.key)}"${sortable}${titleAttr}>${escapeHtml(col.label)}${ind}</th>`;
   });
-  ths.push(`<th scope="col"><span class="sr-only">Actions</span></th>`);
+  ths.push(
+    `<th scope="col" class="transport-routes-table__actions-col"><span class="sr-only">Menu — use ⋮ or right-click the row</span></th>`
+  );
   theadRow.innerHTML = ths.join("");
 }
 
@@ -2621,46 +2734,62 @@ function buildRouteDataCellsHtml(route, displayNum) {
   const rid = escapeHtml(String(route.id));
   const defs = getTransportRouteVisibleColumnDefs();
   return defs.map((col) => {
+    const dattr = ` data-route-col="${escapeHtml(col.key)}"`;
     switch (col.key) {
       case "routeNum":
-        return `<td><span class="badge badge--secondary">${displayNum}</span></td>`;
+        return `<td${dattr}><span class="badge badge--secondary">${displayNum}</span></td>`;
       case "trips": {
         const trips = getRouteLinkedTripsSortedByPickup(route);
         const inner =
           trips.length === 0 ? "—" : trips.map((t) => formatTransportRouteTripTableLineHtml(t)).join("");
-        return `<td class="transport-route-trips-cell">${inner}</td>`;
+        return `<td${dattr} class="transport-route-trips-cell transport-route-trips-cell--routes-table">${inner}</td>`;
       }
       case "vehicle":
-        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--vehicle"><input type="text" class="input input--trip-table-meta" data-route-meta-field="vehicle" data-route-id="${rid}" value="${escapeHtml(route.vehicle || "")}" placeholder="—" aria-label="Vessel or flight number"></td>`;
+        return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--vehicle"><input type="text" class="input input--trip-table-meta" data-route-meta-field="vehicle" data-route-id="${rid}" value="${escapeHtml(route.vehicle || "")}" placeholder="—" aria-label="Vessel or flight number"></td>`;
       case "driver":
-        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--driver"><input type="text" class="input input--trip-table-meta" data-route-meta-field="driver" data-route-id="${rid}" value="${escapeHtml(route.driver || "")}" placeholder="—" aria-label="Driver, pilot, or captain"></td>`;
+        return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--driver"><input type="text" class="input input--trip-table-meta" data-route-meta-field="driver" data-route-id="${rid}" value="${escapeHtml(route.driver || "")}" placeholder="—" aria-label="Driver, pilot, or captain"></td>`;
       case "pickup":
-        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--pickup"><input type="datetime-local" class="input input--trip-table-meta input--trip-pickup-local" data-route-meta-field="pickupTime" data-route-id="${rid}" value="${escapeHtml(toDatetimeLocalValue(route.pickupTime))}" aria-label="Pickup time"></td>`;
+        return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--pickup"><input type="datetime-local" class="input input--trip-table-meta input--trip-pickup-local" data-route-meta-field="pickupTime" data-route-id="${rid}" value="${escapeHtml(toDatetimeLocalValue(route.pickupTime))}" aria-label="Pickup time"></td>`;
       case "voters":
-        return `<td class="transport-route-pax-cell" title="Assigned voters on this route">${escapeHtml(
+        return `<td${dattr} class="transport-route-pax-cell" title="Assigned voters on this route">${escapeHtml(
           String(count)
         )}</td>`;
       case "status":
-        return `<td><span class="${escapeHtml(statusClass)}">${escapeHtml(route.status)}</span></td>`;
+        return `<td${dattr}><span class="${escapeHtml(statusClass)}">${escapeHtml(route.status)}</span></td>`;
       case "rate":
-        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate"><input type="text" class="input input--trip-table-meta" data-route-meta-field="rate" data-route-id="${rid}" value="${escapeHtml(route.rate || "")}" placeholder="—" aria-label="Rate"></td>`;
+        return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--rate"><input type="text" class="input input--trip-table-meta" data-route-meta-field="rate" data-route-id="${rid}" value="${escapeHtml(route.rate || "")}" placeholder="—" aria-label="Rate"></td>`;
       case "amount":
-        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount"><input type="text" class="input input--trip-table-meta" data-route-meta-field="amount" data-route-id="${rid}" value="${escapeHtml(route.amount || "")}" placeholder="—" aria-label="Amount"></td>`;
+        return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--amount"><input type="text" class="input input--trip-table-meta" data-route-meta-field="amount" data-route-id="${rid}" value="${escapeHtml(route.amount || "")}" placeholder="—" aria-label="Amount"></td>`;
       case "remarks":
-        return `<td class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks"><input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-route-meta-field="remarks" data-route-id="${rid}" value="${escapeHtml(route.remarks || "")}" placeholder="Notes / remarks" aria-label="Remarks"></td>`;
+        return `<td${dattr} class="transport-trips-table__meta-cell transport-trips-table__meta-cell--remarks"><input type="text" class="input input--trip-table-meta input--trip-table-meta-remarks" data-route-meta-field="remarks" data-route-id="${rid}" value="${escapeHtml(route.remarks || "")}" placeholder="Notes / remarks" aria-label="Remarks"></td>`;
       default:
-        return "<td></td>";
+        return `<td${dattr}></td>`;
     }
   }).join("");
 }
 
+function getTransportRouteContextMenuItems(route) {
+  if (!route) return [];
+  const id = String(route.id);
+  return [
+    { label: "Change status…", onSelect: () => openTransportRouteStatusModal(id) },
+    { label: "View voters…", onSelect: () => openTransportRouteVotersModal(route) },
+    { label: "Edit route…", onSelect: () => openRouteForm(route) },
+    { separator: true },
+    { label: "Delete…", danger: true, onSelect: () => void deleteTransportRoute(id) },
+  ];
+}
+
+function openTransportRouteContextMenuAt(clientX, clientY, route) {
+  const items = getTransportRouteContextMenuItems(route);
+  if (!items.length) return;
+  showContextMenu({ clientX, clientY, preventDefault: () => {} }, items);
+}
+
 function buildRouteActionsCellHtml(route) {
   const rid = escapeHtml(String(route.id));
-  return `<td class="transport-trips-table__actions">
-        <button type="button" class="ghost-button ghost-button--small" data-route-status="${rid}" title="Change status">Status</button>
-        <button type="button" class="ghost-button ghost-button--small" data-view-route-voters="${rid}" title="View voters">Voters</button>
-        <button type="button" class="ghost-button ghost-button--small" data-edit-route="${rid}">Edit</button>
-        <button type="button" class="ghost-button ghost-button--small" data-delete-route="${rid}" aria-label="Delete">Delete</button>
+  return `<td class="transport-trips-table__actions transport-trips-table__actions--context">
+        <button type="button" class="ghost-button ghost-button--small table-view-menu-btn" data-route-menu="${rid}" aria-label="Route actions" aria-haspopup="true" title="Route actions (or right-click row)">⋮</button>
       </td>`;
 }
 
@@ -3568,7 +3697,8 @@ function openTransportColumnsModal() {
   body.className = "form-group";
   const p = document.createElement("p");
   p.className = "helper-text";
-  p.textContent = "Choose which columns appear in the transportation table.";
+  p.textContent =
+    "Choose which columns appear in the transportation trips table. Hiding Rate, Amount, or Remarks leaves more horizontal space for Trip / Route.";
   body.appendChild(p);
   const div = document.createElement("div");
   div.style.display = "flex";
@@ -3635,7 +3765,8 @@ function openTransportRoutesColumnsModal() {
   body.className = "form-group";
   const p = document.createElement("p");
   p.className = "helper-text";
-  p.textContent = "Choose which columns appear in the transportation routes table.";
+  p.textContent =
+    "Choose which columns appear in the transportation routes table. Hiding Rate, Amount, or Remarks leaves more horizontal space for the Trips column.";
   body.appendChild(p);
   const div = document.createElement("div");
   div.style.display = "flex";
@@ -7412,43 +7543,47 @@ export function initZeroDayModule(votersContextParam, options = {}) {
       },
       true
     );
+    transportPanel.addEventListener("contextmenu", (e) => {
+      if (e.target.closest("input, textarea, select")) return;
+      if (zeroDayRoutesTableBody?.contains(e.target)) {
+        const tr = e.target.closest("tr[data-route-id]");
+        if (!tr) return;
+        const route = findTransportRouteById(tr.dataset.routeId);
+        if (!route) return;
+        e.preventDefault();
+        openTransportRouteContextMenuAt(e.clientX, e.clientY, route);
+        return;
+      }
+      if (zeroDayTripsTableBody?.contains(e.target)) {
+        const tr = e.target.closest("tr[data-trip-id]");
+        if (!tr) return;
+        const trip = findZeroDayTripById(tr.dataset.tripId);
+        if (!trip) return;
+        e.preventDefault();
+        openTransportTripContextMenuAt(e.clientX, e.clientY, trip);
+      }
+    });
     transportPanel.addEventListener("click", (e) => {
-      const rStatus = e.target.closest("[data-route-status]");
-      const rVoters = e.target.closest("[data-view-route-voters]");
-      const rEdit = e.target.closest("[data-edit-route]");
-      const rDel = e.target.closest("[data-delete-route]");
-      if (rStatus) {
-        openTransportRouteStatusModal(rStatus.getAttribute("data-route-status"));
+      const tMenu = e.target.closest("[data-trip-menu]");
+      if (tMenu) {
+        e.preventDefault();
+        e.stopPropagation();
+        const trip = findZeroDayTripById(tMenu.getAttribute("data-trip-menu"));
+        if (trip) {
+          const rect = tMenu.getBoundingClientRect();
+          openTransportTripContextMenuAt(rect.left, rect.bottom + 4, trip);
+        }
         return;
       }
-      if (rVoters) {
-        const route = findTransportRouteById(rVoters.getAttribute("data-view-route-voters"));
-        if (route) openTransportRouteVotersModal(route);
-        return;
-      }
-      if (rEdit) {
-        const route = findTransportRouteById(rEdit.getAttribute("data-edit-route"));
-        if (route) openRouteForm(route);
-        return;
-      }
-      if (rDel) {
-        deleteTransportRoute(rDel.getAttribute("data-delete-route"));
-        return;
-      }
-      const statusBtn = e.target.closest("[data-trip-status]");
-      const viewBtn = e.target.closest("[data-view-trip-voters]");
-      const editBtn = e.target.closest("[data-edit-trip]");
-      const deleteBtn = e.target.closest("[data-delete-trip]");
-      if (statusBtn) {
-        openTripStatusModal(statusBtn.getAttribute("data-trip-status"));
-      } else if (viewBtn) {
-        const trip = findZeroDayTripById(viewBtn.getAttribute("data-view-trip-voters"));
-        if (trip) openTripVotersModal(trip);
-      } else if (editBtn) {
-        const trip = findZeroDayTripById(editBtn.getAttribute("data-edit-trip"));
-        if (trip) openTripForm(trip);
-      } else if (deleteBtn) {
-        deleteTrip(deleteBtn.getAttribute("data-delete-trip"));
+      const rMenu = e.target.closest("[data-route-menu]");
+      if (rMenu) {
+        e.preventDefault();
+        e.stopPropagation();
+        const route = findTransportRouteById(rMenu.getAttribute("data-route-menu"));
+        if (route) {
+          const rect = rMenu.getBoundingClientRect();
+          openTransportRouteContextMenuAt(rect.left, rect.bottom + 4, route);
+        }
       }
     });
   }
