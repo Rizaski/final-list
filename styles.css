@@ -6037,6 +6037,13 @@ textarea.voter-detail-referendum-notes:focus {
   opacity: 0.85;
 }
 
+.data-table--calls .calls-table-notes {
+  min-height: 2.75rem;
+  resize: vertical;
+  line-height: 1.35;
+  font-family: inherit;
+}
+
 .data-table--pledges .pledge-status-select {
   min-width: 0;
   border: none;

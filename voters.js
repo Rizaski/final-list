@@ -2341,8 +2341,8 @@ function renderVoterDetails(voter) {
   voterNotesTextarea.value = voter.notes || "";
   if (voterNotesHelperEl) {
     voterNotesHelperEl.textContent = candCtx
-      ? "Your edits save to this voter’s record. Agent comments are visible to campaign staff and administrators."
-      : "Agent comments are visible to authorised campaign staff.";
+      ? "Press Enter to save and open the next voter. Shift+Enter adds a new line. Call center comments are visible to campaign staff and administrators."
+      : "Press Enter to save and open the next voter. Shift+Enter adds a new line. Call center comments are visible to authorised campaign staff.";
   }
 
   const pledgePicker = document.querySelector(".candidate-pledge-picker");
@@ -2898,6 +2898,42 @@ function selectVoter(voterId) {
   renderVoterDetails(voter);
 }
 
+function goToNextVoterInFilteredList() {
+  if (!selectedVoterId) return false;
+  const dataRows = getFilteredSortedGroupedVoters().filter((x) => x.type === "row");
+  const idx = dataRows.findIndex((x) => sameVoterId(x.voter.id, selectedVoterId));
+  if (idx < 0 || idx >= dataRows.length - 1) return false;
+  const nextIdx = idx + 1;
+  votersCurrentPage = Math.floor(nextIdx / PAGE_SIZE) + 1;
+  selectVoter(dataRows[nextIdx].voter.id);
+  requestAnimationFrame(() => voterNotesTextarea?.focus());
+  return true;
+}
+
+async function persistSelectedVoterNotes({ advance = false } = {}) {
+  if (!selectedVoterId || !voterNotesTextarea) return;
+  const voter = findVoterById(selectedVoterId);
+  if (!voter) return;
+  voter.notes = voterNotesTextarea.value;
+  if (saveVoterNotesButton) saveVoterNotesButton.disabled = true;
+  try {
+    const api = await firebaseInitPromise;
+    if (api.ready && api.setVoterFs) await api.setVoterFs(voter);
+  } catch (_) {}
+  saveVotersToStorage();
+  if (advance) {
+    goToNextVoterInFilteredList();
+    return;
+  }
+  if (sameVoterId(selectedVoterId, voter.id)) renderVoterDetails(voter);
+  if (window.appNotifications) {
+    window.appNotifications.push({
+      title: "Voter notes saved",
+      meta: voter.fullName || voter.nationalId || voter.id,
+    });
+  }
+}
+
 function bindVoterToolbar() {
   const go = () => {
     votersCurrentPage = 1;
@@ -2923,29 +2959,17 @@ if (voterNotesTextarea) {
     if (!selectedVoterId) return;
     if (saveVoterNotesButton) saveVoterNotesButton.disabled = false;
   });
+  voterNotesTextarea.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    if (!selectedVoterId) return;
+    persistSelectedVoterNotes({ advance: true });
+  });
 }
 
 if (saveVoterNotesButton) {
   saveVoterNotesButton.addEventListener("click", () => {
-    if (!selectedVoterId) return;
-    const voter = findVoterById(selectedVoterId);
-    if (!voter) return;
-    voter.notes = voterNotesTextarea ? voterNotesTextarea.value : "";
-    saveVoterNotesButton.disabled = true;
-    (async () => {
-      try {
-        const api = await firebaseInitPromise;
-        if (api.ready && api.setVoterFs) await api.setVoterFs(voter);
-      } catch (_) {}
-      saveVotersToStorage();
-      if (sameVoterId(selectedVoterId, voter.id)) renderVoterDetails(voter);
-      if (window.appNotifications) {
-        window.appNotifications.push({
-          title: "Voter notes saved",
-          meta: voter.fullName || voter.nationalId || voter.id,
-        });
-      }
-    })();
+    persistSelectedVoterNotes({ advance: false });
   });
 }
 

@@ -277,13 +277,12 @@ function renderCallsTable() {
         </select>
       </td>
       <td>
-        <input
-          type="text"
-          class="table-cell-input calls-table-cell-input"
+        <textarea
+          class="table-cell-input calls-table-cell-input calls-table-notes"
           data-call-field="notes"
-          value="${escapeHtml(call.notes || "")}"
-          placeholder="Add comment (optional)"
-        >
+          rows="2"
+          placeholder="Add note — press Enter to save and go to next"
+        >${escapeHtml(call.notes || "")}</textarea>
       </td>
       <td></td>
     `;
@@ -309,6 +308,54 @@ function renderCallsTable() {
         renderCallsTable();
       });
     });
+  }
+}
+
+function getCallDataRows() {
+  return getFilteredSortedCalls()
+    .filter((x) => x.type === "row")
+    .map((x) => x.call);
+}
+
+function focusCallNotesField(callId) {
+  requestAnimationFrame(() => {
+    const row = callsTableBody.querySelector(`tr[data-call-id="${callId}"]`);
+    const el = row?.querySelector('[data-call-field="notes"]');
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    if (typeof el.setSelectionRange === "function") el.setSelectionRange(len, len);
+  });
+}
+
+function saveCallLogAndGoNext(callId) {
+  const rows = getCallDataRows();
+  const idx = rows.findIndex((c) => c.id === callId);
+  const call = rows[idx];
+  if (!call) return;
+
+  const row = callsTableBody.querySelector(`tr[data-call-id="${callId}"]`);
+  const notesEl = row?.querySelector('[data-call-field="notes"]');
+  const notes = notesEl ? notesEl.value : call.notes || "";
+  call.notes = notes;
+  call.status = "completed";
+
+  const nextCall = idx >= 0 && idx < rows.length - 1 ? rows[idx + 1] : null;
+  if (nextCall) {
+    const nextIdx = idx + 1;
+    callsCurrentPage = Math.floor(nextIdx / PAGE_SIZE) + 1;
+  }
+
+  const focusNext = () => {
+    if (nextCall) focusCallNotesField(nextCall.id);
+  };
+
+  if (call.voterId) {
+    document.addEventListener("voters-updated", focusNext, { once: true });
+    updateVoterDoorToDoorFields(call.voterId, { notes });
+  } else {
+    renderCallsTable();
+    focusNext();
   }
 }
 
@@ -338,18 +385,13 @@ export function initCallsModule(votersContext) {
   callsTableBody.addEventListener("change", (e) => {
     const target = e.target;
     const field = target.getAttribute("data-call-field");
-    if (!field) return;
+    if (!field || field === "notes") return;
     const row = target.closest("tr");
     if (!row) return;
     const id = Number(row.dataset.callId);
     const call = calls.find((c) => c.id === id);
     if (!call) return;
     call[field] = target.value;
-    if (field === "notes" && call.voterId) {
-      // Keep door-to-door notes in sync with calls notes for this voter.
-      updateVoterDoorToDoorFields(call.voterId, { notes: call.notes || "" });
-    }
-    // Re-render when status changes so row highlighting updates
     if (field === "status") {
       renderCallsTable();
     }
@@ -365,9 +407,16 @@ export function initCallsModule(votersContext) {
     const call = calls.find((c) => c.id === id);
     if (!call) return;
     call[field] = target.value;
-    if (field === "notes" && call.voterId) {
-      updateVoterDoorToDoorFields(call.voterId, { notes: call.notes || "" });
-    }
+  });
+
+  callsTableBody.addEventListener("keydown", (e) => {
+    const target = e.target;
+    if (target.getAttribute("data-call-field") !== "notes") return;
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    const row = target.closest("tr");
+    if (!row) return;
+    saveCallLogAndGoNext(Number(row.dataset.callId));
   });
 
   return {
